@@ -24,19 +24,19 @@ _LONG_SHADOW = 2.0
 
 
 def _parts(df: pd.DataFrame) -> dict[str, pd.Series]:
-    o, h, l, c = df.open, df.high, df.low, df.close
+    o, h, lo, c = df.open, df.high, df.low, df.close
     body = (c - o).abs()
-    rng = (h - l).replace(0.0, pd.NA).astype("float64")
+    rng = (h - lo).replace(0.0, pd.NA).astype("float64")
     return {
         "open": o,
         "high": h,
-        "low": l,
+        "low": lo,
         "close": c,
         "body": body,
         "range": rng,
         "body_frac": body / rng,
         "upper_shadow": h - pd.concat([o, c], axis=1).max(axis=1),
-        "lower_shadow": pd.concat([o, c], axis=1).min(axis=1) - l,
+        "lower_shadow": pd.concat([o, c], axis=1).min(axis=1) - lo,
         "bullish": c > o,
         "bearish": c < o,
     }

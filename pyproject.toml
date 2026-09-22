@@ -30,3 +30,11 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Pyflakes and pycodestyle catch real mistakes; isort keeps imports tidy;
+# pyupgrade keeps us on current syntax. Everything else is style opinion we
+# do not need a tool to arbitrate.
+select = ["E", "F", "I", "UP", "W"]
+ignore = ["E501"]  # line length is enforced by the formatter, not the linter

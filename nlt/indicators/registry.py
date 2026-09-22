@@ -9,12 +9,13 @@ Adding an indicator means adding one entry here -- nothing else changes.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import pandas as pd
 
-from nlt.indicators import levels, momentum, patterns, trend, volatility, volume as vol
+from nlt.indicators import levels, momentum, patterns, trend, volatility
+from nlt.indicators import volume as vol
 from nlt.indicators.smoothing import ema, hma, sma, wma
 
 

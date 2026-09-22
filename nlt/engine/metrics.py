@@ -51,7 +51,7 @@ def _empty_metrics() -> dict:
 
 
 def compute_metrics(
-    trades: list["Trade"],
+    trades: list[Trade],
     equity: pd.Series,
     capital: float,
     bars_per_year: int,

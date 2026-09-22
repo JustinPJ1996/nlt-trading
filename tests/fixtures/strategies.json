@@ -1,0 +1,102 @@
+[
+  {
+    "text": "Buy NIFTY when RSI cracks 30, exit at +2% or -1%",
+    "expected": "spec",
+    "note": "Clean, canonical RSI dip-buy phrasing with combined target/stop."
+  },
+  {
+    "text": "Short BANKNIFTY when the 20 MA crosses below the 50 MA and ADX is above 25, stop loss 1.5 times ATR, take profit 3%",
+    "expected": "spec",
+    "note": "MA crossover plus trend filter, ATR-based stop, short direction."
+  },
+  {
+    "text": "buy nifty when rsi cracks 30 exit at 2% sl 1%",
+    "expected": "spec",
+    "note": "Sloppy lowercase, no punctuation, abbreviated stop loss."
+  },
+  {
+    "text": "Buy NIFTY when price is above the 200 day moving average, stop loss 1%, target 2%",
+    "expected": "spec",
+    "note": "Price vs moving average, plain long trend-following entry."
+  },
+  {
+    "text": "buy on golden cross, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Named crossover pattern, 50/200 SMA."
+  },
+  {
+    "text": "sell on death cross, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Named bearish crossover pattern; direction is forced short."
+  },
+  {
+    "text": "Buy NIFTY when MACD crosses above signal, stop loss 1%, target 2%",
+    "expected": "spec",
+    "note": "MACD/signal crossover."
+  },
+  {
+    "text": "Buy NIFTY when supertrend turns green, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Supertrend direction flip, read as direction crossing above 0."
+  },
+  {
+    "text": "Buy NIFTY when price touches the lower bollinger band, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Bollinger band touch, mean-reversion entry."
+  },
+  {
+    "text": "Buy NIFTY on a bollinger squeeze, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Squeeze is not a precise phrase; we interpret it and record a note."
+  },
+  {
+    "text": "Buy NIFTY when stochastic is below 20, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Oscillator level entry."
+  },
+  {
+    "text": "Buy NIFTY on a bullish engulfing candle, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Candlestick pattern by name, maps to engulfing_bullish."
+  },
+  {
+    "text": "Buy NIFTY when it falls 1%, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Percent-change entry rather than an indicator."
+  },
+  {
+    "text": "Buy 2 lots of NIFTY when RSI cracks 30, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Explicit lot sizing."
+  },
+  {
+    "text": "buy nifty when rsi cracks 30 and adx above 25, stop 1%, target 2%",
+    "expected": "spec",
+    "note": "Two conditions combined with 'and'."
+  },
+  {
+    "text": "Buy NIFTY when RSI is below 30",
+    "expected": "questions",
+    "note": "No exit and no stop loss at all -- must ask, never default one in."
+  },
+  {
+    "text": "Buy NIFTY when RSI cracks 30, target 2%",
+    "expected": "questions",
+    "note": "Has a target but no stop loss -- the specific case the product must not silently allow."
+  },
+  {
+    "text": "Buy NIFTY when the Elliott Wave count hits 5, stop 1%, target 2%",
+    "expected": "refuse",
+    "note": "Elliott Wave is not in the indicator registry; must refuse by name, not substitute."
+  },
+  {
+    "text": "asdkjaslkdj random gibberish text here",
+    "expected": "refuse",
+    "note": "Not a strategy description at all."
+  },
+  {
+    "text": "buy nifty when rsi low sell when up 2%",
+    "expected": "questions",
+    "note": "Deliberately vague ('rsi low' has no threshold) and missing a stop loss -- ambiguous, must ask rather than guess a number."
+  }
+]

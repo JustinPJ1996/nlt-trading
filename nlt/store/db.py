@@ -17,9 +17,9 @@ import datetime as dt
 import hashlib
 import json
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from nlt.spec.models import StrategySpec
 
@@ -28,7 +28,7 @@ SCHEMA = Path(__file__).resolve().parent / "schema.sql"
 
 
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
 def spec_hash(spec: StrategySpec) -> str:

@@ -12,11 +12,12 @@ exit path, and to carry risk limits.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from nlt.indicators.registry import REGISTRY, get as get_indicator
+from nlt.indicators.registry import REGISTRY
+from nlt.indicators.registry import get as get_indicator
 
 PRICE_FIELDS = ("open", "high", "low", "close", "volume")
 
@@ -53,7 +54,7 @@ class Const(Base):
     value: float
 
 
-Operand = Annotated[Union[Ref, Const], Field(discriminator="kind")]
+Operand = Annotated[Ref | Const, Field(discriminator="kind")]
 
 
 # -------------------------------------------------------------- conditions
@@ -98,21 +99,21 @@ class PercentChange(Base):
 
 class All(Base):
     kind: Literal["all"] = "all"
-    conditions: list["Condition"] = Field(min_length=1, max_length=10)
+    conditions: list[Condition] = Field(min_length=1, max_length=10)
 
 
 class Any_(Base):
     kind: Literal["any"] = "any"
-    conditions: list["Condition"] = Field(min_length=1, max_length=10)
+    conditions: list[Condition] = Field(min_length=1, max_length=10)
 
 
 class Not(Base):
     kind: Literal["not"] = "not"
-    condition: "Condition"
+    condition: Condition
 
 
 Condition = Annotated[
-    Union[Compare, IsTrue, PercentChange, All, Any_, Not],
+    Compare | IsTrue | PercentChange | All | Any_ | Not,
     Field(discriminator="kind"),
 ]
 

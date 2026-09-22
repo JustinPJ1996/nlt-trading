@@ -14,7 +14,18 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from nlt.spec.models import All, Any_, Compare, Condition, Const, IsTrue, Not, Operand, PercentChange, Ref
+from nlt.spec.models import (
+    All,
+    Any_,
+    Compare,
+    Condition,
+    Const,
+    IsTrue,
+    Not,
+    Operand,
+    PercentChange,
+    Ref,
+)
 
 
 def evaluate(condition: Condition, features: pd.DataFrame) -> pd.Series:

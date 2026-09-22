@@ -16,7 +16,6 @@ import pytest
 from nlt.indicators import levels, momentum, trend, volatility
 from nlt.indicators.smoothing import ema, rma, sma, stdev, true_range, wma
 
-
 # --------------------------------------------------------------- primitives
 
 def test_sma_known_values():
