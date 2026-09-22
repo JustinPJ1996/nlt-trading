@@ -1,0 +1,34 @@
+Mean Reversion Strategy for Crypto
+
+Market: Bitcoin/Ethereum daily timeframe
+
+Entry:
+- Price drops 4% from 24-hour high (mean reversion signal)
+- RSI(14) falls below 35 (oversold)
+- Trading volume is 150% of 20-day average
+- Price is above 50-day exponential moving average (trend filter)
+
+Exit:
+- Take Profit: +2.5% from entry
+- Stop Loss: -1.5% from entry (tight stops for mean reversion)
+- Time Stop: Close after 5 days if not filled
+
+Position Sizing:
+- Risk 0.75% of account per trade (conservative for crypto)
+- Position size = (Account_Risk / Stop_Loss_Distance)
+- Maximum position size capped at 5% of account
+
+Risk Management:
+- Maximum 2 concurrent positions (reduce correlation risk)
+- Daily loss limit: -3% of daily starting capital
+- Account drawdown limit: -8% from peak
+- No trading during major news events
+
+Confirmation Rules:
+- Filter out trades in low volatility periods (ATR too small)
+- Require price to be in bottom 30% of 20-day range
+- Skip if major technical levels are being tested
+
+Notes:
+This is a mean reversion strategy that exploits oversold conditions
+while maintaining trend confirmation. Use 3+ years of backtest data.

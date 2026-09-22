@@ -1,0 +1,99 @@
+═══════════════════════════════════════════════════════════════════════════════
+RESUME PROMPT FOR NEW CONTEXT
+═══════════════════════════════════════════════════════════════════════════════
+
+Copy and paste this prompt in a new Claude conversation to resume work on the
+trading strategy builder project.
+
+═══════════════════════════════════════════════════════════════════════════════
+
+I'm resuming work on a trading strategy builder project. Here's the context:
+
+PROJECT: LLM-Powered Trading Strategy Builder
+LOCATION: /home/justin/trading-strategy-builder/
+STATUS: Basic implementation complete, ready to extend
+
+WHAT IT DOES:
+Convert plain English trading strategy descriptions into:
+✓ Production-ready Python code
+✓ Validation reports (risk assessment)
+✓ Backtest recommendations
+✓ Deployment checklists
+
+IMPLEMENTATION:
+Two paths available:
+1. Sequential workflow (strategy_builder.py) - simple, direct
+2. Agent workflow (tool_runner_version.py) - smart, can ask questions
+
+HOW IT WORKS:
+- Uses Claude Opus 5 (can change in Python files)
+- Uses tool use pattern with agentic loop
+- Tools: parse_strategy → generate_code → validate → backtest_recommendations
+- Output: JSON file with code + validation + recommendations
+
+QUICK START:
+cd /home/justin/trading-strategy-builder
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY="your-key"
+python cli.py --interactive
+
+KEY FILES:
+- strategy_builder.py (sequential workflow)
+- tool_runner_version.py (agent workflow)
+- cli.py (command-line interface)
+- demo.py (see examples)
+- README.md, GETTING_STARTED.md, QUICK_REFERENCE.md (documentation)
+- ARCHITECTURE.md (technical details)
+- HANDOFF.md (full context)
+
+CURRENT CAPABILITIES:
+✅ Parse strategies from natural language
+✅ Generate Python code
+✅ Validate for safety/correctness
+✅ Provide backtest recommendations
+✅ CLI and programmatic interfaces
+✅ Agent-based workflow with iteration
+
+NOT YET IMPLEMENTED:
+❌ Integrated backtesting (generates code, user runs externally)
+❌ Live trading execution
+❌ Real-time market data
+❌ Broker API connections
+❌ Strategy optimization
+❌ Web UI
+
+NEXT DEVELOPMENT PRIORITIES:
+1. Backtrader/VectorBT integration (auto-run backtests)
+2. Web UI (Streamlit/Flask)
+3. Broker connections (Alpaca, Interactive Brokers)
+4. Strategy optimization
+5. Performance tracking
+
+IMPORTANT NOTES:
+- All strategies saved to strategy_result.json
+- Generated code compatible with Backtrader/VectorBT
+- Always review generated code before use
+- Never auto-deploy to live trading without extensive testing
+- Model can be changed: model="claude-opus-5" or "claude-fable-5"
+
+RELEVANT DOCUMENTATION IN PROJECT:
+- README.md - Full feature overview
+- GETTING_STARTED.md - Step-by-step setup
+- QUICK_REFERENCE.md - Commands cheat sheet
+- ARCHITECTURE.md - Deep technical dive
+- HANDOFF.md - Full project context
+
+═══════════════════════════════════════════════════════════════════════════════
+
+Now, for my next task, I want to: [SPECIFY WHAT YOU WANT TO WORK ON]
+
+Examples of next tasks:
+- Add Backtrader integration to auto-run backtests
+- Build a Streamlit web UI for easier strategy building
+- Add Alpaca broker API connection for paper trading
+- Implement strategy parameter optimization
+- Create a strategy repository for saving/loading
+- Add performance tracking for live strategies
+- Support additional languages (Pine Script, etc.)
+
+═══════════════════════════════════════════════════════════════════════════════
