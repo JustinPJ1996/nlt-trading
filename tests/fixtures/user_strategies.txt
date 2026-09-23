@@ -1,0 +1,70 @@
+Exit everything if VIX crosses 20
+Sell NIFTY futures on a 1% gap up
+Buy TITAN before its dividend date
+Buy HDFCBANK whenever its P/E falls below 16 and ROE has held above 15%
+Short 100 RELIANCE if a new US tariff on Indian exports is announced
+Whenever NIFTY falls 2% or more in one session, buy Rs 50,000 of the index at the next open.
+Enter TATAMOTORS 3 sessions before its dividend date, exit the day after
+Sell the 25000 Nifty Call, hedge it with the 25100. Close at 50% of the max profit
+Roll my GOLDM Futures to the next expiry if it's still above the 20 DMA
+Buy Nifty 100 stocks above the 200 DMA when RSI drops below 40. 2% stop loss, 6% take profit
+Buy TCS when RSI drops below 30
+Find oversold Nifty 50 stocks
+Buy RELIANCE at RSI 30 with 5 percent stop loss and 10 percent target
+Buy dips on Indian tech stocks and sell rallies
+Find Nifty50 stocks with RSI oversold
+Buy NIFTY 50 stocks when RSI drops below 30, sell when it crosses 70
+Buy the stock five sessions before a board meeting called to consider a buyback. Exit in the session after the board meets
+Buy the stock if a block or bulk deal over Rs 100 crore is reported in the stock. Exit five sessions after the report, or a 4% stop loss
+Look for stocks with ROE over 18% with debt/equity under 0.3. Rebalance quarterly, drop anything that fails the screen
+Buy stocks with P/E under 18 while ROE has held above 15% for four straight quarters. Rebalance quarterly, sell anything that re-rates past 30x
+Sell the at-the-money straddle at 9:35 on expiry day. Stop at 25% of premium, square-off at 3:10 PM
+Enter Crude Futures if the Futures go above the previous day's high after 5 PM. Trailing 0.8% stop, flat by 11:30 PM
+Buy NIFTYNXT50 Futures if RSI(14) drops under 30 while price holds its 200-day average. Exit when RSI crosses back above 55, or a 5% stop
+Buy Nifty Futures if price clears the first 15-minute high on above-average volume. Trailing 0.5% stop, square-off at 3:15 PM
+Buy stocks in Nifty 500 if P/E is under 18 while ROE has held above 15% for four straight quarters. Rebalance quarterly, sell anything that re-rates past 30x
+Buy stocks in Nifty 500 if promoter holding is over 50% and rising, with debt/equity under 0.5. Rebalance quarterly, exit if promoters sell down
+Buy ITC when RSI drops below 30 and sell when it goes above 70. Use 5-minute candles. Backtest this for the last 3 months.
+Buy Nifty 100 stocks when price is above VWAP and RSI is between 40-60. sell when RSI > 70. Use 1-day timeframe for last year.
+Compare P/E ratios of HDFC Bank vs ICICI Bank
+Which sectors are strongest right now?
+buy when price > vwap and rsi < 30. sell at 1% profit. stop loss 0.8%. backtest for 2024, 1 day. nifty 100
+Buy when RSI7 < 28 AND close > VWAP AND ema8 > ema21 AND ADX14 > 18; exit when RSI7 > 62. TP 2%, SL 1.5%. intraday. NIFTY100
+buy when close_price > vwap AND rsi14 < 30. sell when price reaches 1% profit OR stop loss at 0.8%. backtest on NIFTY100, 1 day timeframe, full year 2024. not intraday.
+Tell me the best mid-cap stocks for next quarter
+Which 5 stocks have the highest growth potential this quarter?
+Best defensive stocks to hold for next 3 months
+Best small-cap stocks with momentum for Q3
+Tell me the best stocks for next quarter
+Analyze the market and tell me whether it is bullish or bearish
+What is the current market sentiment - bullish, bearish, or sideways?
+How is NIFTY50 trending right now and what should I do?
+Is now a good time to enter the market or wait?
+Do a fundamental analysis of Reliance
+Give me the key financial ratios of Infosys
+Is Adani Ports fundamentally strong?
+Do a technical analysis of TCS
+Technical analysis of HDFC Bank on 15 min timeframe
+Is TCS showing any bullish signals right now?
+What is the RSI and MACD of Infosys currently?
+Where is the key support and resistance for NIFTY50?
+Do a peer to peer comparison between Reliance and HDFC
+Give latest news related to stock market today and which stocks are affected by this
+Give a detailed analysis of the Pharma sector
+Which sector will perform the best in current market situation?
+Give me NIFTY 50 stocks whose P/E ratio is less than 30
+Give me NIFTY 50 stocks with high revenue growth and whose debt is low
+Give me NIFTY 50 stocks whose promoter holding is high
+Instantly buy NIFTY 50 stocks when price > vwap and rsi < 30. Sell at 2% profit. Stop loss 1%.
+Instantly buy NIFTY 100 stocks when ema8 crosses above ema21 and adx14 > 20. Sell at 3% profit. Stop loss 1.5%.
+Instantly buy NIFTY 50 stocks whose P/E ratio is less than 30 and sell at 5% profit. Stop loss is 2%.
+Instantly buy NIFTY 50 stocks whose promoter holding is more than 50% and sell at 3% profit. Stop loss is 1%.
+Instantly buy NIFTY 100 stocks whose Earning per share is high and whose revenue has increased in last quarter. Sell at 8% profit. Stop loss is 5%.
+Instantly buy RELIANCE when its positive news is announced and sell at 3% profit. Stop loss 1%.
+Instantly buy NIFTY 100 stocks when its dividend is announced and sell after receiving dividend.
+invest 30,000 in banking sector
+invest 50,000, low risk, long term
+autopilot 75,000 in IT sector, medium risk, short term, avoid Wipro
+Give me a good target and stop loss for a strategy: buy when rsi < 30 and sell when rsi > 60
+Give me a good entry price for Reliance
+Tell me whether I should buy/sell/hold Bajaj Finance

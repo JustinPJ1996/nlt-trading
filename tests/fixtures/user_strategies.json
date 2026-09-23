@@ -1,0 +1,422 @@
+[
+  {
+    "n": 1,
+    "text": "Exit everything if VIX crosses 20",
+    "klass": "cross-instrument",
+    "needs": "VIX as a signal source + portfolio-wide exit"
+  },
+  {
+    "n": 2,
+    "text": "Sell NIFTY futures on a 1% gap up",
+    "klass": "futures",
+    "needs": "NIFTY futures + gap detection"
+  },
+  {
+    "n": 3,
+    "text": "Buy TITAN before its dividend date",
+    "klass": "event",
+    "needs": "corporate actions: dividend dates + single stock"
+  },
+  {
+    "n": 4,
+    "text": "Buy HDFCBANK whenever its P/E falls below 16 and ROE has held above 15%",
+    "klass": "fundamental",
+    "needs": "P/E, ROE history + single stock"
+  },
+  {
+    "n": 5,
+    "text": "Short 100 RELIANCE if a new US tariff on Indian exports is announced",
+    "klass": "event",
+    "needs": "news/geopolitical events + single stock"
+  },
+  {
+    "n": 6,
+    "text": "Whenever NIFTY falls 2% or more in one session, buy Rs 50,000 of the index at the next open.",
+    "klass": "IN SCOPE",
+    "needs": "rupee-value sizing + gap/next-open entry"
+  },
+  {
+    "n": 7,
+    "text": "Enter TATAMOTORS 3 sessions before its dividend date, exit the day after",
+    "klass": "event",
+    "needs": "dividend calendar + relative-date entry/exit"
+  },
+  {
+    "n": 8,
+    "text": "Sell the 25000 Nifty Call, hedge it with the 25100. Close at 50% of the max profit",
+    "klass": "options-multileg",
+    "needs": "multi-leg options + % of max profit exit"
+  },
+  {
+    "n": 9,
+    "text": "Roll my GOLDM Futures to the next expiry if it's still above the 20 DMA",
+    "klass": "futures",
+    "needs": "MCX commodity + expiry roll logic"
+  },
+  {
+    "n": 10,
+    "text": "Buy Nifty 100 stocks above the 200 DMA when RSI drops below 40. 2% stop loss, 6% take profit",
+    "klass": "universe",
+    "needs": "Nifty 100 universe + per-symbol screening"
+  },
+  {
+    "n": 11,
+    "text": "Buy TCS when RSI drops below 30",
+    "klass": "single-stock",
+    "needs": "single stock price data"
+  },
+  {
+    "n": 12,
+    "text": "Find oversold Nifty 50 stocks",
+    "klass": "question",
+    "needs": "screener query, not a strategy"
+  },
+  {
+    "n": 13,
+    "text": "Buy RELIANCE at RSI 30 with 5 percent stop loss and 10 percent target",
+    "klass": "single-stock",
+    "needs": "single stock price data"
+  },
+  {
+    "n": 14,
+    "text": "Buy dips on Indian tech stocks and sell rallies",
+    "klass": "vague",
+    "needs": "undefined universe and undefined signal"
+  },
+  {
+    "n": 15,
+    "text": "Find Nifty50 stocks with RSI oversold",
+    "klass": "question",
+    "needs": "screener query, not a strategy"
+  },
+  {
+    "n": 16,
+    "text": "Buy NIFTY 50 stocks when RSI drops below 30, sell when it crosses 70",
+    "klass": "universe",
+    "needs": "Nifty 50 universe"
+  },
+  {
+    "n": 17,
+    "text": "Buy the stock five sessions before a board meeting called to consider a buyback. Exit in the session after the board meets",
+    "klass": "event",
+    "needs": "board meeting / buyback calendar"
+  },
+  {
+    "n": 18,
+    "text": "Buy the stock if a block or bulk deal over Rs 100 crore is reported in the stock. Exit five sessions after the report, or a 4% stop loss",
+    "klass": "event",
+    "needs": "block & bulk deal feed"
+  },
+  {
+    "n": 19,
+    "text": "Look for stocks with ROE over 18% with debt/equity under 0.3. Rebalance quarterly, drop anything that fails the screen",
+    "klass": "fundamental",
+    "needs": "ROE, debt/equity + quarterly rebalance"
+  },
+  {
+    "n": 20,
+    "text": "Buy stocks with P/E under 18 while ROE has held above 15% for four straight quarters. Rebalance quarterly, sell anything that re-rates past 30x",
+    "klass": "fundamental",
+    "needs": "P/E, ROE history + quarterly rebalance"
+  },
+  {
+    "n": 21,
+    "text": "Sell the at-the-money straddle at 9:35 on expiry day. Stop at 25% of premium, square-off at 3:10 PM",
+    "klass": "options-multileg",
+    "needs": "ATM straddle, expiry-day, % of premium stop"
+  },
+  {
+    "n": 22,
+    "text": "Enter Crude Futures if the Futures go above the previous day's high after 5 PM. Trailing 0.8% stop, flat by 11:30 PM",
+    "klass": "futures",
+    "needs": "MCX crude + evening session hours"
+  },
+  {
+    "n": 23,
+    "text": "Buy NIFTYNXT50 Futures if RSI(14) drops under 30 while price holds its 200-day average. Exit when RSI crosses back above 55, or a 5% stop",
+    "klass": "futures",
+    "needs": "NIFTYNXT50 futures"
+  },
+  {
+    "n": 24,
+    "text": "Buy Nifty Futures if price clears the first 15-minute high on above-average volume. Trailing 0.5% stop, square-off at 3:15 PM",
+    "klass": "futures",
+    "needs": "NIFTY futures + opening-range breakout + volume"
+  },
+  {
+    "n": 25,
+    "text": "Buy stocks in Nifty 500 if P/E is under 18 while ROE has held above 15% for four straight quarters. Rebalance quarterly, sell anything that re-rates past 30x",
+    "klass": "fundamental",
+    "needs": "Nifty 500 universe + fundamentals"
+  },
+  {
+    "n": 26,
+    "text": "Buy stocks in Nifty 500 if promoter holding is over 50% and rising, with debt/equity under 0.5. Rebalance quarterly, exit if promoters sell down",
+    "klass": "fundamental",
+    "needs": "promoter holding data + trend"
+  },
+  {
+    "n": 27,
+    "text": "Buy ITC when RSI drops below 30 and sell when it goes above 70. Use 5-minute candles. Backtest this for the last 3 months.",
+    "klass": "single-stock",
+    "needs": "single stock + 5-minute bars + date range"
+  },
+  {
+    "n": 28,
+    "text": "Buy Nifty 100 stocks when price is above VWAP and RSI is between 40-60. sell when RSI > 70. Use 1-day timeframe for last year.",
+    "klass": "universe",
+    "needs": "Nifty 100 universe + VWAP intraday"
+  },
+  {
+    "n": 29,
+    "text": "Compare P/E ratios of HDFC Bank vs ICICI Bank",
+    "klass": "question",
+    "needs": "comparison request, not a strategy"
+  },
+  {
+    "n": 30,
+    "text": "Which sectors are strongest right now?",
+    "klass": "question",
+    "needs": "market commentary, not a strategy"
+  },
+  {
+    "n": 31,
+    "text": "buy when price > vwap and rsi < 30. sell at 1% profit. stop loss 0.8%. backtest for 2024, 1 day. nifty 100",
+    "klass": "universe",
+    "needs": "Nifty 100 universe + VWAP + date range"
+  },
+  {
+    "n": 32,
+    "text": "Buy when RSI7 < 28 AND close > VWAP AND ema8 > ema21 AND ADX14 > 18; exit when RSI7 > 62. TP 2%, SL 1.5%. intraday. NIFTY100",
+    "klass": "universe",
+    "needs": "Nifty 100 universe + 4-condition entry"
+  },
+  {
+    "n": 33,
+    "text": "buy when close_price > vwap AND rsi14 < 30. sell when price reaches 1% profit OR stop loss at 0.8%. backtest on NIFTY100, 1 day timeframe, full year 2024. not intraday.",
+    "klass": "universe",
+    "needs": "Nifty 100 universe + explicit backtest window"
+  },
+  {
+    "n": 34,
+    "text": "Tell me the best mid-cap stocks for next quarter",
+    "klass": "question",
+    "needs": "forecast/advice"
+  },
+  {
+    "n": 35,
+    "text": "Which 5 stocks have the highest growth potential this quarter?",
+    "klass": "question",
+    "needs": "forecast/advice"
+  },
+  {
+    "n": 36,
+    "text": "Best defensive stocks to hold for next 3 months",
+    "klass": "question",
+    "needs": "forecast/advice"
+  },
+  {
+    "n": 37,
+    "text": "Best small-cap stocks with momentum for Q3",
+    "klass": "question",
+    "needs": "forecast/advice"
+  },
+  {
+    "n": 38,
+    "text": "Tell me the best stocks for next quarter",
+    "klass": "question",
+    "needs": "forecast/advice"
+  },
+  {
+    "n": 39,
+    "text": "Analyze the market and tell me whether it is bullish or bearish",
+    "klass": "question",
+    "needs": "market commentary"
+  },
+  {
+    "n": 40,
+    "text": "What is the current market sentiment - bullish, bearish, or sideways?",
+    "klass": "question",
+    "needs": "market commentary"
+  },
+  {
+    "n": 41,
+    "text": "How is NIFTY50 trending right now and what should I do?",
+    "klass": "question",
+    "needs": "commentary + advice"
+  },
+  {
+    "n": 42,
+    "text": "Is now a good time to enter the market or wait?",
+    "klass": "question",
+    "needs": "timing advice"
+  },
+  {
+    "n": 43,
+    "text": "Do a fundamental analysis of Reliance",
+    "klass": "question",
+    "needs": "fundamental analysis report"
+  },
+  {
+    "n": 44,
+    "text": "Give me the key financial ratios of Infosys",
+    "klass": "question",
+    "needs": "fundamental data lookup"
+  },
+  {
+    "n": 45,
+    "text": "Is Adani Ports fundamentally strong?",
+    "klass": "question",
+    "needs": "fundamental judgement"
+  },
+  {
+    "n": 46,
+    "text": "Do a technical analysis of TCS",
+    "klass": "question",
+    "needs": "technical analysis report"
+  },
+  {
+    "n": 47,
+    "text": "Technical analysis of HDFC Bank on 15 min timeframe",
+    "klass": "question",
+    "needs": "technical analysis report"
+  },
+  {
+    "n": 48,
+    "text": "Is TCS showing any bullish signals right now?",
+    "klass": "question",
+    "needs": "technical read"
+  },
+  {
+    "n": 49,
+    "text": "What is the RSI and MACD of Infosys currently?",
+    "klass": "question",
+    "needs": "indicator value lookup"
+  },
+  {
+    "n": 50,
+    "text": "Where is the key support and resistance for NIFTY50?",
+    "klass": "question",
+    "needs": "support/resistance lookup"
+  },
+  {
+    "n": 51,
+    "text": "Do a peer to peer comparison between Reliance and HDFC",
+    "klass": "question",
+    "needs": "peer comparison"
+  },
+  {
+    "n": 52,
+    "text": "Give latest news related to stock market today and which stocks are affected by this",
+    "klass": "question",
+    "needs": "news feed + attribution"
+  },
+  {
+    "n": 53,
+    "text": "Give a detailed analysis of the Pharma sector",
+    "klass": "question",
+    "needs": "sector analysis"
+  },
+  {
+    "n": 54,
+    "text": "Which sector will perform the best in current market situation?",
+    "klass": "question",
+    "needs": "sector forecast"
+  },
+  {
+    "n": 55,
+    "text": "Give me NIFTY 50 stocks whose P/E ratio is less than 30",
+    "klass": "question",
+    "needs": "fundamental screener query"
+  },
+  {
+    "n": 56,
+    "text": "Give me NIFTY 50 stocks with high revenue growth and whose debt is low",
+    "klass": "question",
+    "needs": "fundamental screener query"
+  },
+  {
+    "n": 57,
+    "text": "Give me NIFTY 50 stocks whose promoter holding is high",
+    "klass": "question",
+    "needs": "fundamental screener query"
+  },
+  {
+    "n": 58,
+    "text": "Instantly buy NIFTY 50 stocks when price > vwap and rsi < 30. Sell at 2% profit. Stop loss 1%.",
+    "klass": "universe",
+    "needs": "Nifty 50 universe + VWAP + immediate execution"
+  },
+  {
+    "n": 59,
+    "text": "Instantly buy NIFTY 100 stocks when ema8 crosses above ema21 and adx14 > 20. Sell at 3% profit. Stop loss 1.5%.",
+    "klass": "universe",
+    "needs": "Nifty 100 universe + immediate execution"
+  },
+  {
+    "n": 60,
+    "text": "Instantly buy NIFTY 50 stocks whose P/E ratio is less than 30 and sell at 5% profit. Stop loss is 2%.",
+    "klass": "fundamental",
+    "needs": "P/E screen + immediate execution"
+  },
+  {
+    "n": 61,
+    "text": "Instantly buy NIFTY 50 stocks whose promoter holding is more than 50% and sell at 3% profit. Stop loss is 1%.",
+    "klass": "fundamental",
+    "needs": "promoter holding + immediate execution"
+  },
+  {
+    "n": 62,
+    "text": "Instantly buy NIFTY 100 stocks whose Earning per share is high and whose revenue has increased in last quarter. Sell at 8% profit. Stop loss is 5%.",
+    "klass": "fundamental",
+    "needs": "EPS + revenue growth + immediate execution"
+  },
+  {
+    "n": 63,
+    "text": "Instantly buy RELIANCE when its positive news is announced and sell at 3% profit. Stop loss 1%.",
+    "klass": "event",
+    "needs": "news sentiment + single stock"
+  },
+  {
+    "n": 64,
+    "text": "Instantly buy NIFTY 100 stocks when its dividend is announced and sell after receiving dividend.",
+    "klass": "event",
+    "needs": "dividend announcements + universe"
+  },
+  {
+    "n": 65,
+    "text": "invest 30,000 in banking sector",
+    "klass": "robo",
+    "needs": "portfolio construction by sector and amount"
+  },
+  {
+    "n": 66,
+    "text": "invest 50,000, low risk, long term",
+    "klass": "robo",
+    "needs": "portfolio construction by risk and horizon"
+  },
+  {
+    "n": 67,
+    "text": "autopilot 75,000 in IT sector, medium risk, short term, avoid Wipro",
+    "klass": "robo",
+    "needs": "portfolio construction + exclusions"
+  },
+  {
+    "n": 68,
+    "text": "Give me a good target and stop loss for a strategy: buy when rsi < 30 and sell when rsi > 60",
+    "klass": "question",
+    "needs": "parameter advice"
+  },
+  {
+    "n": 69,
+    "text": "Give me a good entry price for Reliance",
+    "klass": "question",
+    "needs": "entry price advice"
+  },
+  {
+    "n": 70,
+    "text": "Tell me whether I should buy/sell/hold Bajaj Finance",
+    "klass": "question",
+    "needs": "buy/sell/hold advice"
+  }
+]
