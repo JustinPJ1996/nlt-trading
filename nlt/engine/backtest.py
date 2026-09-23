@@ -17,6 +17,19 @@ here is *when* information is allowed to affect a fill:
     assumes the stop filled first. It is the pessimistic assumption, which is
     the only one that does not make a backtest look better than the strategy
     actually is.
+
+Two more invariants that broke in an earlier version of this file, in a way
+that produced a silently-wrong -113% "total return" on a real strategy:
+
+  * A position is never opened for more than the account can fund. `lot_size`
+    used to default to 75 (an *options* lot) even for a cash-index backtest,
+    so "1 lot" of NIFTY meant 75x the index on Rs 1 lakh of capital -- 4-17x
+    leverage, reported as if it were a real result. The default is now derived
+    from `spec.instrument.trade_as`, and every fill is additionally capped to
+    what the account's spare capital can actually buy (see `_open_position`).
+  * Equity in a long-only backtest can never go negative: the worst case is
+    losing the entire position, not more than it. `run_backtest` asserts this
+    after every bar instead of trusting the arithmetic to get it right.
 """
 
 from __future__ import annotations
@@ -50,6 +63,20 @@ _DEFAULT_INTRADAY_BARS_PER_YEAR = 252 * 75  # rough fallback; only 1d is exercis
 
 def _zero_charges(price: float, quantity: int, side: str) -> float:
     return 0.0
+
+
+def _default_lot_size(spec: StrategySpec) -> int:
+    """The tradeable unit when the caller does not specify one.
+
+    75 is NIFTY's *options* lot size -- a contract term, not a property of the
+    index. A cash-index backtest that inherited it as a default would buy 75
+    units of NIFTY per "1 lot", which on a modest account is several times
+    leverage the caller never asked for (this is exactly how the engine used
+    to report a -113% total return on a strategy that could not lose more than
+    its stop loss). An index backtest trades in units of 1; only an options
+    backtest inherits the options convention.
+    """
+    return 75 if spec.instrument.trade_as == "option" else 1
 
 
 @dataclass(frozen=True)
@@ -97,11 +124,22 @@ def run_backtest(
     bars: pd.DataFrame,
     *,
     capital: float = 100_000.0,
-    lot_size: int = 75,
+    lot_size: int | None = None,
     charge_fn=None,
     slippage_pct: float = 0.02,
 ) -> BacktestResult:
+    """Run `spec` bar by bar over `bars`.
+
+    `lot_size` is optional and should almost always be left unset: it is
+    derived from `spec.instrument.trade_as` (see `_default_lot_size`) so that
+    an index backtest trades in units of 1 and only an options backtest
+    inherits the 75-share options convention. Pass it explicitly only to
+    model a specific contract's lot size (e.g. BANKNIFTY's, which differs
+    from NIFTY's).
+    """
     warnings: list[str] = []
+    if lot_size is None:
+        lot_size = _default_lot_size(spec)
     if charge_fn is None:
         charge_fn = _zero_charges
         warnings.append("no charge_fn supplied; results exclude transaction costs")
@@ -131,6 +169,8 @@ def run_backtest(
     stop_beat_target_count = 0
     risk_fallback_count = 0
     dropped_for_concurrency = 0
+    affordability_capped_count = 0
+    affordability_skipped_count = 0
 
     for i in range(n):
         ts = bars.index[i]
@@ -140,13 +180,25 @@ def run_backtest(
         if pending_entry:
             pending_entry = False
             if len(open_positions) < max_concurrent:
-                capital_now = capital + realized_pnl
-                pos, used_fallback = _open_position(
-                    spec, features, i, ts, bar, slippage_pct, lot_size, capital_now
+                capital_total = capital + realized_pnl
+                # Capital already tied up in other open positions is not spare
+                # capital: without netting it out, two concurrent positions
+                # could each be sized as if the whole account were free,
+                # re-creating the leverage bug on max_concurrent_positions > 1.
+                committed = sum(p.entry_price * p.quantity for p in open_positions)
+                capital_spare = capital_total - committed
+                pos, used_fallback, capped = _open_position(
+                    spec, features, i, ts, bar, slippage_pct, lot_size,
+                    capital_total, capital_spare,
                 )
-                open_positions.append(pos)
-                if used_fallback:
-                    risk_fallback_count += 1
+                if pos is not None:
+                    open_positions.append(pos)
+                    if used_fallback:
+                        risk_fallback_count += 1
+                    if capped:
+                        affordability_capped_count += 1
+                else:
+                    affordability_skipped_count += 1
             else:
                 dropped_for_concurrency += 1
 
@@ -192,6 +244,7 @@ def run_backtest(
         # --- 3. mark-to-market equity for this bar --------------------------
         unrealized = sum(_gross_pnl(pos, bar.close) for pos in open_positions)
         equity[i] = capital + realized_pnl + unrealized
+        _assert_equity_floor(equity[i], ts, spec.direction)
 
         # --- 4. schedule fills for the NEXT bar, from this closed bar's signal
         can_enter = (
@@ -239,6 +292,7 @@ def run_backtest(
                 )
             )
         equity[-1] = capital + realized_pnl
+        _assert_equity_floor(equity[-1], ts, spec.direction)
 
     if stop_beat_target_count:
         warnings.append(
@@ -254,6 +308,17 @@ def run_backtest(
         warnings.append(
             f"{dropped_for_concurrency} entry signal(s) skipped: max_concurrent_positions "
             f"({max_concurrent}) already reached"
+        )
+    if affordability_capped_count:
+        warnings.append(
+            f"{affordability_capped_count} entr{'y' if affordability_capped_count == 1 else 'ies'} "
+            "sized down: the requested position value exceeded spare capital, so it was reduced "
+            "to what the account could actually fund"
+        )
+    if affordability_skipped_count:
+        warnings.append(
+            f"{affordability_skipped_count} entry signal(s) skipped: not enough spare capital "
+            "to fund even a single lot"
         )
 
     equity_series = pd.Series(equity, index=bars.index, name="equity")
@@ -289,6 +354,26 @@ def _gross_pnl(pos: _OpenPosition, exit_price: float) -> float:
     return (pos.entry_price - exit_price) * pos.quantity
 
 
+def _assert_equity_floor(equity_value: float, ts: pd.Timestamp, direction: str) -> None:
+    """A long-only account can lose at most what it put in, never more.
+
+    Every long position is now capped at open time to what spare capital can
+    fund (see `_open_position`), so if this ever fires it means that cap was
+    bypassed -- an accounting bug, not a bad but valid backtest result. We
+    raise rather than clamp-and-warn: silently clamping would hide exactly the
+    class of bug (buying more than the account can afford) that this file
+    exists to prevent, and a caller can always catch and inspect. Short
+    positions have theoretically unbounded loss, so the invariant is only
+    enforced for `direction == "long"`.
+    """
+    if direction == "long" and equity_value < -1e-6:
+        raise RuntimeError(
+            f"equity went negative ({equity_value:.2f}) at {ts} in a long-only backtest; "
+            "this means a position was opened larger than the account could fund, which "
+            "should be impossible after the affordability check in _open_position"
+        )
+
+
 def _open_position(
     spec: StrategySpec,
     features: pd.DataFrame,
@@ -297,8 +382,22 @@ def _open_position(
     bar: pd.Series,
     slippage_pct: float,
     lot_size: int,
-    capital_now: float,
-) -> tuple[_OpenPosition, bool]:
+    capital_total: float,
+    capital_spare: float,
+) -> tuple[_OpenPosition | None, bool, bool]:
+    """Returns (position or None, used_risk_fallback, size_was_capped).
+
+    `capital_total` is capital + realized pnl, the basis `risk_based` sizing
+    divides into. `capital_spare` nets out what is already tied up in other
+    open positions -- it is what the *affordability* check below funds the
+    new position out of, so that concurrent positions cannot each be sized as
+    though the whole account were free.
+
+    A position is never opened for more than `capital_spare` can fund: this is
+    the fix for the leverage bug where a "1 lot" fixed_lots position on a
+    small account could cost several times the account's capital. If not even
+    one lot is affordable, no position is opened at all (returns None).
+    """
     direction = spec.direction
     entry_side = "buy" if direction == "long" else "sell"
     entry_price = _apply_slippage(bar.open, entry_side, slippage_pct)
@@ -323,7 +422,19 @@ def _open_position(
     if sizing_distance is None and trailing_pct is not None:
         sizing_distance = entry_price * trailing_pct / 100.0
 
-    quantity, used_fallback = _size_position(spec, entry_price, capital_now, sizing_distance, lot_size)
+    quantity, used_fallback = _size_position(
+        spec, entry_price, capital_total, sizing_distance, lot_size
+    )
+
+    # --- affordability: never open a position the account cannot fund ------
+    capped = False
+    affordable_lots = math.floor(capital_spare / entry_price / lot_size) if entry_price > 0 else 0
+    affordable_quantity = max(affordable_lots, 0) * lot_size
+    if quantity > affordable_quantity:
+        quantity = affordable_quantity
+        capped = True
+    if quantity <= 0:
+        return None, used_fallback, False
 
     pos = _OpenPosition(
         direction=direction,
@@ -335,7 +446,7 @@ def _open_position(
         trailing_pct=trailing_pct,
         trail_best=entry_price,
     )
-    return pos, used_fallback
+    return pos, used_fallback, capped
 
 
 def _fixed_stop_distance(spec: StrategySpec, features: pd.DataFrame, i: int) -> float | None:
