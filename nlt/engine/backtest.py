@@ -402,7 +402,7 @@ def _open_position(
     entry_side = "buy" if direction == "long" else "sell"
     entry_price = _apply_slippage(bar.open, entry_side, slippage_pct)
 
-    stop_distance = _fixed_stop_distance(spec, features, i)
+    stop_distance = _fixed_stop_distance(spec, features, i, entry_price)
     stop_level = None
     if stop_distance is not None:
         stop_level = (
@@ -449,8 +449,26 @@ def _open_position(
     return pos, used_fallback, capped
 
 
-def _fixed_stop_distance(spec: StrategySpec, features: pd.DataFrame, i: int) -> float | None:
+def _fixed_stop_distance(
+    spec: StrategySpec, features: pd.DataFrame, i: int, entry_price: float
+) -> float | None:
     """The hard-stop distance in price points, fixed at entry for the trade's life.
+
+    Both inputs are chosen to be knowable at the instant of the fill, which is bar
+    `i`'s open:
+
+    * `stop_pct` is measured from `entry_price`, not from bar `i`'s close. The
+      close has not happened yet when the order fills, so using it would let the
+      stop be set with knowledge of where the bar ended -- tighter on a day that
+      fell, wider on one that rose. It also made "1% stop" mean 1% of a different
+      price than "2% target" meant 2% of, which is not what anyone typing that
+      sentence expects.
+    * ATR is read from bar `i-1`, the last bar that had completed when the signal
+      fired. Bar `i`'s ATR incorporates its own high, low and close.
+
+    The prefix-invariance test cannot catch either mistake: it compares runs that
+    differ in *future* bars, and both values are equally available in a truncated
+    run. Misusing the current bar is a separate failure mode, tested directly.
 
     `stop_pct` and `stop_atr_mult` may both be set; the tighter of the two wins,
     since that is the one that would actually be hit first. A trailing-only
@@ -459,11 +477,12 @@ def _fixed_stop_distance(spec: StrategySpec, features: pd.DataFrame, i: int) -> 
     candidates: list[float] = []
     exit_rules = spec.exit
     if exit_rules.stop_pct is not None:
-        candidates.append(features["close"].iloc[i] * exit_rules.stop_pct / 100.0)
+        candidates.append(entry_price * exit_rules.stop_pct / 100.0)
     if exit_rules.stop_atr_mult is not None and exit_rules.atr_id is not None:
-        atr_val = features[exit_rules.atr_id].iloc[i]
-        if pd.notna(atr_val):
-            candidates.append(exit_rules.stop_atr_mult * float(atr_val))
+        if i >= 1:
+            atr_val = features[exit_rules.atr_id].iloc[i - 1]
+            if pd.notna(atr_val):
+                candidates.append(exit_rules.stop_atr_mult * float(atr_val))
     return min(candidates) if candidates else None
 
 
