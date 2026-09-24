@@ -544,7 +544,19 @@ def _check_exit(
     if pos.stop_level is not None:
         stop_hit = bar.low <= pos.stop_level if long else bar.high >= pos.stop_level
         if stop_hit:
-            return "stop", pos.stop_level, target_hit
+            # A stop does not protect you through a gap. If the bar OPENED beyond
+            # the stop, the level was never tradeable -- the first price you could
+            # actually have got out at is the open, which may be far worse.
+            #
+            # Filling at the stop level regardless is the single most flattering
+            # lie a backtester can tell: it makes every stop-loss strategy look
+            # like its worst case is bounded by the stop, when overnight gaps are
+            # exactly when large losses happen.
+            gapped_through = (
+                bar.open < pos.stop_level if long else bar.open > pos.stop_level
+            )
+            fill = bar.open if gapped_through else pos.stop_level
+            return "stop", fill, target_hit
 
     if pos.trailing_pct is not None:
         # The best price ratchets using *this* bar's extreme before the trail
@@ -564,7 +576,13 @@ def _check_exit(
             return "trailing_stop", trail_level, target_hit
 
     if target_hit:
-        return "target", pos.target_level, False
+        # Mirror of the stop case: a gap past the target fills at the open, which
+        # here is in our favour. Modelling only the unfavourable gap would bias
+        # results the other way.
+        gapped_past = (
+            bar.open > pos.target_level if long else bar.open < pos.target_level
+        )
+        return "target", (bar.open if gapped_past else pos.target_level), False
 
     if pos.pending_condition_exit:
         return "condition", bar.open, False

@@ -704,3 +704,103 @@ def test_stop_and_target_are_measured_from_the_same_price():
     assert trade.exit_price == pytest.approx(entry * 0.90), (
         f"stop at {trade.exit_price} is not 10% below the {entry} entry"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gaps through stops and targets
+#
+# The engine used to fill a stop at the stop level whenever the bar's range
+# touched it -- including when the bar OPENED well beyond it. That reports a
+# fill at a price which never traded, and it is the most flattering lie a
+# backtester can tell: it makes every stop-loss strategy look as though its
+# worst case is bounded by the stop, when overnight gaps are precisely when
+# large losses occur.
+#
+# On the real NIFTY RSI strategy this understated one loss by a factor of ten.
+# ---------------------------------------------------------------------------
+
+
+def _gap_spec() -> StrategySpec:
+    return StrategySpec.model_validate(
+        {
+            "name": "gap", "description": "x",
+            "instrument": {"symbol": "NIFTY", "timeframe": "1d", "trade_as": "index"},
+            "indicators": [],
+            "entry": {"kind": "compare", "op": "gt",
+                      "left": {"kind": "ref", "name": "close"},
+                      "right": {"kind": "const", "value": 99.9}},
+            "exit": {"stop_pct": 1.0, "target_pct": 5.0},
+            "sizing": {"mode": "fixed_lots", "lots": 1},
+            "risk": {"max_concurrent_positions": 1},
+        }
+    )
+
+
+def test_gap_down_through_stop_fills_at_the_open_not_the_stop():
+    """Entry at 100, stop at 99, market opens at 90. The fill must be 90."""
+    bars = _mkbars(
+        [100.0, 100.0, 90.0, 90.0],
+        [100.5, 100.5, 90.5, 90.5],
+        [99.5, 99.5, 89.0, 89.0],
+        [100.0, 100.0, 90.0, 90.0],
+    )
+    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    trade = res.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(90.0), (
+        f"filled at {trade.exit_price}, a price that never traded -- the bar "
+        "opened at 90.0, below the 99.0 stop"
+    )
+    assert trade.gross_pnl == pytest.approx(-10.0)
+
+
+def test_stop_inside_the_bar_still_fills_at_the_stop_level():
+    """The ordinary case must not regress: a bar that trades down through the
+    stop, having opened above it, fills at the stop."""
+    bars = _mkbars(
+        [100.0, 100.0, 99.5, 99.5],
+        [100.5, 100.5, 100.0, 100.0],
+        [99.5, 98.0, 99.0, 99.0],
+        [100.0, 99.5, 99.5, 99.5],
+    )
+    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    trade = res.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(99.0), "opened above the stop, so fills at it"
+
+
+def test_gap_up_past_target_fills_at_the_open_in_our_favour():
+    """The mirror case. Modelling only adverse gaps would bias results the other way."""
+    bars = _mkbars(
+        [100.0, 100.0, 120.0, 120.0],
+        [100.5, 100.5, 121.0, 121.0],
+        [99.5, 99.9, 119.0, 119.0],
+        [100.0, 100.0, 120.0, 120.0],
+    )
+    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    trade = res.trades[0]
+    assert trade.exit_reason == "target"
+    assert trade.exit_price == pytest.approx(120.0), (
+        f"filled at {trade.exit_price}; the bar opened at 120.0, already past the "
+        "105.0 target, so that is the realistic fill"
+    )
+
+
+def test_short_gap_up_through_stop_fills_at_the_open():
+    """Shorts gap the other way, and the engine must be symmetric about it."""
+    bars = _mkbars(
+        [100.0, 100.0, 115.0, 115.0],
+        [100.5, 100.5, 116.0, 116.0],
+        [99.5, 99.5, 114.0, 114.0],
+        [100.0, 100.0, 115.0, 115.0],
+    )
+    spec = _gap_spec().model_copy(update={"direction": "short"})
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    trade = res.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(115.0)
+    assert trade.gross_pnl == pytest.approx(-15.0)
