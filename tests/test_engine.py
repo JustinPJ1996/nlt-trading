@@ -843,3 +843,416 @@ def test_short_gap_up_through_stop_fills_at_the_open():
     assert trade.exit_reason == "stop"
     assert trade.exit_price == pytest.approx(115.0)
     assert trade.gross_pnl == pytest.approx(-15.0)
+
+
+# ---------------------------------------------------------------------------
+# Session-aware intraday backtesting
+#
+# NSE cash/F&O runs 09:15-15:30, so a 15-minute bar timeframe has 25 bars per
+# session (09:15, 09:30, ... 15:15 -- each labelled by its start, covering up
+# to the close). These helpers build that shape directly rather than through
+# any resampling, so a test's inputs are exactly the bars the assertions
+# reason about.
+# ---------------------------------------------------------------------------
+
+
+def _session_bar_times(last_time: dt.time = dt.time(15, 15)) -> list[dt.time]:
+    """15-minute bar start times from NSE's 09:15 open through `last_time` inclusive.
+
+    A full session (`last_time=15:15`) yields 25 times; a shorter `last_time`
+    models an early-close/muhurat day with fewer bars, without needing a
+    second code path.
+    """
+    times = []
+    minutes = 9 * 60 + 15
+    end_minutes = last_time.hour * 60 + last_time.minute
+    while minutes <= end_minutes:
+        times.append(dt.time(minutes // 60, minutes % 60))
+        minutes += 15
+    return times
+
+
+def _mkintraday_bars(day_specs: list[tuple[dt.date, dt.time, list[float]]]) -> pd.DataFrame:
+    """Build 15m OHLCV bars for several trading days.
+
+    `day_specs` is a list of `(date, last_bar_time, closes)`. `closes` must have
+    exactly as many entries as `_session_bar_times(last_bar_time)` produces, so a
+    short session is expressed simply by giving it fewer closes and an earlier
+    `last_bar_time` -- there is no separate "half day" flag to get wrong.
+    OHLC is a tiny flat range around each close (open == close, high/low +-1):
+    these tests are about signal timing and session boundaries, not price
+    action shape, and a flat range keeps stop/target arithmetic out of the way
+    unless a test deliberately widens a bar's high/low.
+    """
+    rows = []
+    idx = []
+    for day, last_time, closes in day_specs:
+        times = _session_bar_times(last_time)
+        assert len(times) == len(closes), (
+            f"{day}: expected {len(times)} closes for a session ending {last_time}, "
+            f"got {len(closes)}"
+        )
+        for t, close in zip(times, closes):
+            ts = pd.Timestamp.combine(day, t).tz_localize("Asia/Kolkata")
+            idx.append(ts)
+            rows.append(
+                {
+                    "open": close,
+                    "high": close + 1.0,
+                    "low": close - 1.0,
+                    "close": close,
+                    "volume": 100_000.0,
+                }
+            )
+    return pd.DataFrame(rows, index=pd.DatetimeIndex(idx, name="ts"))
+
+
+def _full_day(day: dt.date, closes: list[float]) -> tuple[dt.date, dt.time, list[float]]:
+    return (day, dt.time(15, 15), closes)
+
+
+def _flat_day(day: dt.date, price: float = 100.0, n: int = 25) -> tuple[dt.date, dt.time, list[float]]:
+    return (day, dt.time(15, 15), [price] * n)
+
+
+def _intraday_spec(entry, exit_rules, **kwargs) -> StrategySpec:
+    kwargs.setdefault("risk", RiskLimits(max_lots=100))
+    kwargs.setdefault("instrument", Instrument(symbol="NIFTY", trade_as="index", timeframe="15m"))
+    return StrategySpec(
+        name="intraday test strategy", description="test", entry=entry, exit=exit_rules, **kwargs
+    )
+
+
+def test_square_off_fires_and_beats_a_reachable_target():
+    """Square-off must win even when a target is also reachable on that same bar."""
+    day = dt.date(2024, 1, 8)  # a Monday
+    closes = [50.0] + [100.0] * 24
+    bars = _mkintraday_bars([_full_day(day, closes)])
+    # Bump the final bar's high above where the 1% target sits, so the target
+    # is reachable on the exact bar the square-off clock also fires on.
+    bars.iloc[-1, bars.columns.get_loc("high")] = 105.0
+
+    spec = _intraday_spec(
+        entry=_signal_once(bars, at=0),
+        # 5% of the 50.0 signal close = 2.5, so the 102.5 target is out of
+        # reach of every bar's flat high (101.0) except the one we bumped.
+        exit_rules=ExitRules(target_pct=5.0),
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    assert len(res.trades) == 1
+    trade = res.trades[0]
+    assert trade.exit_reason == "square_off"
+    assert trade.exit_time.time() == dt.time(15, 15)
+    # The square-off fill is the bar's close (100.0), not the ~102.5 target.
+    assert trade.exit_price == pytest.approx(100.0)
+
+
+def test_square_off_on_short_session_fires_on_its_last_bar():
+    """A day that ends at 12:15 (muhurat/early close) must still force the exit.
+
+    `square_off` defaults to 15:15, which this session never reaches -- the
+    engine has to notice this is the session's *last* bar and force the exit
+    there instead of leaving the position open into a session that, in this
+    test, never comes.
+    """
+    day = dt.date(2024, 1, 8)
+    closes = [50.0] + [100.0] * (len(_session_bar_times(dt.time(12, 15))) - 1)
+    bars = _mkintraday_bars([(day, dt.time(12, 15), closes)])
+
+    spec = _intraday_spec(
+        entry=_signal_once(bars, at=0),
+        exit_rules=ExitRules(stop_pct=50.0),  # never reachable; only square-off can close this
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    assert len(res.trades) == 1
+    trade = res.trades[0]
+    assert trade.exit_reason == "square_off"
+    assert trade.exit_time.time() == dt.time(12, 15)
+    assert trade.exit_time.time() < spec.schedule.square_off
+
+
+def test_no_entry_after_cutoff_blocks_a_signal_at_the_cutoff():
+    """A signal exactly AT `no_entry_after` (default 15:00) must not open a position.
+
+    `no_entry_after` is documented as an "at or after" cutoff; the engine used
+    to accept entries up to and including that exact time (`<=` instead of
+    `<`), which let a 15:00 signal open a position 15:00 was supposed to rule
+    out.
+    """
+    day = dt.date(2024, 1, 8)
+    closes = [100.0] * 23 + [77.0, 100.0]
+    bars = _mkintraday_bars([_full_day(day, closes)])
+    assert bars.index[23].time() == dt.time(15, 0)
+
+    spec = _intraday_spec(
+        entry=_signal_once(bars, at=23),
+        exit_rules=ExitRules(stop_pct=50.0),
+        schedule=Schedule(),  # default no_entry_after == 15:00
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    assert res.trades == []
+
+
+def test_no_overnight_carry_across_multiple_sessions():
+    """Over a multi-day intraday run, every trade's entry and exit share a session date."""
+    days = [d.date() for d in pd.bdate_range(dt.date(2024, 1, 8), periods=5)]
+    day_specs = [_flat_day(day, price=100.0 + i) for i, day in enumerate(days)]
+    bars = _mkintraday_bars(day_specs)
+
+    spec = _intraday_spec(
+        entry=_always_true_entry(),
+        exit_rules=ExitRules(max_bars_held=3),
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    assert len(res.trades) > 1, "test is vacuous with too few trades"
+    for trade in res.trades:
+        assert session_date(trade.entry_time, NSE_EQUITY) == session_date(
+            trade.exit_time, NSE_EQUITY
+        ), f"trade {trade} carried a position across a session boundary"
+
+
+def test_signal_on_last_bar_of_session_does_not_fill_at_next_mornings_open():
+    """The session-boundary entry problem: pick (a), skip the entry outright.
+
+    A signal on a session's last bar has no valid intraday fill -- the only bar
+    left to fill it on is the next morning's open, 14+ hours (a full overnight
+    gap) away. This asserts the chosen behaviour: no trade is opened, and the
+    skip is counted in `warnings` rather than silently dropped.
+    """
+    # day1 is a deliberately short session ending well before the default
+    # `no_entry_after` (15:00), so `no_entry_after` cannot be what blocks this
+    # entry -- if the trade is skipped here, it is the session-boundary check
+    # doing it, not the unrelated time-of-day cutoff (the two would otherwise
+    # be indistinguishable, since a *full* session's last bar is 15:15, always
+    # at or after `no_entry_after` by the model's own validator).
+    day1 = dt.date(2024, 1, 8)
+    day2 = dt.date(2024, 1, 9)
+    last_time = dt.time(11, 0)
+    n1 = len(_session_bar_times(last_time))
+    closes_day1 = [100.0] * (n1 - 1) + [42.0]
+    closes_day2 = [200.0] * 25
+    bars = _mkintraday_bars([(day1, last_time, closes_day1), _full_day(day2, closes_day2)])
+    assert bars.index[n1 - 1].time() < dt.time(15, 0)
+
+    spec = _intraday_spec(
+        entry=_signal_once(bars, at=n1 - 1),  # day1's last bar
+        exit_rules=ExitRules(stop_pct=50.0),
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    assert res.trades == []
+    assert any("last bar of a trading session" in w for w in res.warnings)
+
+
+def test_weekend_gap_not_treated_as_adjacent_bars():
+    """Friday's last bar and Monday's first bar are adjacent ROWS but not adjacent
+    session time -- the boundary-entry skip must fire across the weekend too,
+    not just overnight. Friday is again a short session ending before
+    `no_entry_after`, isolating the session-boundary check from the unrelated
+    time-of-day cutoff (see the comment in the test above)."""
+    friday = dt.date(2024, 1, 12)
+    monday = dt.date(2024, 1, 15)
+    last_time = dt.time(11, 0)
+    n1 = len(_session_bar_times(last_time))
+    closes_fri = [100.0] * (n1 - 1) + [17.0]
+    closes_mon = [300.0] * 25
+    bars = _mkintraday_bars([(friday, last_time, closes_fri), _full_day(monday, closes_mon)])
+
+    assert bars.index[n1 - 1].date() == friday
+    assert bars.index[n1].date() == monday
+
+    spec = _intraday_spec(
+        entry=_signal_once(bars, at=n1 - 1),
+        exit_rules=ExitRules(stop_pct=50.0),
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    # If the engine treated row `n1` as simply "the next bar" without regard
+    # for the 3-calendar-day gap behind it, this would open a Monday-morning
+    # position off a Friday signal -- a weekend held as if it were the usual
+    # 15 minutes between bars.
+    assert res.trades == []
+
+
+def test_partial_last_bar_is_dropped_and_warned_about():
+    """`drop_partial_last_bar=True` (the default) must ignore a still-forming final bar."""
+    future_day = dt.date(2099, 1, 5)  # a Monday, safely after "now"
+    closes = [100.0, 100.0, 100.0]
+    bars = _mkintraday_bars([(future_day, dt.time(9, 45), closes)])
+
+    spec = _intraday_spec(
+        entry=_always_true_entry(), exit_rules=ExitRules(stop_pct=50.0), schedule=Schedule()
+    )
+
+    res_dropped = run_backtest(
+        spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0,
+        drop_partial_last_bar=True,
+    )
+    assert len(res_dropped.equity) == 2, "the 3rd (still-forming) bar should have been dropped"
+    assert any("still-forming" in w for w in res_dropped.warnings)
+
+    res_kept = run_backtest(
+        spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0,
+        drop_partial_last_bar=False,
+    )
+    assert len(res_kept.equity) == 3, "with the guard off, all 3 bars should remain"
+    assert not any("still-forming" in w for w in res_kept.warnings)
+
+
+def test_daily_nifty_rsi_regression_pinned(nifty_bars):
+    """Pins the exact daily-bar numbers the session-awareness change must not move.
+
+    `test_real_nifty_rsi_strategy_gives_believable_metrics` above only checks
+    loose bounds, which would not catch a shift caused by this change. Every
+    piece of new session logic is gated behind `instrument.timeframe != "1d"`
+    (`is_intraday_tf`), so a daily-bar run should take none of the new code
+    paths -- these exact numbers are the proof.
+    """
+    spec = _spec(
+        entry=Compare(op="crosses_below", left=Ref(name="rsi14"), right=Const(value=30.0)),
+        exit_rules=ExitRules(stop_pct=1.0, target_pct=2.0),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+        instrument=Instrument(symbol="NIFTY", trade_as="index"),
+    )
+    res = run_backtest(spec, nifty_bars, capital=100_000.0)
+
+    assert res.metrics["total_trades"] == 56
+    assert res.metrics["total_return_pct"] == pytest.approx(-2.1177329341105504)
+
+
+def test_long_lookback_indicator_warns_how_many_sessions_it_spans():
+    """A 200-period SMA on 15m bars spans 200 / 25 = 8 trading sessions.
+
+    Users reason in "200 periods" as roughly "200 days"; on 15m bars it is
+    really 8 trading days, smoothed across every overnight gap in between as
+    though they were consecutive minutes. This warning is informational only
+    (indicators themselves are out of bounds for this change) -- it exists so
+    the surprise is visible instead of silent.
+    """
+    day = dt.date(2024, 1, 8)
+    bars = _mkintraday_bars([_flat_day(day, price=100.0)])
+
+    spec = _intraday_spec(
+        entry=_always_true_entry(),
+        exit_rules=ExitRules(stop_pct=50.0),
+        indicators=[IndicatorSpec(id="sma200", type="sma", params={"length": 200})],
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+    assert any("200 bars" in w and "8 trading session" in w for w in res.warnings)
+
+
+def test_intraday_end_to_end_produces_sane_trades():
+    """A full run on constructed 15m bars: trades happen, equity is never NaN,
+    and no trade exits before it entered."""
+    rng = np.random.default_rng(2026)
+    days = [d.date() for d in pd.bdate_range(dt.date(2024, 1, 8), periods=10)]
+    day_specs = []
+    price = 100.0
+    for day in days:
+        closes = []
+        for _ in range(25):
+            price += rng.normal(0, 0.5)
+            closes.append(price)
+        day_specs.append(_full_day(day, closes))
+    bars = _mkintraday_bars(day_specs)
+
+    spec = _intraday_spec(
+        entry=Compare(op="crosses_below", left=Ref(name="close"), right=Ref(name="sma5")),
+        exit_rules=ExitRules(stop_pct=1.0, target_pct=2.0, max_bars_held=10),
+        indicators=[IndicatorSpec(id="sma5", type="sma", params={"length": 5})],
+        schedule=Schedule(),
+    )
+    res = run_backtest(spec, bars, capital=1_000_000.0)
+
+    assert len(res.trades) > 0, "test is vacuous with zero trades"
+    assert not res.equity.isna().any()
+    for trade in res.trades:
+        # Same-bar stop-outs are legitimate (see the NIFTY smoke test's
+        # comment above): a position can fill and hit its stop within the
+        # very bar it opens on. What must never happen is an exit strictly
+        # BEFORE its entry.
+        assert trade.exit_time >= trade.entry_time
+
+
+# ---------------------------------------------------------------------------
+# The overnight-carry safety net, tested at its trigger
+#
+# Every other intraday test exercises this invariant as a *passing* condition:
+# square-off forces the exit, so it never fires. That leaves the net itself
+# untested -- if the exit precedence ever broke, we would be relying on a check
+# nobody had ever seen work.
+#
+# These two tests call the invariant directly and then verify the engine wires
+# it in, which together prove the net catches what it claims to.
+# ---------------------------------------------------------------------------
+
+
+def test_overnight_carry_invariant_raises_on_a_boundary_crossing():
+    """Called directly with a trade that spans two sessions, it must raise."""
+    from nlt.data.session import NSE_EQUITY
+    from nlt.engine.backtest import _assert_no_overnight_carry
+
+    entry = pd.Timestamp("2026-09-21 14:45", tz="Asia/Kolkata")
+    exit_ = pd.Timestamp("2026-09-22 09:15", tz="Asia/Kolkata")
+
+    with pytest.raises(RuntimeError, match="carry a position across a session boundary"):
+        _assert_no_overnight_carry(entry, exit_, NSE_EQUITY)
+
+
+def test_overnight_carry_invariant_permits_a_same_session_trade():
+    """The mirror: two bars on one trading day must not raise."""
+    from nlt.data.session import NSE_EQUITY
+    from nlt.engine.backtest import _assert_no_overnight_carry
+
+    entry = pd.Timestamp("2026-09-21 09:30", tz="Asia/Kolkata")
+    exit_ = pd.Timestamp("2026-09-21 15:15", tz="Asia/Kolkata")
+
+    _assert_no_overnight_carry(entry, exit_, NSE_EQUITY)  # must not raise
+
+
+def test_engine_actually_calls_the_overnight_carry_invariant(monkeypatch):
+    """Break square-off, and the invariant must fire rather than the engine
+    quietly producing an overnight trade.
+
+    This is what makes the net real: with the forced exit disabled, an intraday
+    run over several sessions must raise, not return a trade that spans days.
+    """
+    import nlt.engine.backtest as bt
+
+    bars = _mkintraday_bars([
+        _flat_day(dt.date(2026, 9, 21), 100.0),
+        _flat_day(dt.date(2026, 9, 22), 100.0),
+    ])
+    # Enter on the first bar and never exit on merit, so only the forced
+    # square-off can close the position -- which is what we are disabling.
+    spec = _intraday_spec(
+        entry=Compare(op="gt", left=Ref(name="close"), right=Const(value=0.0)),
+        exit_rules=ExitRules(target_pct=100.0, stop_pct=99.0),
+    )
+
+    # Disable every square-off path: nothing forces the position shut at the close.
+    monkeypatch.setattr(bt, "is_last_bar_of_session",
+                        lambda index, session: pd.Series(False, index=index))
+    original = bt._check_exit
+
+    def no_square_off(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if result is not None and result[0] == "square_off":
+            return None
+        return result
+
+    monkeypatch.setattr(bt, "_check_exit", no_square_off)
+
+    with pytest.raises(RuntimeError, match="session boundary"):
+        run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)

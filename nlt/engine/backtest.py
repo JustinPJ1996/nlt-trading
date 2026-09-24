@@ -30,6 +30,28 @@ that produced a silently-wrong -113% "total return" on a real strategy:
   * Equity in a long-only backtest can never go negative: the worst case is
     losing the entire position, not more than it. `run_backtest` asserts this
     after every bar instead of trusting the arithmetic to get it right.
+
+Intraday timeframes (anything but "1d") add a session clock daily bars do not
+have, and with it a set of failure modes that lose real money in a way a bad
+Sharpe ratio does not: a position quietly held overnight, an entry filled
+across a 14-hour gap because the signal happened to land on a session's last
+bar, a signal acted on before its own candle finished printing. `is_intraday_tf`
+(`spec.instrument.timeframe != "1d"`) gates every one of the following, so
+daily-bar behaviour -- and every test that predates it -- is provably
+unaffected:
+
+  * A session's last bar never schedules an entry fill for "the next bar":
+    that next bar is the following session's open, not 15/30/60 minutes away,
+    and this engine refuses to fill across that gap (see the "skip the entry
+    outright" note by the `can_enter` block for why, over filling it anyway).
+  * `square_off` forces every open position closed, ahead of every other exit
+    reason -- including on a session that ends before the square-off clock
+    time is ever reached (a short/muhurat day), via `is_last_bar_of_session`
+    rather than a hardcoded clock.
+  * `_assert_no_overnight_carry` makes "no intraday position survives a
+    session boundary" a hard invariant, not a hope: it raises rather than
+    warn, because a warning would let a silently-wrong "intraday" result reach
+    someone who explicitly asked never to hold overnight.
 """
 
 from __future__ import annotations
