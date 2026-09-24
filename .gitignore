@@ -1,21 +1,26 @@
+# Directory patterns are anchored with a leading slash on purpose.
+# An unanchored 'data/' matches a directory of that name at ANY depth, which
+# silently excluded the whole nlt/data package from every push until someone
+# cloned the repo and found it broken. tests/test_repo_hygiene.py enforces this.
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
+/build/
 develop-eggs/
-dist/
-downloads/
-eggs/
+/dist/
+/downloads/
+/eggs/
 .eggs/
 /lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
