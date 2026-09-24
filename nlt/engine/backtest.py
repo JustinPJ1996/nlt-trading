@@ -411,7 +411,7 @@ def _open_position(
 
     target_level = None
     if spec.exit.target_pct is not None:
-        delta = entry_price * spec.exit.target_pct / 100.0
+        delta = signal_close(features, i, entry_price) * spec.exit.target_pct / 100.0
         target_level = entry_price + delta if direction == "long" else entry_price - delta
 
     trailing_pct = spec.exit.trailing_stop_pct
@@ -454,17 +454,23 @@ def _fixed_stop_distance(
 ) -> float | None:
     """The hard-stop distance in price points, fixed at entry for the trade's life.
 
-    Both inputs are chosen to be knowable at the instant of the fill, which is bar
-    `i`'s open:
+    Everything here is read from bar `i-1`, the signal bar -- the last bar that had
+    completed when the decision was made. Bar `i` is the bar we are filling on, and
+    none of it has happened yet at the instant of the fill.
 
-    * `stop_pct` is measured from `entry_price`, not from bar `i`'s close. The
-      close has not happened yet when the order fills, so using it would let the
-      stop be set with knowledge of where the bar ended -- tighter on a day that
-      fell, wider on one that rose. It also made "1% stop" mean 1% of a different
-      price than "2% target" meant 2% of, which is not what anyone typing that
-      sentence expects.
-    * ATR is read from bar `i-1`, the last bar that had completed when the signal
-      fired. Bar `i`'s ATR incorporates its own high, low and close.
+    * `stop_pct` is measured from the signal bar's close. This is a deliberate
+      product choice: the levels belong to the setup the user described, so
+      "RSI cracks 30, 1% stop" means 1% from the price where RSI cracked 30.
+      The consequence is that an overnight gap moves the fill away from that
+      base, so the realised risk can differ from the stated percentage -- the
+      engine measures this and warns when it is material.
+    * ATR likewise comes from bar `i-1`. Bar `i`'s ATR incorporates its own high,
+      low and close, so using it would be reading the future.
+
+    Reading bar `i`'s close here -- which the engine originally did -- is invisible
+    to the prefix-invariance test, because that test only varies *future* bars and
+    bar `i` is present in both runs. Misuse of the current bar is a separate
+    failure mode with its own tests.
 
     The prefix-invariance test cannot catch either mistake: it compares runs that
     differ in *future* bars, and both values are equally available in a truncated
@@ -476,14 +482,28 @@ def _fixed_stop_distance(
     """
     candidates: list[float] = []
     exit_rules = spec.exit
+    basis = signal_close(features, i, entry_price)
+
     if exit_rules.stop_pct is not None:
-        candidates.append(entry_price * exit_rules.stop_pct / 100.0)
-    if exit_rules.stop_atr_mult is not None and exit_rules.atr_id is not None:
-        if i >= 1:
-            atr_val = features[exit_rules.atr_id].iloc[i - 1]
-            if pd.notna(atr_val):
-                candidates.append(exit_rules.stop_atr_mult * float(atr_val))
+        candidates.append(basis * exit_rules.stop_pct / 100.0)
+    if exit_rules.stop_atr_mult is not None and exit_rules.atr_id is not None and i >= 1:
+        atr_val = features[exit_rules.atr_id].iloc[i - 1]
+        if pd.notna(atr_val):
+            candidates.append(exit_rules.stop_atr_mult * float(atr_val))
     return min(candidates) if candidates else None
+
+
+def signal_close(features: pd.DataFrame, i: int, fallback: float) -> float:
+    """The close of bar `i-1`, the bar whose close produced the signal.
+
+    Falls back to the fill price on the first bar, where there is no prior bar.
+    Stop and target both measure from this so that "1% stop, 2% target" are two
+    percentages of the same number.
+    """
+    if i < 1:
+        return fallback
+    value = features["close"].iloc[i - 1]
+    return float(value) if pd.notna(value) else fallback
 
 
 def _size_position(

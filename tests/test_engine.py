@@ -688,8 +688,14 @@ def test_stop_is_measured_from_entry_price_not_the_entry_bars_close():
     assert stops[0] == pytest.approx(99.0), "stop should be 1% below the 100.0 fill"
 
 
-def test_stop_and_target_are_measured_from_the_same_price():
-    """"1% stop, 2% target" must mean 1% and 2% of the same number."""
+def test_stop_and_target_are_measured_from_the_signal_close():
+    """"1% stop, 2% target" must be two percentages of the SAME number.
+
+    That number is the signal bar's close -- the price at which the user's
+    condition became true. Bar 0 closes at 100 and the fill happens at bar 1's
+    open of 110, so the two bases are distinguishable: a 10% stop is 10 points
+    (10% of 100), not 11 (10% of 110).
+    """
     bars = _mkbars([100.0, 110.0, 110.0], [101.0, 140.0, 111.0],
                    [99.0, 80.0, 109.0], [100.0, 110.0, 110.0])
 
@@ -698,12 +704,42 @@ def test_stop_and_target_are_measured_from_the_same_price():
     res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
 
     trade = res.trades[0]
-    entry = trade.entry_price
-    # Bar 1 spans [80, 140] so both levels are reachable; stop wins the tie-break.
+    signal_close = 100.0
+    # Bar 1 spans [80, 140] so both levels are reachable; the stop wins the tie-break.
     assert trade.exit_reason == "stop"
-    assert trade.exit_price == pytest.approx(entry * 0.90), (
-        f"stop at {trade.exit_price} is not 10% below the {entry} entry"
+    assert trade.exit_price == pytest.approx(trade.entry_price - signal_close * 0.10), (
+        f"stop at {trade.exit_price} is not 10% of the signal close ({signal_close}) "
+        f"below the {trade.entry_price} fill"
     )
+
+
+def test_stop_basis_is_the_signal_close_not_the_fill():
+    """A gap between signal and fill must not silently rescale the stop distance.
+
+    Two runs share an identical signal bar but gap to different opens. The stop
+    DISTANCE must be the same in both, because it is derived from the signal bar
+    they share -- even though the resulting levels differ.
+    """
+    distances = []
+    for gap_open in (110.0, 130.0):
+        bars = _mkbars(
+            [100.0, gap_open, gap_open],
+            [101.0, gap_open + 40.0, gap_open + 1.0],
+            [99.0, 10.0, gap_open - 1.0],
+            [100.0, gap_open, gap_open],
+        )
+        spec = _spec(entry=_signal_once(bars, at=0),
+                     exit_rules=ExitRules(stop_pct=10.0, target_pct=90.0))
+        res = run_backtest(spec, bars, capital=10_000_000.0, lot_size=1, slippage_pct=0.0)
+        trade = res.trades[0]
+        assert trade.exit_reason == "stop"
+        distances.append(trade.entry_price - trade.exit_price)
+
+    assert distances[0] == pytest.approx(distances[1]), (
+        f"stop distance changed from {distances[0]} to {distances[1]} because the fill "
+        "gapped -- it should be fixed by the signal bar the two runs share"
+    )
+    assert distances[0] == pytest.approx(10.0), "10% of the 100.0 signal close"
 
 
 # ---------------------------------------------------------------------------
