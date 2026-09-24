@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from nlt.data.source import CACHE_DIR, normalise
+from nlt.data.source import CACHE_DIR, DATA_FLOOR, apply_floor, normalise
 
 # Yahoo tickers for the instruments we care about in v1.
 SYMBOL_MAP = {
@@ -95,6 +95,7 @@ class YahooSource:
         start: dt.date | None = None,
         end: dt.date | None = None,
         max_age_days: int = 1,
+        floor: dt.date | None = DATA_FLOOR,
     ) -> pd.DataFrame:
         if interval not in _INTERVAL_MAP:
             raise ValueError(
@@ -106,6 +107,7 @@ class YahooSource:
         path = self._cache_path(symbol, interval)
         df = self._load_cached(path, symbol, interval)
 
+        df = apply_floor(df, floor)
         if start is not None:
             df = df[df.index.date >= start]
         if end is not None:
