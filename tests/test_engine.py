@@ -11,12 +11,14 @@ the *loop* itself -- as opposed to an indicator -- would actually show up.
 
 from __future__ import annotations
 
+import datetime as dt
 import math
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from nlt.data.session import NSE_EQUITY, session_date
 from nlt.engine.backtest import Trade, run_backtest
 from nlt.engine.conditions import evaluate
 from nlt.engine.metrics import compute_metrics
@@ -31,6 +33,7 @@ from nlt.spec.models import (
     Not,
     Ref,
     RiskLimits,
+    Schedule,
     Sizing,
     StrategySpec,
 )

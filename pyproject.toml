@@ -27,6 +27,7 @@ packages = ["nlt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["network: touches the live network/market data, skipped by default"]
 
 [tool.ruff]
 line-length = 100

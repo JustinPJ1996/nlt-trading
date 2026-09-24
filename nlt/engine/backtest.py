@@ -40,6 +40,14 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from nlt.data.session import (
+    NSE_EQUITY,
+    Session,
+    bars_per_session,
+    is_last_bar_of_session,
+    is_partial_last_bar,
+    session_date,
+)
 from nlt.engine.conditions import evaluate
 from nlt.engine.features import build_features
 from nlt.engine.metrics import compute_metrics
@@ -77,6 +85,34 @@ def _default_lot_size(spec: StrategySpec) -> int:
     backtest inherits the options convention.
     """
     return 75 if spec.instrument.trade_as == "option" else 1
+
+
+def _session_for_spec(spec: StrategySpec) -> Session:
+    """The trading-hours calendar `spec.instrument` runs on.
+
+    `Instrument.symbol` today only permits NIFTY and BANKNIFTY, both NSE
+    equity & F&O names, so this always resolves to `NSE_EQUITY`. `nlt.data.session`
+    also defines `MCX` (a session that runs to 23:30, well past NSE's close), but
+    there is no commodity symbol in the spec model yet to map onto it. Everything
+    below is written against `Session` generically -- once `Instrument.symbol`
+    grows an MCX name, this function is the only place that needs to change.
+    """
+    return NSE_EQUITY
+
+
+def _bars_per_session_safe(session: Session, timeframe: str) -> int | None:
+    """`bars_per_session`, or None if the timeframe has no known session length.
+
+    `nlt.data.session` only knows bar lengths for a subset of the timeframes
+    `Instrument.timeframe` allows (notably: not "3m"). Rather than let that
+    raise and crash the whole backtest, the checks that depend on it (partial
+    last-bar dropping, the lookback/session warning) are skipped for a
+    timeframe it does not recognise, with a warning explaining why.
+    """
+    try:
+        return bars_per_session(session, timeframe)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -127,6 +163,7 @@ def run_backtest(
     lot_size: int | None = None,
     charge_fn=None,
     slippage_pct: float = 0.02,
+    drop_partial_last_bar: bool = True,
 ) -> BacktestResult:
     """Run `spec` bar by bar over `bars`.
 
@@ -136,6 +173,14 @@ def run_backtest(
     inherits the 75-share options convention. Pass it explicitly only to
     model a specific contract's lot size (e.g. BANKNIFTY's, which differs
     from NIFTY's).
+
+    `drop_partial_last_bar`, when the timeframe is intraday, drops the final
+    bar of `bars` if it is still forming (its close time is in the future
+    relative to now) rather than let the engine signal on it. The data layer
+    (`nlt.data.session.is_partial_last_bar`) is expected to have already
+    filtered this out upstream; this is defence in depth specifically because
+    the engine is what places orders, so it should not trust that every caller
+    remembered the upstream guard.
     """
     warnings: list[str] = []
     if lot_size is None:
@@ -144,17 +189,53 @@ def run_backtest(
         charge_fn = _zero_charges
         warnings.append("no charge_fn supplied; results exclude transaction costs")
 
+    is_intraday_tf = spec.instrument.timeframe != "1d"
+    session = _session_for_spec(spec)
+    session_bar_count = _bars_per_session_safe(session, spec.instrument.timeframe)
+
+    # --- drop a still-forming final bar before anything downstream sees it --
+    # (daily bars have no intrabar clock to be "partial" about, and 1d is not
+    # a key `nlt.data.session` recognises, so this only ever applies intraday.)
+    if drop_partial_last_bar and is_intraday_tf and len(bars) > 0:
+        try:
+            partial = is_partial_last_bar(bars, session, spec.instrument.timeframe)
+        except ValueError:
+            partial = False
+        if partial:
+            warnings.append(
+                f"dropped the final bar ({bars.index[-1]}) as still-forming: its close "
+                "time has not arrived yet, so signalling on it would be trading a candle "
+                "that has not finished printing"
+            )
+            bars = bars.iloc[:-1]
+
     features = build_features(spec, bars)
     entry_signal = evaluate(spec.entry, features)
     exit_signal = (
         evaluate(spec.exit.condition, features) if spec.exit.condition is not None else None
     )
 
-    is_intraday_tf = spec.instrument.timeframe != "1d"
     if not is_intraday_tf and spec.schedule.intraday:
         warnings.append(
             "schedule time-of-day rules (no_entry_after/square_off) skipped: "
             "instrument timeframe is 1d, where bar timestamps carry no intraday clock"
+        )
+
+    # --- session bookkeeping, used only for intraday timeframes below -------
+    # `last_bar_of_session` backs two independent checks: forcing square-off on
+    # a short/early-close day that never reaches the square-off clock time (2),
+    # and refusing to schedule an entry fill across a session boundary (1).
+    if is_intraday_tf and len(bars) > 0:
+        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+    else:
+        last_bar_of_session = np.zeros(len(bars), dtype=bool)
+
+    if is_intraday_tf and spec.indicators and session_bar_count:
+        _warn_on_cross_session_lookback(spec, session_bar_count, warnings)
+    elif is_intraday_tf and spec.indicators and session_bar_count is None:
+        warnings.append(
+            f"cannot determine bars-per-session for timeframe {spec.instrument.timeframe!r}; "
+            "the cross-session indicator-lookback warning was skipped for it"
         )
 
     max_concurrent = spec.risk.max_concurrent_positions
@@ -171,6 +252,7 @@ def run_backtest(
     dropped_for_concurrency = 0
     affordability_capped_count = 0
     affordability_skipped_count = 0
+    boundary_entry_skipped_count = 0
 
     for i in range(n):
         ts = bars.index[i]
@@ -205,7 +287,7 @@ def run_backtest(
         # --- 2. check exits, in the mandated precedence order --------------
         still_open: list[_OpenPosition] = []
         for pos in open_positions:
-            outcome = _check_exit(pos, bar, ts, spec, is_intraday_tf)
+            outcome = _check_exit(pos, bar, ts, spec, is_intraday_tf, bool(last_bar_of_session[i]))
             if outcome is None:
                 pos.bars_held += 1
                 still_open.append(pos)
@@ -223,6 +305,8 @@ def run_backtest(
             gross = _gross_pnl(pos, exit_price)
             net = gross - charges
             realized_pnl += net
+            if is_intraday_tf and spec.schedule.intraday:
+                _assert_no_overnight_carry(pos.entry_time, ts, session)
             trades.append(
                 Trade(
                     entry_time=pos.entry_time,
@@ -247,13 +331,32 @@ def run_backtest(
         _assert_equity_floor(equity[i], ts, spec.direction)
 
         # --- 4. schedule fills for the NEXT bar, from this closed bar's signal
+        #
+        # `no_entry_after` is a strict "at or after" cutoff -- a signal on the
+        # bar timestamped exactly at the cutoff must NOT open a position. Using
+        # `<=` here (the engine's original condition) let a 15:00 signal open a
+        # trade on a 15:00 cutoff, which is the "at" half of "at or after" being
+        # silently ignored.
+        is_intraday_spec = is_intraday_tf and spec.schedule.intraday
         can_enter = (
             len(open_positions) < max_concurrent
             and bool(entry_signal.iloc[i])
             and ts.weekday() in spec.schedule.weekdays
-            and (not is_intraday_tf or ts.time() <= spec.schedule.no_entry_after)
+            and (not is_intraday_spec or ts.time() < spec.schedule.no_entry_after)
         )
-        if can_enter and i + 1 < n:
+        # A signal on the last bar of a session has no valid intraday fill: the
+        # only bar left to fill it on is tomorrow morning's open, 14+ hours away
+        # across a gap the user never asked to hold through. Decision: SKIP the
+        # entry outright rather than fill it anyway with a warning. Filling it
+        # would silently convert an intraday strategy into an overnight one on
+        # exactly the bars where that matters most (the close), which is a
+        # worse failure than a missed trade -- a missed trade costs the
+        # strategy an entry it never gets to try; a filled-anyway entry costs
+        # the user an unintended overnight position with unbounded gap risk,
+        # on an account sized for intraday margin. Counted and surfaced below.
+        if can_enter and is_intraday_spec and bool(last_bar_of_session[i]):
+            boundary_entry_skipped_count += 1
+        elif can_enter and i + 1 < n:
             pending_entry = True
 
         if exit_signal is not None:
@@ -275,6 +378,15 @@ def run_backtest(
             gross = _gross_pnl(pos, exit_price)
             net = gross - charges
             realized_pnl += net
+            if is_intraday_tf and spec.schedule.intraday:
+                # In practice this should never fire: `last_bar_of_session` is
+                # true on the very last row of `bars` by construction (nothing
+                # follows it), so an intraday position still open here would
+                # already have been square-off'd inside the loop above on this
+                # same bar. Checked anyway -- an invariant that is "obviously"
+                # unreachable is exactly the kind that a future change to the
+                # exit-precedence order could quietly break.
+                _assert_no_overnight_carry(pos.entry_time, ts, session)
             trades.append(
                 Trade(
                     entry_time=pos.entry_time,
@@ -319,6 +431,13 @@ def run_backtest(
         warnings.append(
             f"{affordability_skipped_count} entry signal(s) skipped: not enough spare capital "
             "to fund even a single lot"
+        )
+    if boundary_entry_skipped_count:
+        warnings.append(
+            f"{boundary_entry_skipped_count} entry signal(s) skipped: they fired on the last "
+            "bar of a trading session, and this intraday strategy would otherwise have filled "
+            "them at the next session's open -- a gap of 14+ hours the strategy never asked "
+            "to hold through"
         )
 
     equity_series = pd.Series(equity, index=bars.index, name="equity")
@@ -371,6 +490,67 @@ def _assert_equity_floor(equity_value: float, ts: pd.Timestamp, direction: str) 
             f"equity went negative ({equity_value:.2f}) at {ts} in a long-only backtest; "
             "this means a position was opened larger than the account could fund, which "
             "should be impossible after the affordability check in _open_position"
+        )
+
+
+def _assert_no_overnight_carry(
+    entry_time: pd.Timestamp, exit_time: pd.Timestamp, session: Session
+) -> None:
+    """An intraday position must never wake up still holding a session boundary.
+
+    This is the "woke up still holding it" failure mode made an invariant: for
+    `schedule.intraday` specs on an intraday timeframe, entry and exit must
+    belong to the same trading session date. If this ever fires, it means the
+    square-off / last-bar-of-session logic above failed to force the exit in
+    time -- an engine bug, not a valid (if unlucky) backtest outcome, so this
+    raises rather than warns. A warning would let a silently-wrong "intraday"
+    result reach a user who explicitly asked never to carry a position
+    overnight.
+    """
+    entry_date = session_date(entry_time, session)
+    exit_date = session_date(exit_time, session)
+    if entry_date != exit_date:
+        raise RuntimeError(
+            f"intraday position opened {entry_time} (session {entry_date}) exited "
+            f"{exit_time} (session {exit_date}) -- an intraday strategy must never "
+            "carry a position across a session boundary; this indicates the "
+            "square-off / last-bar-of-session forcing logic failed to fire"
+        )
+
+
+def _warn_on_cross_session_lookback(
+    spec: StrategySpec, session_bar_count: int, warnings: list[str]
+) -> None:
+    """Informational warning: does the longest indicator lookback span multiple sessions?
+
+    Users reason in calendar days ("a 200-day average"); indicators are computed
+    in bars, with no awareness that an overnight or weekend gap sits between two
+    consecutive intraday bars (see the module docstring on indicators not being
+    modifiable from here -- this cannot change how they compute, only warn about
+    the gap between how the user and the engine each think about "200 periods").
+    `IndicatorSpec` params are keyed by convention (see `models.py`'s own
+    `_params_are_valid`): a lookback-shaped parameter has "length" in its name,
+    or is one of `fast`/`slow`/`signal`/`period`. This mirrors that convention
+    rather than re-deriving it, since it is already the model's own definition
+    of "a lookback".
+    """
+    longest = 0
+    for ind in spec.indicators:
+        for key, value in ind.resolved_params().items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if "length" in key or key in {"fast", "slow", "signal", "period"}:
+                longest = max(longest, int(value))
+
+    if longest <= 0:
+        return
+    sessions_spanned = math.ceil(longest / session_bar_count)
+    if sessions_spanned > 1:
+        warnings.append(
+            f"the longest indicator lookback ({longest} bars) spans roughly "
+            f"{sessions_spanned} trading session(s) at {session_bar_count} bars/session on "
+            f"{spec.instrument.timeframe} bars -- it will smooth straight across the "
+            "overnight/weekend gap as though those bars were consecutive trading minutes"
         )
 
 
@@ -545,6 +725,7 @@ def _check_exit(
     ts: pd.Timestamp,
     spec: StrategySpec,
     is_intraday_tf: bool,
+    is_last_bar_of_session: bool,
 ) -> tuple[str, float, bool] | None:
     """Returns (reason, raw fill price before slippage, ambiguous_stop_vs_target) or None.
 
@@ -554,7 +735,23 @@ def _check_exit(
     """
     long = pos.direction == "long"
 
-    if is_intraday_tf and spec.schedule.intraday and ts.time() >= spec.schedule.square_off:
+    if is_intraday_tf and spec.schedule.intraday and (
+        ts.time() >= spec.schedule.square_off or is_last_bar_of_session
+    ):
+        # `is_last_bar_of_session` is the fallback for a short/early-close day
+        # that ends before the clock ever reaches `square_off` (a muhurat
+        # session, a declared early close). Without it, a position on such a
+        # day would sail straight past the session's actual last bar still
+        # open, and get force-closed only by the end-of-data handler using
+        # that day's close -- which happens to look like a square-off in
+        # effect, but does not carry the "square_off" reason and, worse, would
+        # not fire at all if more bars for a *later* session follow in the
+        # same `bars` frame. Deriving this from the data (via
+        # `is_last_bar_of_session`) rather than a hardcoded early-close
+        # calendar is the same trade-off `nlt.data.session` documents for
+        # itself: it cannot tell a short session from live data that just
+        # hasn't finished, and forcing the exit either way is the safe
+        # direction to be wrong in.
         return "square_off", bar.close, False
 
     target_hit = pos.target_level is not None and (

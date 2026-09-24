@@ -10,7 +10,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
 parts/
 sdist/
@@ -37,7 +37,7 @@ strategy_result.json
 demo_results.json
 *.csv
 backtest_results/
-data/
+/data/
 logs/
 
 # OS
@@ -46,7 +46,7 @@ logs/
 .env.local
 
 # Project data
-data/bars/
+/data/bars/
 *.parquet
 *.sqlite
 *.db

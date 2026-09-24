@@ -1,6 +1,22 @@
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip @pytest.mark.network tests unless NLT_RUN_NETWORK_TESTS=1.
+
+    These hit live market data and are not something CI or a routine local
+    run should depend on being online for.
+    """
+    if os.environ.get("NLT_RUN_NETWORK_TESTS") == "1":
+        return
+    skip_network = pytest.mark.skip(reason="network test; set NLT_RUN_NETWORK_TESTS=1 to run")
+    for item in items:
+        if "network" in item.keywords:
+            item.add_marker(skip_network)
 
 
 @pytest.fixture(scope="session")
