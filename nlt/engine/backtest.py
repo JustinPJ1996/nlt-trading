@@ -151,6 +151,7 @@ class Trade:
     exit_reason: str
     bars_held: int
     entry_reason: str
+    symbol: str = ""
 
 
 @dataclass
@@ -343,6 +344,7 @@ def run_backtest(
                     exit_reason=reason,
                     bars_held=pos.bars_held + 1,
                     entry_reason=entry_reason,
+                    symbol=spec.instrument.symbol,
                 )
             )
         open_positions = still_open
@@ -423,6 +425,7 @@ def run_backtest(
                     exit_reason="end_of_data",
                     bars_held=pos.bars_held + 1,
                     entry_reason=entry_reason,
+                    symbol=spec.instrument.symbol,
                 )
             )
         equity[-1] = capital + realized_pnl

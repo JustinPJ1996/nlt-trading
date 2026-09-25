@@ -26,6 +26,7 @@ into dozens of silent re-entries.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -107,7 +108,7 @@ _FILLER = {
     "then", "so", "it", "is", "s", "this", "that", "would", "like", "d",
     "me", "build", "make", "create", "trade", "trading",
     "while", "as", "long", "still", "open", "just", "now", "up",
-    "candle", "candles", "pattern", "forms",
+    "candle", "candles", "pattern", "forms", "instantly", "use", "using",
 }
 
 
@@ -116,19 +117,150 @@ def _clean(word: str) -> str:
 
 
 # ------------------------------------------------------------------ instrument
+#
+# `symbol` can name an index, a single NSE stock, or a universe (a basket of
+# stocks screened and traded independently -- see the Instrument docstring in
+# nlt/spec/models.py). Telling those apart is the highest-risk decision this
+# module makes: an index and the universe of the same name are two completely
+# different things to backtest, and both look like perfectly ordinary English.
+#
+# The rule, in order:
+#   1. "NIFTY 100" / "NIFTY 500" are never index names in this platform (the
+#      only tradeable indices are NIFTY and BANKNIFTY) -- so a mention of them
+#      is unambiguous and always means the 100/500-stock universe, whether or
+#      not the word "stocks" is nearby. Fixture #31-#33 rely on exactly this:
+#      a bare "nifty 100" at the tail of a sentence, no "stocks" in sight.
+#   2. "NIFTY 50" is genuinely ambiguous: "50" is both a stock count and the
+#      literal name traders use for the index itself ("the Nifty 50 closed
+#      up today" means the index). We only read it as the 50-stock universe
+#      when a qualifier word -- "stocks", "shares", or "stocks in" -- says so.
+#      Otherwise we ask, rather than guess which one the user meant; guessing
+#      wrong here silently backtests fifty independent instruments instead of
+#      one index, or vice versa, and both results look entirely plausible.
+#   3. Bare "NIFTY" (no number) is the index, unchanged from before.
+#
+# A single bare stock ticker ("TCS", "RELIANCE") is recognised only against
+# the bundled NIFTY 500 constituent list -- see `_known_tickers` -- never
+# invented from an arbitrary English word that happens to be shaped like one.
 
 _BANKNIFTY = re.compile(r"\bbank\s*nifty\b")
-_NIFTY = re.compile(r"\bnifty(?:\s*50)?\b")
+_NIFTY_UNIVERSE_NUM = re.compile(r"\bnifty\s*[\s\-_]?\s*(?P<num>50|100|500)\b")
+_NIFTY_BARE = re.compile(r"\bnifty\b")
+
+# "stocks"/"shares" immediately after the number ("nifty 100 stocks"), or
+# "stocks in"/"shares in" immediately before it ("stocks in nifty 500").
+_UNIVERSE_QUALIFIER_AFTER = re.compile(r"\A\s*(?:stocks?|shares?)\b")
+_UNIVERSE_QUALIFIER_BEFORE = re.compile(r"(?:stocks?|shares?)\s+in\s*\Z")
 
 
-def _extract_instrument(text: str) -> tuple[str, Instrument]:
+@functools.lru_cache(maxsize=1)
+def _known_tickers() -> frozenset[str]:
+    """NSE symbols we will accept as a bare single-stock ticker.
+
+    Sourced from the bundled NIFTY 500 constituent snapshot rather than a live
+    NSE fetch or `get_universe`, deliberately: this parser has no network
+    dependency anywhere else, and it must not gain one just to recognise a
+    ticker -- that would make "does this sentence parse" depend on whether
+    the box happens to be online, which breaks the determinism this whole
+    module promises. NIFTY 500 covers the large majority of names anyone is
+    likely to type; a symbol not in it is not invented, it falls through to
+    `unparsed` like any other word we do not recognise.
+    """
+    from nlt.data.universe import _load_snapshot
+
+    return frozenset(_load_snapshot()["universes"]["NIFTY 500"])
+
+
+def _universe_qualifier_span(text: str, m: re.Match) -> tuple[int, int]:
+    """Extend a matched 'nifty NNN' span to swallow an adjacent stocks/shares
+    qualifier, so it disappears from the text instead of surfacing as
+    unparsed leftover once the number itself has been understood."""
+    start, end = m.start(), m.end()
+    after = _UNIVERSE_QUALIFIER_AFTER.match(text[end:])
+    if after:
+        end += after.end()
+    before = _UNIVERSE_QUALIFIER_BEFORE.search(text[:start])
+    if before:
+        start = before.start()
+    return start, end
+
+
+def _has_universe_qualifier(text: str, m: re.Match) -> bool:
+    return bool(
+        _UNIVERSE_QUALIFIER_AFTER.match(text[m.end() :])
+        or _UNIVERSE_QUALIFIER_BEFORE.search(text[: m.start()])
+    )
+
+
+def _find_stock_ticker(text: str) -> tuple[str, int, int] | None:
+    """A single bare word right after the leading buy/sell verb, if -- and
+    only if -- it is a known NSE symbol (see `_known_tickers`).
+
+    Returns (SYMBOL, start, end) with offsets into `text`, or None.
+
+    Anchoring on the direction verb keeps ordinary English out: "buy" is
+    almost always followed by what is being bought, so "buy TCS when..."
+    offers up "tcs" as a candidate, while a random word elsewhere in the
+    sentence never gets the chance. Multi-word names such as "HDFC Bank" do
+    not match (the pattern is exactly one word), which is a deliberate
+    refusal: guessing "HDFCBANK" from "HDFC Bank" is a guess this module will
+    not make.
+    """
+    lead = _DIRECTION_LEAD.match(text)
+    if not lead:
+        return None
+    word_m = re.match(r"\s+(?P<word>[a-z][a-z0-9&]{1,19})\b", text[lead.end() :])
+    if not word_m:
+        return None
+    word = word_m.group("word")
+    if word.upper() not in _known_tickers():
+        return None
+    start = lead.end() + word_m.start("word")
+    end = lead.end() + word_m.end("word")
+    return word.upper(), start, end
+
+
+def _extract_instrument(
+    text: str,
+) -> tuple[str, dict | None, Question | None]:
+    """Returns (text, instrument kwargs, ambiguity question).
+
+    `kwargs` is `None` exactly when `question` is set -- an ambiguous "NIFTY
+    50" with no qualifier, the one case this function refuses to guess at.
+    """
     kwargs: dict = {}
+
     if _BANKNIFTY.search(text):
         kwargs["symbol"] = "BANKNIFTY"
         text = _BANKNIFTY.sub(" ", text)
-    elif _NIFTY.search(text):
-        kwargs["symbol"] = "NIFTY"
-        text = _NIFTY.sub(" ", text)
+    else:
+        num_match = _NIFTY_UNIVERSE_NUM.search(text)
+        if num_match:
+            num = num_match.group("num")
+            qualified = _has_universe_qualifier(text, num_match)
+            if num == "50" and not qualified:
+                question = Question(
+                    text=(
+                        "Does 'NIFTY 50' mean the index itself, or all 50 stocks in it? "
+                        "Say 'NIFTY 50 stocks' for the basket of stocks, or just 'NIFTY' "
+                        "for the index."
+                    ),
+                    why=(
+                        "NIFTY 50 is both the name of the index and the name of the "
+                        "50-stock basket it tracks. Backtesting the wrong one produces a "
+                        "completely different result that would look just as plausible."
+                    ),
+                    suggestion=None,
+                    field="instrument.symbol",
+                )
+                return text, None, question
+            start, end = _universe_qualifier_span(text, num_match)
+            kwargs["symbol"] = f"NIFTY {num}"
+            kwargs["trade_as"] = "stock"
+            text = text[:start] + " " * (end - start) + text[end:]
+        elif _NIFTY_BARE.search(text):
+            kwargs["symbol"] = "NIFTY"
+            text = _NIFTY_BARE.sub(" ", text)
 
     option_word = re.search(r"\b(call|put|ce|pe|option|options)\b", text)
     if option_word:
@@ -139,7 +271,15 @@ def _extract_instrument(text: str) -> tuple[str, Instrument]:
             kwargs["option_type"] = "PE"
         text = re.sub(r"\b(call|put|ce|pe|options?)\b", " ", text)
 
-    return text, Instrument(**kwargs)
+    if "symbol" not in kwargs:
+        found = _find_stock_ticker(text)
+        if found is not None:
+            symbol, start, end = found
+            kwargs["symbol"] = symbol
+            kwargs["trade_as"] = "stock"
+            text = text[:start] + " " * (end - start) + text[end:]
+
+    return text, kwargs, None
 
 
 # -------------------------------------------------------------------- direction
@@ -151,7 +291,9 @@ def _extract_instrument(text: str) -> tuple[str, Instrument]:
 # "I want to buy NIFTY when..." is a completely ordinary way to open a request
 # and treating it as unrecognised would be a false refusal on the most common
 # possible phrasing.
-_LEAD_FILLER = r"(?:please\s+)?(?:i(?:'d| would)? (?:want to|like to)\s+)?"
+_LEAD_FILLER = (
+    r"(?:please\s+)?(?:instantly\s+)?(?:i(?:'d| would)? (?:want to|like to)\s+)?"
+)
 _DIRECTION_LEAD = re.compile(
     rf"^\s*{_LEAD_FILLER}(buy|go long|long|sell short|short sell|short|go short|sell)\b"
 )
@@ -181,6 +323,7 @@ def _len_suffix(prefix: str, length: int | None, default: int) -> tuple[str, int
 
 _MA_TYPE_WORD = {
     "ma": "sma",
+    "dma": "sma",  # "DMA" = daily moving average, the common name for a plain SMA
     "moving average": "sma",
     "sma": "sma",
     "ema": "ema",
@@ -500,9 +643,9 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "ma_crosses_above",
         re.compile(
-            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|ma|moving average)\s*"
+            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*"
             r"crosses(?:\s*above)?\s*(?:the\s*)?"
-            r"(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|ma|moving average)?"
+            r"(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
         ),
         _build_ma_cross("crosses_above"),
         "20 MA crosses above 50 MA",
@@ -510,9 +653,9 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "ma_crosses_below",
         re.compile(
-            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|ma|moving average)\s*"
+            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*"
             r"crosses below\s*(?:the\s*)?"
-            r"(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|ma|moving average)?"
+            r"(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
         ),
         _build_ma_cross("crosses_below"),
         "20 MA crosses below 50 MA",
@@ -520,8 +663,8 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "ma_above",
         re.compile(
-            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|ma|moving average)\s*above\s*"
-            r"(?:the\s*)?(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|ma|moving average)?"
+            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*above\s*"
+            r"(?:the\s*)?(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
         ),
         _build_ma_cross("gt"),
         "20 EMA above 200 EMA",
@@ -529,8 +672,12 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "price_above_ma",
         re.compile(
-            r"(?:price|close)\s*(?:is\s*)?above\s*(?:the\s*)?"
-            r"(?P<len>\d{1,3})\s*(?:day\s*)?(?P<t>ema|sma|wma|hma|ma|moving average)"
+            # "price"/"close" is optional: "Nifty 100 stocks above the 200 DMA"
+            # has no explicit subject, but with the instrument already
+            # resolved (the universe or a bare ticker), "above the N-day
+            # average" can only sensibly mean each stock's own price.
+            r"(?:(?:price|close)\s*(?:is\s*)?)?above\s*(?:the\s*)?"
+            r"(?P<len>\d{1,3})\s*(?:day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
         ),
         _build_price_vs_ma("gt"),
         "price above the 200 day moving average",
@@ -538,8 +685,8 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "price_below_ma",
         re.compile(
-            r"(?:price|close)\s*(?:is\s*)?below\s*(?:the\s*)?"
-            r"(?P<len>\d{1,3})\s*(?:day\s*)?(?P<t>ema|sma|wma|hma|ma|moving average)"
+            r"(?:(?:price|close)\s*(?:is\s*)?)?below\s*(?:the\s*)?"
+            r"(?P<len>\d{1,3})\s*(?:day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
         ),
         _build_price_vs_ma("lt"),
         "close below the 50 EMA",
@@ -846,7 +993,11 @@ def _parse_condition_text(
     or_groups = _split_top_level(text, ["or"])
     built_groups: list[Condition] = []
     for group in or_groups:
-        and_clauses = _split_top_level(group, ["and", "but only if", "but"])
+        # "when" joins two clauses exactly like "and" does once the leading
+        # "when" that introduces the whole condition has already been consumed
+        # as filler -- "Nifty 100 stocks above the 200 DMA when RSI drops
+        # below 40" is two independent conditions glued by "when", not one.
+        and_clauses = _split_top_level(group, ["and", "but only if", "but", "when"])
         built_clauses: list[Condition] = []
         for clause in and_clauses:
             cond, inds, notes, refusal, residual = _parse_atomic_clause(clause, direction)
@@ -883,6 +1034,8 @@ _TARGET_PATTERNS = [
     re.compile(r"sell at\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*gain"),
     re.compile(r"(?:^|\s)\+(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"(?:up|gain of)\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
+    # value-first order: "6% take profit" rather than "take profit 6%".
+    re.compile(r"(?P<v>\d+(?:\.\d+)?)\s*%\s*(?:take profit|target|book profit)"),
 ]
 _STOP_PATTERNS = [
     re.compile(r"stop\s*loss(?:\s*of)?\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
@@ -891,6 +1044,8 @@ _STOP_PATTERNS = [
     re.compile(r"with a\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*stop"),
     re.compile(r"\bstop\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"(?:^|\s)-(?P<v>\d+(?:\.\d+)?)\s*%"),
+    # value-first order: "2% stop loss" rather than "stop loss 2%".
+    re.compile(r"(?P<v>\d+(?:\.\d+)?)\s*%\s*stop(?:\s*loss)?\b"),
 ]
 _ATR_STOP_PATTERN = re.compile(
     r"stop(?:\s*loss)?\s*(?:at|of)?\s*(?P<mult>\d+(?:\.\d+)?)\s*x?\s*(?:times\s*)?atr"
@@ -996,6 +1151,85 @@ def _extract_exit_condition(text: str, direction: str) -> tuple[str, Condition |
     return text, cond, inds, notes
 
 
+# --------------------------------------------------------------------- timeframe
+#
+# The engine only knows how to run bars of a handful of fixed sizes (see
+# `Instrument.timeframe`). A user who types "2 minute candles" or "4 hour
+# chart" has asked for something we cannot run -- rounding that silently to
+# the nearest supported size would run a different strategy than the one they
+# described, so we refuse by name instead, the same policy as an unsupported
+# indicator gets elsewhere in this file.
+
+_MINUTE_TIMEFRAME = re.compile(r"(?P<n>\d{1,3})\s*-?\s*min(?:ute)?s?\s*(?:candles?|chart|bars?|timeframe)")
+_HOUR_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*hours?\s*(?:candles?|chart|bars?|timeframe)")
+_DAY_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*days?\s*timeframe")
+_DAILY_TIMEFRAME = re.compile(r"\bdaily\b")
+_INTRADAY_TIMEFRAME = re.compile(r"\bintraday\b")
+
+_SUPPORTED_MINUTES = {"1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m"}
+
+
+def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
+    """Returns (text, timeframe literal or None, refusal message or None).
+
+    `timeframe` is `None` when nothing was said (caller keeps the model's
+    "1d" default) and also for a bare "intraday" -- see below. A refusal
+    means: stop, do not guess a nearby size.
+    """
+    m = _MINUTE_TIMEFRAME.search(text)
+    if m:
+        n = m.group("n")
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+        if n not in _SUPPORTED_MINUTES:
+            supported = ", ".join(f"{v}" for v in sorted(_SUPPORTED_MINUTES, key=int))
+            return text, None, (
+                f"{n}-minute candles are not a timeframe this platform runs. "
+                f"Supported minute candles: {supported}."
+            )
+        return text, _SUPPORTED_MINUTES[n], None
+
+    m = _HOUR_TIMEFRAME.search(text)
+    if m:
+        n = m.group("n")
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+        if n != "1":
+            return text, None, (
+                f"{n}-hour candles are not a timeframe this platform runs. "
+                "Only 1-hour candles are available above minute bars."
+            )
+        return text, "1h", None
+
+    m = _DAY_TIMEFRAME.search(text)
+    if m:
+        n = m.group("n")
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+        if n != "1":
+            return text, None, (
+                f"{n}-day candles are not a timeframe this platform runs; "
+                "only 1-day (daily) bars are."
+            )
+        return text, "1d", None
+
+    m = _DAILY_TIMEFRAME.search(text)
+    if m:
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+        return text, "1d", None
+
+    m = _INTRADAY_TIMEFRAME.search(text)
+    if m:
+        # "Intraday" says the strategy squares off same-day, not which bar
+        # size to use -- 5-minute and 15-minute intraday strategies are both
+        # completely ordinary. Picking one would be exactly the invented
+        # guess this module refuses to make elsewhere, so we only consume the
+        # word (it must not become a bogus "I didn't understand" question)
+        # and leave the timeframe unset; a specific size stated elsewhere in
+        # the same sentence already won above, since those patterns run first.
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+        return text, None, None
+
+    return text, None, None
+
+
 # ----------------------------------------------------------------------- sizing
 
 _LOTS_PATTERN = re.compile(r"(?P<v>\d+)\s*lots?\b")
@@ -1076,7 +1310,11 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
 
     text = original.lower()
 
-    text, instrument = _extract_instrument(text)
+    text, instrument_kwargs, instrument_question = _extract_instrument(text)
+    if instrument_question is not None:
+        return TranslationResult(
+            spec=None, questions=[instrument_question], notes=notes, source="rules"
+        )
     text, direction, direction_explicit = _extract_direction(text)
     if not direction_explicit and re.search(r"death cross", text):
         direction = "short"
@@ -1089,6 +1327,31 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     exit_ind = _Indicators()
     text, rest_exits, exit_notes = _extract_exit_rest(text, exit_ind)
     notes.extend(exit_notes)
+
+    # Timeframe after the EOD/intraday-only exit markers (so "intraday only"
+    # is consumed there first) but before anything else, so a stray "day" or
+    # "hour" doesn't get mistaken for something else downstream.
+    text, timeframe, timeframe_refusal = _extract_timeframe(text)
+    if timeframe_refusal:
+        return TranslationResult(
+            spec=None,
+            questions=[
+                Question(
+                    text=timeframe_refusal,
+                    why=(
+                        "Silently rounding to the nearest bar size we do support would run a "
+                        "different strategy than the one described."
+                    ),
+                    suggestion=None,
+                    field="instrument.timeframe",
+                )
+            ],
+            notes=notes,
+            source="rules",
+        )
+    if timeframe:
+        instrument_kwargs["timeframe"] = timeframe
+
     text, percent_exits = _extract_percent_exits(text)
     text, exit_condition, exit_cond_inds, exit_cond_notes = _extract_exit_condition(text, direction)
     notes.extend(exit_cond_notes)
@@ -1203,6 +1466,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     name = _name_from(original)
 
     try:
+        instrument = Instrument(**instrument_kwargs)
         spec = StrategySpec(
             name=name,
             description=original,

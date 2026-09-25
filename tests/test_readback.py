@@ -286,3 +286,112 @@ def test_round_trip_contains_key_concepts(text: str, expected_terms: list[str]) 
     rendered = describe(result.spec)
     for term in expected_terms:
         assert term.lower() in rendered.lower(), f"{term!r} missing from readback:\n{rendered}"
+
+
+# ------------------------------------------------------------- stocks & universes
+
+
+def test_completeness_single_stock_instrument() -> None:
+    spec = StrategySpec(
+        name="Single Stock",
+        description="test",
+        instrument=Instrument(symbol="TCS", trade_as="stock", timeframe="15m"),
+        entry=Compare(op="crosses_below", left=Ref(name="rsi14"), right=Const(value=30)),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+        exit=ExitRules(stop_pct=1.0, target_pct=2.0),
+    )
+    text = describe(spec)
+    assert "TCS" in text
+    assert "NSE" in text
+    assert "15-minute" in text
+
+
+def test_completeness_universe_instrument_states_symbol_and_count() -> None:
+    """The whole safety point of a universe readback: a user must not be able
+    to miss that "NIFTY 100" means a hundred separate instruments, not one."""
+    spec = StrategySpec(
+        name="Universe Strategy",
+        description="test",
+        instrument=Instrument(symbol="NIFTY 100", trade_as="stock"),
+        entry=Compare(op="crosses_below", left=Ref(name="rsi14"), right=Const(value=40)),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+        exit=ExitRules(stop_pct=2.0, target_pct=6.0),
+    )
+    text = describe(spec)
+    assert "NIFTY 100" in text
+    assert "100" in text
+    assert "all" in text.lower()
+
+
+def test_completeness_universe_instrument_shows_actual_membership_count() -> None:
+    """NIFTY 500's bundled snapshot actually has 501 constituents, not 500 --
+    the readback must say what is really going to be backtested, not what the
+    index's name implies."""
+    spec = StrategySpec(
+        name="Universe Strategy",
+        description="test",
+        instrument=Instrument(symbol="NIFTY 500", trade_as="stock"),
+        entry=Compare(op="crosses_below", left=Ref(name="rsi14"), right=Const(value=40)),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+        exit=ExitRules(stop_pct=2.0, target_pct=6.0),
+    )
+    text = describe(spec)
+    assert "501" in text
+
+
+def test_index_instrument_unchanged_by_the_stock_work() -> None:
+    spec = StrategySpec(
+        name="Index Strategy",
+        description="test",
+        instrument=Instrument(symbol="NIFTY", trade_as="index"),
+        entry=Compare(op="crosses_below", left=Ref(name="rsi14"), right=Const(value=30)),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+        exit=ExitRules(stop_pct=1.0, target_pct=2.0),
+    )
+    text = describe(spec)
+    assert "NIFTY, on daily bars" in text
+
+
+def test_daily_timeframe_produces_no_redundant_candle_suffix_for_a_stock() -> None:
+    spec = StrategySpec(
+        name="Single Stock",
+        description="test",
+        instrument=Instrument(symbol="TCS", trade_as="stock", timeframe="1d"),
+        entry=Compare(op="crosses_below", left=Ref(name="rsi14"), right=Const(value=30)),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+        exit=ExitRules(stop_pct=1.0, target_pct=2.0),
+    )
+    text = describe(spec)
+    assert "TCS (NSE)" in text
+    assert "candles" not in text.lower()
+
+
+STOCK_ROUND_TRIP_CASES = [
+    (
+        "Buy Nifty 100 stocks above the 200 DMA when RSI drops below 40. 2% stop loss, 6% take profit",
+        ["NIFTY 100", "100 stocks", "RSI(14)", "crosses below", "40", "+6%", "-2%"],
+    ),
+    (
+        "Buy TCS when RSI drops below 30, target 5%, stop 2%",
+        ["TCS", "NSE", "RSI(14)", "crosses below", "30", "+5%", "-2%"],
+    ),
+    (
+        "Buy NIFTY when RSI cracks 30, target 2%, stop 1%",
+        ["NIFTY, on daily bars", "RSI(14)", "crosses below", "30", "+2%", "-1%"],
+    ),
+    (
+        "Buy ITC when RSI drops below 30, stop 1%, target 2%. use 5-minute candles.",
+        ["ITC", "NSE", "5-minute"],
+    ),
+]
+
+
+@pytest.mark.parametrize("text,expected_terms", STOCK_ROUND_TRIP_CASES)
+def test_stock_and_universe_round_trip_contains_key_concepts(
+    text: str, expected_terms: list[str]
+) -> None:
+    result = parse(text)
+    assert result.spec is not None, f"expected a spec for {text!r}: {result.questions}"
+    rendered = describe(result.spec)
+    for term in expected_terms:
+        assert term.lower() in rendered.lower(), f"{term!r} missing from readback:\n{rendered}"

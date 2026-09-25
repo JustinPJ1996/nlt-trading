@@ -197,10 +197,36 @@ def _wrap(cond: Condition, indicators: dict[str, dict], timeframe: str) -> str:
     return text
 
 
+def _universe_size(symbol: str) -> int:
+    """How many stocks a universe name actually contains, from the same
+    bundled snapshot the parser and the spec validator use -- never a live
+    NSE fetch, so this never makes the readback depend on network access or
+    on-the-day membership drift.
+    """
+    from nlt.data.universe import _load_snapshot
+
+    return len(_load_snapshot()["universes"][symbol])
+
+
 def _instrument_desc(spec: StrategySpec) -> str:
     tf_word = _TIMEFRAME_WORDS.get(spec.instrument.timeframe, spec.instrument.timeframe)
+    is_daily = spec.instrument.timeframe == "1d"
+    tf_suffix = "" if is_daily else f", on {tf_word} candles"
+
     if spec.instrument.trade_as == "index":
         return f"{spec.instrument.symbol}, on {tf_word} bars"
+
+    if spec.instrument.trade_as == "stock" and spec.instrument.is_universe:
+        # The whole point of this line: a user who typed "nifty 100 stocks"
+        # may not have registered that they are about to backtest a hundred
+        # independent instruments at once, sharing one pool of capital. Saying
+        # so plainly is the only thing standing between them and finding out
+        # the hard way.
+        n = _universe_size(spec.instrument.symbol)
+        return f"All {n} stocks in {spec.instrument.symbol}{tf_suffix}"
+
+    if spec.instrument.trade_as == "stock":
+        return f"{spec.instrument.symbol} (NSE){tf_suffix}"
 
     if spec.instrument.option_type == "auto":
         side = "call" if spec.direction == "long" else "put"

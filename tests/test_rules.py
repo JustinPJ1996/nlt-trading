@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from nlt.spec.models import StrategySpec
-from nlt.translate.rules import CONDITION_PATTERNS, parse
+from nlt.translate.rules import CONDITION_PATTERNS, _known_tickers, parse
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "strategies.json").read_text())
 
@@ -98,21 +98,133 @@ def test_state_above_phrasings(phrase: str) -> None:
 # --------------------------------------------------------------------- instrument
 
 
-@pytest.mark.parametrize("phrase", ["nifty", "NIFTY", "nifty 50"])
+@pytest.mark.parametrize("phrase", ["nifty", "NIFTY"])
 def test_instrument_nifty(phrase: str) -> None:
     spec = _spec_of(f"buy {phrase} when rsi cracks 30, stop 1%, target 2%")
     assert spec.instrument.symbol == "NIFTY"
+    assert spec.instrument.trade_as == "index"
 
 
 @pytest.mark.parametrize("phrase", ["banknifty", "bank nifty", "BANKNIFTY"])
 def test_instrument_banknifty(phrase: str) -> None:
     spec = _spec_of(f"buy {phrase} when rsi cracks 30, stop 1%, target 2%")
     assert spec.instrument.symbol == "BANKNIFTY"
+    assert spec.instrument.trade_as == "index"
 
 
 def test_instrument_defaults_to_nifty() -> None:
     spec = _spec_of("buy when rsi cracks 30, stop 1%, target 2%")
     assert spec.instrument.symbol == "NIFTY"
+    assert spec.instrument.trade_as == "index"
+
+
+# ------------------------------------------------------- index vs universe
+
+
+# "NIFTY" bare -- with no stock count attached at all -- is unambiguously the
+# index, in every phrasing a strategy is likely to open with.
+INDEX_PHRASINGS = [
+    "buy nifty when rsi cracks 30",
+    "Buy NIFTY when RSI cracks 30",
+    "buy nifty when rsi < 30",
+    "short nifty when rsi crosses above 70",
+    "sell nifty when rsi crosses above 70",
+    "i want to buy nifty when rsi cracks 30",
+]
+
+
+@pytest.mark.parametrize("text", INDEX_PHRASINGS)
+def test_bare_nifty_is_always_the_index(text: str) -> None:
+    spec = _spec_of(f"{text}, stop 1%, target 2%")
+    assert spec.instrument.symbol == "NIFTY"
+    assert spec.instrument.trade_as == "index"
+
+
+# "stocks"/"shares" (or "stocks in") next to a Nifty count is the unambiguous
+# signal that the *basket* is meant, in every spelling users actually typed.
+UNIVERSE_PHRASINGS = [
+    ("buy nifty 50 stocks when rsi cracks 30", "NIFTY 50"),
+    ("buy NIFTY50 stocks when rsi cracks 30", "NIFTY 50"),
+    ("buy nifty50 stocks when rsi cracks 30", "NIFTY 50"),
+    ("buy stocks in nifty 500 when rsi cracks 30", "NIFTY 500"),
+    ("buy nifty 100 stocks when rsi cracks 30", "NIFTY 100"),
+    ("buy nifty 100 stocks above the 200 dma when rsi cracks 30", "NIFTY 100"),
+]
+
+
+@pytest.mark.parametrize("text,canonical", UNIVERSE_PHRASINGS)
+def test_universe_spellings_resolve_to_canonical_symbol(text: str, canonical: str) -> None:
+    spec = _spec_of(f"{text}, stop 1%, target 2%")
+    assert spec.instrument.symbol == canonical
+    assert spec.instrument.trade_as == "stock"
+    assert spec.instrument.is_universe
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "buy nifty 100 when rsi cracks 30",
+        "buy nifty500 when rsi cracks 30",
+        "buy when nifty 100 rsi cracks 30",
+    ],
+)
+def test_nifty_100_and_500_are_always_the_universe_even_without_the_word_stocks(text: str) -> None:
+    """NIFTY 100/500 name no tradeable index in this platform (only NIFTY and
+    BANKNIFTY do), so mentioning them is never ambiguous -- unlike NIFTY 50."""
+    spec = _spec_of(f"{text}, stop 1%, target 2%")
+    assert spec.instrument.trade_as == "stock"
+    assert spec.instrument.is_universe
+
+
+def test_nifty_50_with_no_qualifier_is_a_genuine_ambiguity() -> None:
+    """NIFTY 50 is both the literal name of the index and the name of the
+    50-stock basket -- an honest refusal beats guessing either way."""
+    result = parse("buy nifty 50 when rsi cracks 30, stop 1%, target 2%")
+    assert result.spec is None
+    assert result.questions
+    assert result.questions[0].field == "instrument.symbol"
+
+
+def test_nifty_50_stocks_resolves_the_ambiguity() -> None:
+    spec = _spec_of("buy nifty 50 stocks when rsi cracks 30, stop 1%, target 2%")
+    assert spec.instrument.symbol == "NIFTY 50"
+    assert spec.instrument.trade_as == "stock"
+
+
+def test_instantly_is_read_as_filler_not_a_feature() -> None:
+    spec = _spec_of("Instantly buy NIFTY 50 stocks when RSI cracks 30, stop 1%, target 2%")
+    assert spec.instrument.symbol == "NIFTY 50"
+    assert spec.instrument.trade_as == "stock"
+
+
+# ------------------------------------------------------------------- stocks
+
+
+@pytest.mark.parametrize("ticker", ["TCS", "RELIANCE", "ITC", "INFY"])
+def test_known_tickers_are_recognised(ticker: str) -> None:
+    spec = _spec_of(f"buy {ticker} when rsi cracks 30, stop 1%, target 2%")
+    assert spec.instrument.symbol == ticker
+    assert spec.instrument.trade_as == "stock"
+    assert not spec.instrument.is_universe
+
+
+@pytest.mark.parametrize("ticker", ["tcs", "reliance", "itc", "infy"])
+def test_known_tickers_are_recognised_lowercase(ticker: str) -> None:
+    spec = _spec_of(f"buy {ticker} when rsi cracks 30, stop 1%, target 2%")
+    assert spec.instrument.symbol == ticker.upper()
+
+
+def test_unknown_word_after_buy_is_not_invented_as_a_ticker() -> None:
+    """'dips' is not an NSE symbol -- it must land in unparsed, not become a
+    stock symbol just because it sits where a ticker would."""
+    result = parse("buy dips when rsi cracks 30, stop 1%, target 2%")
+    assert result.spec is None
+    assert any("dips" in u for u in result.unparsed)
+
+
+@pytest.mark.parametrize("word", ["buy", "when", "the", "stop", "target"])
+def test_ordinary_english_words_are_never_mistaken_for_tickers(word: str) -> None:
+    assert word.upper() not in _known_tickers()
 
 
 # --------------------------------------------------------------------- direction
@@ -575,3 +687,157 @@ def test_leading_subject_does_not_break_parsing(subject):
     result = parse(f"buy nifty when {subject} closes above yesterday's high, target 2%, stop 1%")
     assert result.spec is not None, result.unparsed
     assert not result.unparsed
+
+
+# --------------------------------------------------------------- timeframe
+
+
+@pytest.mark.parametrize(
+    "phrase,expected",
+    [
+        ("use 5-minute candles", "5m"),
+        ("use 5 minute candles", "5m"),
+        ("on the 15 minute chart", "15m"),
+        ("1 hour candles", "1h"),
+        ("use 1-hour candles", "1h"),
+        ("daily", "1d"),
+        ("1 day timeframe", "1d"),
+        ("30 minute bars", "30m"),
+        ("3 minute timeframe", "3m"),
+        ("1 minute candles", "1m"),
+    ],
+)
+def test_supported_timeframes_are_recognised(phrase: str, expected: str) -> None:
+    spec = _spec_of(f"buy nifty when rsi cracks 30, stop 1%, target 2%, {phrase}")
+    assert spec.instrument.timeframe == expected
+
+
+def test_no_timeframe_word_defaults_to_daily() -> None:
+    spec = _spec_of("buy nifty when rsi cracks 30, stop 1%, target 2%")
+    assert spec.instrument.timeframe == "1d"
+
+
+def test_bare_intraday_does_not_invent_a_bar_size() -> None:
+    """'intraday' alone tells us nothing about *which* sub-day bar size is
+    meant, so it must not silently become 5m/15m/etc, and it must not surface
+    as an unparsed leftover either -- it is a recognised word, just one that
+    correctly carries no timeframe information on its own."""
+    result = parse("buy nifty when rsi cracks 30, stop 1%, target 2%, intraday")
+    assert result.spec is not None, result.questions
+    assert result.spec.instrument.timeframe == "1d"
+    assert not result.unparsed
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "use 2 minute candles",
+        "7 minute chart",
+        "4 hour candles",
+        "3 day timeframe",
+    ],
+)
+def test_unsupported_timeframes_are_refused_not_rounded(phrase: str) -> None:
+    result = parse(f"buy nifty when rsi cracks 30, stop 1%, target 2%, {phrase}")
+    assert result.spec is None
+    assert result.questions
+    assert result.questions[0].field == "instrument.timeframe"
+
+
+def test_use_5_minute_candles_on_a_stock_strategy() -> None:
+    spec = _spec_of(
+        "buy itc when rsi drops below 30, stop 1%, target 2%. use 5-minute candles."
+    )
+    assert spec.instrument.symbol == "ITC"
+    assert spec.instrument.timeframe == "5m"
+
+
+# ------------------------------------------------------- stocks: crossing vs state
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "buy tcs when rsi cracks 30, stop 1%, target 2%",
+        "buy tcs when rsi drops below 30, stop 1%, target 2%",
+    ],
+)
+def test_crossing_still_holds_for_a_single_stock(text: str) -> None:
+    spec = _spec_of(text)
+    assert spec.instrument.symbol == "TCS"
+    assert spec.entry.op == "crosses_below"
+
+
+def test_state_still_holds_for_a_stock_universe() -> None:
+    spec = _spec_of("buy nifty 100 stocks when rsi is below 30, stop 1%, target 2%")
+    assert spec.instrument.symbol == "NIFTY 100"
+    assert spec.entry.op == "lt"
+
+
+# ------------------------------------------------------------- determinism (stocks)
+
+
+def test_deterministic_output_for_a_stock_strategy() -> None:
+    text = "Buy TCS when RSI drops below 30, target 5%, stop 2%"
+    a = parse(text)
+    b = parse(text)
+    assert a.spec is not None
+    assert a.spec.model_dump_json() == b.spec.model_dump_json()
+
+
+def test_deterministic_output_for_a_universe_strategy() -> None:
+    text = "Buy Nifty 100 stocks above the 200 DMA when RSI drops below 40. 2% stop loss, 6% take profit"
+    a = parse(text)
+    b = parse(text)
+    assert a.spec is not None
+    assert a.spec.model_dump_json() == b.spec.model_dump_json()
+
+
+# ------------------------------------------------------- the 70 user strategies
+
+
+USER_FIXTURES = json.loads(
+    (Path(__file__).parent / "fixtures" / "user_strategies.json").read_text()
+)
+_NEVER_A_STRATEGY = {"question", "robo", "fundamental", "event"}
+
+# Pinned so a future change that silently drops coverage (or, far worse,
+# starts turning a "question"/"robo"/"fundamental"/"event" sentence into a
+# tradeable spec) fails loudly instead of drifting unnoticed.
+_EXPECTED_SPEC_COUNT = 1
+
+
+def test_all_70_user_strategies_do_not_crash() -> None:
+    for case in USER_FIXTURES:
+        parse(case["text"])  # must not raise
+
+
+def test_no_wrong_parses_among_the_70_user_strategies() -> None:
+    """The single most important assertion in this file: a sentence classified
+    as a question, a robo-advisory request, a fundamentals lookup or a
+    corporate-action event must never come back as a tradeable spec. Parsing
+    "Which sectors are strongest right now?" into a strategy is the worst
+    failure this parser can make.
+    """
+    wrong = []
+    for case in USER_FIXTURES:
+        result = parse(case["text"])
+        if result.spec is not None and case["klass"] in _NEVER_A_STRATEGY:
+            wrong.append((case["n"], case["klass"], case["text"]))
+    assert not wrong, f"produced a spec for out-of-scope sentences: {wrong}"
+
+
+def test_pinned_spec_count_across_the_70_user_strategies() -> None:
+    produced = [case["n"] for case in USER_FIXTURES if parse(case["text"]).spec is not None]
+    assert len(produced) == _EXPECTED_SPEC_COUNT, (
+        f"expected {_EXPECTED_SPEC_COUNT} of the 70 user strategies to produce a spec, "
+        f"got {len(produced)}: {produced}. If this grew, update _EXPECTED_SPEC_COUNT "
+        "deliberately; if it shrank, something regressed."
+    )
+
+
+def test_every_produced_spec_among_the_70_validates() -> None:
+    for case in USER_FIXTURES:
+        result = parse(case["text"])
+        if result.spec is not None:
+            StrategySpec.model_validate(result.spec.model_dump())
