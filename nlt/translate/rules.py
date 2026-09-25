@@ -1646,6 +1646,14 @@ def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question |
 # basket actually be a basket, and the choice is stated in the readback.
 BASKET_DEFAULT_CONCURRENT = 5
 
+# Ceiling on how much of the account a single position may occupy, whatever the
+# sizing arithmetic produces. Without it, risk-based sizing with a tight stop
+# puts nearly the whole account into one trade: the rupee risk is still small,
+# but there is no room for a second position and an overnight gap can jump
+# straight past the stop that made the size look safe.
+STOCK_MAX_POSITION_PCT = 20.0
+FNO_MAX_POSITION_PCT = 10.0
+
 
 def _default_risk(instrument_kwargs: dict) -> RiskLimits:
     """Risk limits, with a basket-appropriate concurrency default."""
@@ -1658,11 +1666,23 @@ def _default_risk(instrument_kwargs: dict) -> RiskLimits:
     # stock position, and unlike a lot count they scale with the share price.
     lot_cap = 2 if instrument_kwargs.get("trade_as") == "option" else None
 
+    # How much of the account one position may occupy. F&O gets the tighter
+    # limit: an option can lose its whole premium in a session, and a futures
+    # position is leveraged against margin rather than paid for outright, so the
+    # same percentage of capital is a much larger bet than it is in cash equity.
+    position_pct = (
+        FNO_MAX_POSITION_PCT
+        if instrument_kwargs.get("trade_as") == "option"
+        else STOCK_MAX_POSITION_PCT
+    )
+
     if symbol and is_universe(symbol):
         return RiskLimits(
-            max_concurrent_positions=BASKET_DEFAULT_CONCURRENT, max_lots=lot_cap
+            max_concurrent_positions=BASKET_DEFAULT_CONCURRENT,
+            max_lots=lot_cap,
+            max_position_pct=position_pct,
         )
-    return RiskLimits(max_lots=lot_cap)
+    return RiskLimits(max_lots=lot_cap, max_position_pct=position_pct)
 
 
 def parse(description: str, *, answers: dict[str, str] | None = None) -> TranslationResult:

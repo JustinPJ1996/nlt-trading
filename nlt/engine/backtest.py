@@ -453,10 +453,21 @@ def run_backtest(
             "to what the account could actually fund"
         )
     if affordability_skipped_count:
-        warnings.append(
-            f"{affordability_skipped_count} entry signal(s) skipped: not enough spare capital "
-            "to fund even a single lot"
-        )
+        # Distinguish "you are out of money" from "the concentration rail stopped
+        # you". They look identical from the trade list and mean opposite things:
+        # the first says trade smaller, the second says the rail is set tighter
+        # than one indivisible lot, and staring at an untouched balance while
+        # being told there is "not enough capital" would be baffling.
+        pct = spec.risk.max_position_pct
+        if pct is not None:
+            reason = (
+                f"one position may not exceed {pct:g}% of the account, and a single "
+                "lot costs more than that. Either raise that limit or trade a "
+                "cheaper contract"
+            )
+        else:
+            reason = "not enough spare capital to fund even a single lot"
+        warnings.append(f"{affordability_skipped_count} entry signal(s) skipped: {reason}")
     if boundary_entry_skipped_count:
         warnings.append(
             f"{boundary_entry_skipped_count} entry signal(s) skipped: they fired on the last "
@@ -736,6 +747,15 @@ def _size_position(
             units = risk_amount / stop_distance
             lots = math.floor(units / lot_size)
             quantity = max(lots, 1) * lot_size
+
+    # The concentration rail, applied before the lot cap so both bind.
+    # Rounded DOWN to a whole lot: one lot over the limit is still over it, and
+    # a rail that rounds up in the account's disfavour is not doing its job.
+    pct = spec.risk.max_position_pct
+    if pct is not None and entry_price > 0:
+        budget = pct / 100.0 * capital_now
+        affordable_lots = math.floor(budget / (entry_price * lot_size))
+        quantity = min(quantity, max(affordable_lots, 0) * lot_size)
 
     # No lot cap is the normal case for stocks; capital and max_loss_per_trade
     # are what bound a stock position, and both scale with the share price.

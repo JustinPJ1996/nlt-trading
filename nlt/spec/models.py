@@ -252,6 +252,16 @@ class RiskLimits(Base):
     # which scale with price on their own.
     max_lots: int | None = Field(default=None, ge=1, le=100)
 
+    # The concentration rail. Risk-based sizing with a tight stop produces a
+    # large position for the same rupee risk -- a 1% stop on a 1% risk budget
+    # puts nearly the whole account into one trade. The risk arithmetic is
+    # correct and the outcome is still reckless: no room for anything else, and
+    # full exposure to an overnight gap that jumps straight past the stop.
+    #
+    # This binds regardless of what the sizing mode computes, because a rail
+    # that yields to the thing it is restraining is not a rail.
+    max_position_pct: float | None = Field(default=None, gt=0, le=100)
+
 
 # ---------------------------------------------------------------- schedule
 

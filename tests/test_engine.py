@@ -1256,3 +1256,99 @@ def test_engine_actually_calls_the_overnight_carry_invariant(monkeypatch):
 
     with pytest.raises(RuntimeError, match="session boundary"):
         run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+
+
+# ---------------------------------------------------------------------------
+# The concentration rail
+#
+# Risk-based sizing with a tight stop produces a large position for the same
+# rupee risk: a 1% stop on a 1% risk budget put 91% of the account into one
+# NIFTY trade. The risk arithmetic was correct and the outcome was still
+# reckless -- no room for a second position, and full exposure to an overnight
+# gap that jumps straight past the stop that made the size look safe.
+#
+# The rail binds whatever the sizing mode computes, because a rail that yields
+# to the thing it restrains is not a rail.
+# ---------------------------------------------------------------------------
+
+
+def _flat_price_bars(price: float, n: int = 40) -> pd.DataFrame:
+    idx = pd.bdate_range("2024-01-01", periods=n, tz="Asia/Kolkata")
+    px = pd.Series([price] * n, index=idx)
+    return pd.DataFrame(
+        {"open": px, "high": px * 1.02, "low": px * 0.98, "close": px, "volume": 1e6},
+        index=idx,
+    )
+
+
+def _capped_spec(pct: float | None, *, lots: int = 10, trade_as: str = "stock") -> StrategySpec:
+    return StrategySpec.model_validate(
+        {
+            "name": "cap", "description": "x",
+            "instrument": {"symbol": "TCS", "trade_as": trade_as},
+            "indicators": [],
+            "entry": {"kind": "compare", "op": "gt",
+                      "left": {"kind": "ref", "name": "close"},
+                      "right": {"kind": "const", "value": 0}},
+            "exit": {"target_pct": 50.0, "stop_pct": 40.0},
+            "sizing": {"mode": "fixed_lots", "lots": lots},
+            "risk": {"max_position_pct": pct},
+        }
+    )
+
+
+def test_concentration_rail_caps_an_explicitly_requested_size():
+    """Asking for more than the rail allows must be cut down, not honoured."""
+    # Rs 500 a share and 100 lots asks for Rs 50,000, well past the Rs 20,000 rail.
+    bars = _flat_price_bars(500.0)
+    result = run_backtest(_capped_spec(20.0, lots=100), bars, capital=100_000.0,
+                          lot_size=1, slippage_pct=0.0)
+
+    biggest = max(t.quantity * t.entry_price for t in result.trades)
+    assert biggest <= 20_000.0 * 1.001, (
+        f"largest position was Rs {biggest:,.0f}, above the 20% of Rs 1,00,000 rail"
+    )
+
+
+def test_without_the_rail_the_same_request_is_honoured():
+    """The mirror -- proves the cap, not something else, is doing the work."""
+    bars = _flat_price_bars(500.0)
+    result = run_backtest(_capped_spec(None, lots=100), bars, capital=100_000.0,
+                          lot_size=1, slippage_pct=0.0)
+
+    biggest = max(t.quantity * t.entry_price for t in result.trades)
+    assert biggest == pytest.approx(50_000.0), "the full request should go through"
+
+
+def test_rail_rounds_down_to_a_whole_lot():
+    """One lot over the limit is still over it."""
+    bars = _flat_price_bars(150.0)
+    # 10% of 1,00,000 = 10,000; a 75-unit lot at 150 costs 11,250, so nothing fits.
+    result = run_backtest(_capped_spec(10.0, lots=1, trade_as="option"), bars,
+                          capital=100_000.0, lot_size=75, slippage_pct=0.0)
+    assert result.trades == []
+
+
+def test_a_blocked_trade_says_it_was_the_rail_not_a_shortage_of_money():
+    """Being told "not enough capital" while the balance sits untouched is baffling."""
+    bars = _flat_price_bars(250.0)
+    result = run_backtest(_capped_spec(10.0, lots=1, trade_as="option"), bars,
+                          capital=100_000.0, lot_size=75, slippage_pct=0.0)
+
+    skipped = [w for w in result.warnings if "skipped" in w and "signal" in w]
+    assert skipped, "signals were dropped with no warning at all"
+    assert "10% of the account" in skipped[0], skipped[0]
+
+
+def test_rail_is_proportional_to_capital():
+    """A bigger account may take a bigger position, in rupees, for the same rail."""
+    # Rs 5,000 a share x 100 lots asks for Rs 5,00,000 -- past the rail at both
+    # account sizes, so the rail alone decides the answer in each case.
+    bars = _flat_price_bars(5_000.0)
+    sizes = []
+    for capital in (100_000.0, 500_000.0):
+        result = run_backtest(_capped_spec(20.0, lots=100), bars, capital=capital,
+                              lot_size=1, slippage_pct=0.0)
+        sizes.append(max(t.quantity * t.entry_price for t in result.trades))
+
+    assert sizes[1] == pytest.approx(sizes[0] * 5, rel=0.01)
