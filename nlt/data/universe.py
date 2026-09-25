@@ -71,6 +71,21 @@ def list_universes() -> list[str]:
     return list(_load_snapshot()["universes"])
 
 
+
+def normalise_universe_name(raw: str) -> str:
+    """Public form of the name canonicaliser: 'nifty50' -> 'NIFTY 50'."""
+    return _canonical_name(raw)
+
+
+def is_universe(name: str) -> bool:
+    """Does this name refer to a basket rather than a single instrument?
+
+    Used by the spec validator, so it must not download anything or raise -- a
+    name that is not a universe is an ordinary answer, not an error.
+    """
+    return _canonical_name(name) in _load_snapshot()["universes"]
+
+
 def get_universe(name: str) -> Universe:
     """Look up a universe by name, accepting loose spelling.
 

@@ -12,6 +12,7 @@ exit path, and to carry risk limits.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -272,12 +273,35 @@ class Schedule(Base):
 
 # ------------------------------------------------------------- instrument
 
-class Instrument(Base):
-    """What the signal is computed on, and what actually gets traded."""
+INDICES = ("NIFTY", "BANKNIFTY")
 
-    symbol: Literal["NIFTY", "BANKNIFTY"] = "NIFTY"
+
+class Instrument(Base):
+    """What the signal is computed on, and what actually gets traded.
+
+    `symbol` is one of three things, and the distinction drives everything
+    downstream:
+
+    * an index -- "NIFTY", "BANKNIFTY"
+    * a single stock -- "TCS", "RELIANCE"
+    * a universe -- "NIFTY 50", "NIFTY 100", "NIFTY 500"
+
+    A universe means the same rules are evaluated independently on every member,
+    and the portfolio holds whichever of them are signalling, up to the risk
+    limits. That is what "buy Nifty 100 stocks when RSI drops below 40" actually
+    asks for, and it is a materially different thing to backtest than one series:
+    capital is shared, positions compete for it, and a day where forty names
+    signal at once is the interesting case rather than an edge case.
+    """
+
+    symbol: str = "NIFTY"
     timeframe: Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"] = "1d"
-    trade_as: Literal["index", "option"] = "index"
+    trade_as: Literal["index", "option", "stock"] = "index"
+
+    # How to choose when more symbols signal than there is room to hold. There
+    # is no neutral answer, so it is stated rather than left to whatever order
+    # the data happened to arrive in.
+    selection: Literal["first", "ranked"] = "first"
 
     # Only meaningful when trade_as == "option".
     option_type: Literal["auto", "CE", "PE"] = "auto"
@@ -288,6 +312,40 @@ class Instrument(Base):
         description="Strikes away from at-the-money. 0 = ATM, +1 = one strike OTM.",
     )
     expiry: Literal["nearest_weekly", "next_weekly", "monthly"] = "nearest_weekly"
+
+    @field_validator("symbol")
+    @classmethod
+    def _known_symbol(cls, v: str) -> str:
+        """Accept an index, a universe name, or a plausible NSE ticker.
+
+        Universe membership is checked against the bundled constituent lists, so
+        a typo like "NIFTY 250" is rejected here rather than silently backtesting
+        an empty basket. A bare ticker cannot be verified without a download, so
+        it is only shape-checked; a symbol that does not exist surfaces as a load
+        failure with its own reason attached.
+        """
+        cleaned = " ".join(str(v).upper().split())
+        if cleaned in INDICES:
+            return cleaned
+
+        from nlt.data.universe import is_universe, normalise_universe_name
+
+        if is_universe(cleaned):
+            return normalise_universe_name(cleaned)
+
+        if re.fullmatch(r"[A-Z][A-Z0-9&\-]{1,19}", cleaned):
+            return cleaned
+
+        raise ValueError(
+            f"{v!r} is not an index ({', '.join(INDICES)}), a known universe, "
+            "or a valid NSE ticker symbol"
+        )
+
+    @property
+    def is_universe(self) -> bool:
+        from nlt.data.universe import is_universe as _is
+
+        return _is(self.symbol)
 
 
 # --------------------------------------------------------------- the spec
