@@ -1619,6 +1619,26 @@ def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question |
     return None
 
 
+
+# A basket strategy holding one position at a time is not what anyone means by
+# "buy Nifty 100 stocks". With the single-position default, that strategy
+# generated 2,300 signals and took 242 of them -- the other 2,058 were dropped
+# for want of a slot, and the backtest silently described a completely different
+# strategy from the one described. Baskets therefore get a default that lets the
+# basket actually be a basket, and the choice is stated in the readback.
+BASKET_DEFAULT_CONCURRENT = 5
+
+
+def _default_risk(instrument_kwargs: dict) -> RiskLimits:
+    """Risk limits, with a basket-appropriate concurrency default."""
+    from nlt.data.universe import is_universe
+
+    symbol = instrument_kwargs.get("symbol", "")
+    if symbol and is_universe(symbol):
+        return RiskLimits(max_concurrent_positions=BASKET_DEFAULT_CONCURRENT)
+    return RiskLimits()
+
+
 def parse(description: str, *, answers: dict[str, str] | None = None) -> TranslationResult:
     answers = answers or {}
     original = description.strip()
@@ -1839,7 +1859,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             entry=entry_condition,
             exit=ExitRules(**exit_kwargs),
             sizing=sizing,
-            risk=RiskLimits(),
+            risk=_default_risk(instrument_kwargs),
             schedule=Schedule(**schedule_kwargs),
         )
     except ValidationError as exc:

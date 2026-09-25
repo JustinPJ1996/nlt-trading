@@ -133,7 +133,13 @@ def _build_result(
     )
 
 
-def _comparison(result: BacktestResult, *, beats: bool = True, benchmark_return_pct: float = 20.0) -> Comparison:
+def _comparison(
+    result: BacktestResult,
+    *,
+    beats: bool = True,
+    benchmark_return_pct: float = 20.0,
+    benchmark_name: str = "holding NIFTY",
+) -> Comparison:
     strategy_return = result.metrics["total_return_pct"]
     if beats:
         benchmark_return_pct = min(benchmark_return_pct, strategy_return - 5.0)
@@ -148,6 +154,7 @@ def _comparison(result: BacktestResult, *, beats: bool = True, benchmark_return_
         strategy_max_drawdown_pct=result.metrics["max_drawdown_pct"],
         benchmark_max_drawdown_pct=-15.0,
         time_in_market_pct=result.metrics["exposure_pct"],
+        benchmark_name=benchmark_name,
     )
 
 
@@ -644,3 +651,43 @@ def test_rsi_strategy_underperforms_nifty_buy_and_hold(nifty_bars):
     report_text = render(result, comparison, verdict)
     assert "buy-and-hold" in report_text.lower() or "buy and hold" in report_text.lower()
     assert "NIFTY" in report_text
+
+
+# ---------------------------------------------------------------------------
+# The verdict must name the benchmark it actually measured
+#
+# The flag text said "Simply holding NIFTY would have done better" regardless of
+# what was compared. On a stock basket the benchmark is an equal-weight hold of
+# those same stocks, so the sentence was plainly untrue -- and a verdict a
+# beginner cannot trust literally is worse than no verdict at all.
+# ---------------------------------------------------------------------------
+
+
+def test_verdict_names_the_benchmark_it_was_given():
+    from nlt.report.verdict import assess
+
+    idx = _bdate_index(400)
+    result = _build_result(
+        trades=[_mk_trade(idx, i * 6, net_pnl=-500.0) for i in range(60)],
+        equity=_flat_equity(400, end_capital=70_000.0),
+    )
+    comparison = _comparison(
+        result, beats=False, benchmark_name="holding all 100 of these stocks equally"
+    )
+    verdict = assess(result, comparison)
+
+    text = verdict.summary + " ".join(f.headline + f.detail for f in verdict.flags)
+    assert "all 100 of these stocks" in text
+    assert "NIFTY" not in text, "the verdict names NIFTY when the benchmark was a basket"
+
+
+def test_benchmark_name_flows_from_the_benchmark_into_the_comparison():
+    from nlt.report.benchmark import buy_and_hold, compare
+
+    bars = _mkbars(120)
+    result = _build_result(
+        trades=[_mk_trade(bars.index, 0, net_pnl=100.0)],
+        equity=_flat_equity(120, end_capital=101_000.0),
+    )
+    benchmark = buy_and_hold(bars, 100_000.0, name="holding TCS")
+    assert compare(result, benchmark, bars).benchmark_name == "holding TCS"

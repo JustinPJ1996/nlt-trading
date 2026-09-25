@@ -71,8 +71,22 @@ def load_for_spec(
 
     for sym, reason in source.failures().items():
         notes.append(f"{sym}: failed to load ({reason})")
-    for sym, symbol_notes in source.quality_notes().items():
-        for note in symbol_notes:
-            notes.append(f"{sym}: {note}")
+
+    # Corporate-action cleaning is summarised rather than listed per symbol.
+    # A hundred-stock basket produced thirty-eight notes, all reporting history
+    # the 2020 floor removes anyway, which buried the two that actually matter
+    # (survivorship, and signals dropped for want of capital). A warning nobody
+    # reads is worse than none: it trains the reader to skip the whole section.
+    cleaned = source.quality_notes()
+    if cleaned:
+        affected = sorted(cleaned)
+        shown = ", ".join(affected[:5])
+        more = f" and {len(affected) - 5} more" if len(affected) > 5 else ""
+        notes.append(
+            f"Removed unadjusted corporate-action history from "
+            f"{len(affected)} symbol(s) ({shown}{more}). Those splits and bonuses "
+            "appear in the raw data as real overnight crashes, which would "
+            "otherwise be traded as genuine price moves."
+        )
 
     return bars_by_symbol, notes

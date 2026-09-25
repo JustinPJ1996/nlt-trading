@@ -203,14 +203,11 @@ def _render_backtest_panel(spec) -> None:
 
     if st.button("Run backtest", type="primary"):
         start, end = (date_range if isinstance(date_range, tuple) else (None, None))
-        bars, bars_error = logic.safe_call(
-            lambda: cached_load_bars(spec.instrument.symbol, start, end),
-            on_error="Could not load price history",
-        )
-        if bars_error:
-            st.error(bars_error)
-            return
-
+        # No pre-flight load here. `run_pipeline` resolves the symbol itself --
+        # an index, a ticker or a whole universe -- and reports failures as
+        # `result.error`. Loading separately first meant asking Yahoo for a
+        # ticker called "NIFTY 100" and rejecting every basket strategy before
+        # the pipeline that knows how to handle one was ever called.
         st.session_state["capital"] = capital
         st.session_state["cost_model_label"] = cost_label
         with st.spinner("Running the backtest..."):
@@ -327,10 +324,16 @@ def page_results() -> None:
         st.info("This strategy never took a trade in the tested period.")
 
     # ---------------------------------------------------------- warnings
-    if bt.warnings:
-        st.markdown("### Things the engine wants you to know")
-        for w in bt.warnings:
-            st.warning(w)
+    # `data_notes` carries everything the loaders and the engine wanted to say:
+    # corporate-action history dropped, symbols that failed to load, the
+    # survivorship caveat on a universe, signals skipped for want of capital.
+    # De-duplicated because the engine's own warnings are folded in upstream,
+    # but never filtered -- a note the user does not see is a note not made.
+    notes = list(dict.fromkeys([*getattr(result, "data_notes", []), *bt.warnings]))
+    if notes:
+        st.markdown("### Things you should know about this test")
+        for note in notes:
+            st.warning(note)
 
     # -------------------------------------------------------------- save
     st.markdown("---")

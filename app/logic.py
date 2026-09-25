@@ -19,7 +19,7 @@ import datetime as dt
 import logging
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -33,6 +33,8 @@ from nlt.costs.charges import (
 from nlt.costs.charges import charge_fn as _adapt_charge_fn
 from nlt.data.yahoo import YahooSource
 from nlt.engine.backtest import BacktestResult, run_backtest
+from nlt.engine.basket import BasketResult, run_basket_backtest
+from nlt.engine.loader import load_for_spec
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 from nlt.translate.readback import describe, format_inr
@@ -246,11 +248,70 @@ class PipelineResult:
     benchmark: Benchmark | None = None
     comparison: Comparison | None = None
     verdict: Verdict | None = None
+    # Populated only for a basket run. `backtest` still carries the metrics and
+    # trades so every downstream consumer (charts, verdict, tables) works on one
+    # shape regardless of whether one symbol or a hundred were traded.
+    basket: BasketResult | None = None
+    data_notes: list[str] = field(default_factory=list)
     error: str | None = None
 
     @property
     def ok(self) -> bool:
         return self.error is None and self.backtest is not None
+
+
+
+def _as_backtest_result(basket: BasketResult, spec: StrategySpec) -> BacktestResult:
+    """Present a basket run in the shape the rest of the UI already understands.
+
+    Charts, the metrics table, the trade list and the verdict were all written
+    against `BacktestResult`. A basket carries the same information -- one
+    portfolio equity curve, one set of metrics, one list of trades -- so it is
+    adapted rather than special-cased everywhere downstream. The alternative is
+    a second rendering path that drifts from the first.
+    """
+    return BacktestResult(
+        spec=spec,
+        trades=basket.trades,
+        equity=basket.equity,
+        metrics=basket.metrics,
+        features=pd.DataFrame(index=basket.equity.index),
+        warnings=list(basket.warnings),
+    )
+
+
+def _equal_weight_index(bars_by_symbol: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """An equal-weight basket of the same names, to benchmark a basket against.
+
+    Comparing a hundred-stock strategy to NIFTY would conflate two questions:
+    whether the timing rules add anything, and whether those hundred stocks beat
+    the index. This isolates the first -- "would picking your moments have beaten
+    simply owning all of them?" -- which is what the user is actually asking.
+
+    Each symbol is normalised to its own first close so no single high-priced
+    stock dominates, then averaged across whichever symbols have a bar that day.
+    """
+    normalised = {}
+    for symbol, df in bars_by_symbol.items():
+        if df.empty:
+            continue
+        base = df["close"].iloc[0]
+        if base > 0:
+            normalised[symbol] = df["close"] / base
+
+    if not normalised:
+        raise ValueError("no usable price history in the basket")
+
+    combined = pd.DataFrame(normalised).sort_index()
+    level = 100.0 * combined.mean(axis=1, skipna=True)
+
+    # An OHLCV frame is what the benchmark and charts expect. The synthetic
+    # index has no meaningful intraday range, so open/high/low all equal close;
+    # `buy_and_hold` only reads the first open and the last close.
+    return pd.DataFrame(
+        {"open": level, "high": level, "low": level, "close": level, "volume": 0.0},
+        index=level.index,
+    ).dropna()
 
 
 def run_pipeline(
@@ -275,19 +336,53 @@ def run_pipeline(
 
     spec = translation.spec
     try:
-        bars = load_bars(symbol or spec.instrument.symbol, start, end)
-        if bars.empty:
-            return PipelineResult(
-                translation=translation,
-                spec=spec,
-                error="There is no price history for that symbol and date range to test against.",
-            )
-
         model = charge_model_for_label(cost_model_label)
         cf = _adapt_charge_fn(model)
 
-        backtest = run_backtest(spec, bars, capital=capital, charge_fn=cf)
-        benchmark = buy_and_hold(bars, capital, charge_fn=cf)
+        # `load_for_spec` knows how to turn a symbol into bars whether it names
+        # an index, a single stock or a whole universe, and hands back every
+        # data-quality note it collected on the way -- artefact cleaning, load
+        # failures, survivorship. Those notes reach the user; they are the
+        # reason a basket that quietly lost fifteen constituents is visible.
+        # An explicit `symbol` override replaces the one the spec carries. It has
+        # to be pushed into the spec rather than passed alongside it, because
+        # `load_for_spec` decides index-vs-stock-vs-universe from the spec --
+        # honouring the override anywhere else would load one symbol and then
+        # backtest against another's rules.
+        load_spec = spec
+        if symbol and symbol != spec.instrument.symbol:
+            load_spec = spec.model_copy(
+                update={"instrument": spec.instrument.model_copy(update={"symbol": symbol})}
+            )
+
+        bars_by_symbol, data_notes = load_for_spec(load_spec, start=start, end=end)
+        if not bars_by_symbol or all(df.empty for df in bars_by_symbol.values()):
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                data_notes=data_notes,
+                error="There is no price history for that symbol and date range to test against.",
+            )
+
+        if len(bars_by_symbol) > 1:
+            basket = run_basket_backtest(load_spec, bars_by_symbol, capital=capital, charge_fn=cf)
+            backtest = _as_backtest_result(basket, load_spec)
+            # The benchmark for a basket is an equal-weight buy-and-hold of the
+            # same names, which is the honest comparison: "would picking your
+            # moments have beaten simply owning all of them?"
+            bars = _equal_weight_index(bars_by_symbol)
+            benchmark_name = (
+                f"holding all {len(bars_by_symbol)} of these stocks equally"
+            )
+            data_notes = data_notes + basket.warnings
+        else:
+            bars = next(iter(bars_by_symbol.values()))
+            benchmark_name = f"holding {load_spec.instrument.symbol}"
+            basket = None
+            backtest = run_backtest(load_spec, bars, capital=capital, charge_fn=cf)
+            data_notes = data_notes + list(backtest.warnings)
+
+        benchmark = buy_and_hold(bars, capital, charge_fn=cf, name=benchmark_name)
         comparison = compare(backtest, benchmark, bars)
         verdict = assess(backtest, comparison)
 
@@ -299,6 +394,8 @@ def run_pipeline(
             benchmark=benchmark,
             comparison=comparison,
             verdict=verdict,
+            basket=basket,
+            data_notes=data_notes,
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad; this is the UI's last line of defence
         logger.exception("run_pipeline failed for spec %r", getattr(spec, "name", None))

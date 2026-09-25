@@ -246,3 +246,74 @@ def test_equity_and_drawdown_figure_has_three_traces() -> None:
 
 def test_import_app_main_does_not_raise() -> None:
     import app.main  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# Stocks and baskets through the UI pipeline
+#
+# The dashboard was built before the engine could trade anything but an index,
+# and asked Yahoo for a ticker called "NIFTY 100". These assert the three
+# instrument kinds all reach a verdict, which is the thing a user can see.
+# ---------------------------------------------------------------------------
+
+
+def test_index_strategy_runs_end_to_end() -> None:
+    result = logic.run_pipeline("buy nifty when rsi cracks 30, target 2%, stop loss 1%")
+    assert result.error is None
+    assert result.backtest is not None and result.verdict is not None
+    assert result.basket is None, "a single index is not a basket run"
+
+
+def test_single_stock_strategy_runs_end_to_end() -> None:
+    result = logic.run_pipeline(
+        "Buy RELIANCE at RSI 30 with 5 percent stop loss and 10 percent target"
+    )
+    assert result.error is None, result.error
+    assert result.backtest is not None and result.verdict is not None
+    assert result.spec.instrument.symbol == "RELIANCE"
+
+
+def test_basket_strategy_runs_end_to_end_and_reports_its_caveats() -> None:
+    """A universe must reach a verdict AND surface why it should be doubted."""
+    result = logic.run_pipeline(
+        "Buy Nifty 100 stocks above the 200 DMA when RSI drops below 40. "
+        "2% stop loss, 6% take profit"
+    )
+    assert result.error is None, result.error
+    assert result.basket is not None, "a universe must take the basket path"
+    assert result.backtest.metrics["total_trades"] > 0
+
+    notes = " ".join(result.data_notes).lower()
+    assert "survivorship" in notes or "membership is a snapshot" in notes, (
+        "a basket backtest on today's constituents is systematically flattered "
+        "and the user must be told"
+    )
+
+
+def test_basket_benchmark_is_the_same_stocks_held_not_the_index() -> None:
+    """Comparing a stock basket to NIFTY would conflate two questions.
+
+    The user is asking whether their timing rules add anything, not whether
+    those hundred stocks beat the index -- so the benchmark owns the same names.
+    """
+    result = logic.run_pipeline(
+        "Buy Nifty 100 stocks above the 200 DMA when RSI drops below 40. "
+        "2% stop loss, 6% take profit"
+    )
+    assert result.benchmark is not None
+    # The equal-weight basket of 100 stocks is nothing like NIFTY's own return
+    # over the same window, so a mix-up would be visible as a near-identical number.
+    nifty = logic.run_pipeline("buy nifty when rsi cracks 30, target 2%, stop loss 1%")
+    assert abs(
+        result.comparison.benchmark_return_pct - nifty.comparison.benchmark_return_pct
+    ) > 1.0
+
+
+def test_symbol_override_is_honoured_not_silently_ignored() -> None:
+    """Loading one symbol while backtesting another's rules is the worst outcome."""
+    result = logic.run_pipeline(
+        "buy nifty when rsi cracks 30, target 2%, stop loss 1%", symbol="NOTASYMBOL"
+    )
+    assert result.error is not None, (
+        "an unknown symbol override must fail loudly, not fall back to NIFTY"
+    )

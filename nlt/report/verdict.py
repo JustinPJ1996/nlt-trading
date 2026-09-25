@@ -103,10 +103,10 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
             Flag(
                 severity="critical" if lost_money else "warning",
                 code="underperformed_benchmark",
-                headline="Simply holding NIFTY would have done better.",
+                headline=f"Simply {comparison.benchmark_name} would have done better.",
                 detail=(
                     f"The strategy returned {comparison.strategy_return_pct:.1f}% versus "
-                    f"{comparison.benchmark_return_pct:.1f}% for buying and holding NIFTY over "
+                    f"{comparison.benchmark_return_pct:.1f}% for {comparison.benchmark_name} over "
                     f"the same period -- {abs(comparison.excess_return_pct):.1f} percentage "
                     "points worse. All the extra effort and risk of trading bought nothing "
                     "over doing nothing."
@@ -373,7 +373,10 @@ def _summary(
     underperformed = "underperformed_benchmark" in codes
 
     if lost_money and underperformed:
-        return "This strategy lost money, and it also did far worse than simply holding NIFTY."
+        return (
+            "This strategy lost money, and it also did far worse than "
+            f"{comparison.benchmark_name}."
+        )
     if lost_money:
         return (
             f"This strategy lost money over the backtest period "
@@ -381,7 +384,7 @@ def _summary(
         )
     if underperformed:
         return (
-            "This made money, but did worse than simply buying and holding NIFTY over the "
+            f"This made money, but did worse than {comparison.benchmark_name} over the "
             "same period."
         )
     if "too_few_trades" in codes and any(

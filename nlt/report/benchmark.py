@@ -136,6 +136,11 @@ class Comparison:
     strategy_max_drawdown_pct: float
     benchmark_max_drawdown_pct: float
     time_in_market_pct: float
+    # What the benchmark actually is, carried through so the verdict can name it.
+    # A basket strategy is benchmarked against an equal-weight hold of the SAME
+    # stocks, not against NIFTY, and a verdict saying "holding NIFTY would have
+    # done better" when that is not what was measured is simply untrue.
+    benchmark_name: str = "buy and hold"
 
 
 def compare(result: BacktestResult, benchmark: Benchmark, bars: pd.DataFrame) -> Comparison:
@@ -168,5 +173,6 @@ def compare(result: BacktestResult, benchmark: Benchmark, bars: pd.DataFrame) ->
         beat_benchmark=bool(excess_return_pct > 0),
         strategy_max_drawdown_pct=float(result.metrics["max_drawdown_pct"]),
         benchmark_max_drawdown_pct=benchmark.max_drawdown_pct,
+        benchmark_name=benchmark.name,
         time_in_market_pct=float(result.metrics["exposure_pct"]),
     )
