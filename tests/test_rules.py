@@ -804,7 +804,16 @@ _NEVER_A_STRATEGY = {"question", "robo", "fundamental", "event"}
 # Pinned so a future change that silently drops coverage (or, far worse,
 # starts turning a "question"/"robo"/"fundamental"/"event" sentence into a
 # tradeable spec) fails loudly instead of drifting unnoticed.
-_EXPECTED_SPEC_COUNT = 1
+#
+# Grew from 1 to 3 when the parser learned: spelled-out percents and "at RSI
+# N" level phrasing (#13, a single stock with an explicit stop and target),
+# and inline-period indicators plus indicator-vs-indicator comparisons (#59,
+# a NIFTY 100 universe with an EMA crossover and an explicit stop and
+# target). Every other previously-refused sentence in the 70 stays refused,
+# most now for a cleaner, more specific reason (VWAP needs an intraday
+# timeframe and cannot run on a stock basket at all yet; a still-missing
+# stop loss) instead of a garbled "I didn't understand" pile-up.
+_EXPECTED_SPEC_COUNT = 3
 
 
 def test_all_70_user_strategies_do_not_crash() -> None:
@@ -841,3 +850,255 @@ def test_every_produced_spec_among_the_70_validates() -> None:
         result = parse(case["text"])
         if result.spec is not None:
             StrategySpec.model_validate(result.spec.model_dump())
+
+
+# ============================================================================
+# Six gaps closed: anaphora, value-first exits, inline-period indicators,
+# indicator-vs-indicator comparisons, spelled-out numbers/"at RSI N", and VWAP.
+# ============================================================================
+
+# ------------------------------------------------------------------ anaphora
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "buy nifty when rsi drops below 30, sell when it crosses above 70, stop 1%, target 2%",
+        "buy tcs when rsi cracks 30 and sell when it goes above 70, stop 1%, target 2%",
+    ],
+)
+def test_anaphoric_it_resolves_to_the_entry_indicator(text: str) -> None:
+    spec = _spec_of(text)
+    assert spec.entry.op == "crosses_below"
+    assert spec.exit.condition is not None
+    assert spec.exit.condition.op == "crosses_above"
+    assert spec.exit.condition.right.value == 70.0
+    # "it" must resolve to the *same* indicator id as the entry's RSI, not a
+    # second, independently-declared one.
+    assert spec.exit.condition.left.name == spec.entry.left.name
+    assert len([i for i in spec.indicators if i.type == "rsi"]) == 1
+
+
+def test_anaphoric_it_with_inline_period_carries_the_same_length() -> None:
+    spec = _spec_of(
+        "buy nifty when rsi14 drops below 30, sell when it crosses above 70, stop 1%, target 2%"
+    )
+    assert spec.entry.left.name == "rsi14"
+    assert spec.exit.condition.left.name == "rsi14"
+
+
+def test_anaphoric_it_is_ambiguous_with_two_entry_indicators() -> None:
+    """The entry names both RSI and ADX -- 'it' cannot mean both, so this must
+    raise a Question, never silently pick one."""
+    result = parse(
+        "buy nifty when rsi drops below 30 and adx above 25, sell when it crosses 70, "
+        "stop 1%, target 2%"
+    )
+    assert result.spec is None
+    assert result.questions
+    assert result.questions[0].field == "exit.condition"
+    assert "rsi" not in result.questions[0].text.lower().split("mean either the ")[0]
+
+
+def test_it_with_no_recognised_antecedent_falls_through_to_unparsed() -> None:
+    """No indicator at all in the entry -- 'it' has nothing to resolve to, so
+    this must fail safe (unparsed), not crash."""
+    result = parse(
+        "buy nifty when price touches the lower bollinger band, sell when it crosses 70, "
+        "stop 1%, target 2%"
+    )
+    assert result.spec is None
+
+
+# ------------------------------------------------------------- value-first exits
+
+
+@pytest.mark.parametrize(
+    "phrase,expected",
+    [
+        ("sell at 1% profit", 1.0),
+        ("Sell at 2% profit", 2.0),
+        ("book 3% profit", 3.0),
+        ("price reaches 1% profit", 1.0),
+    ],
+)
+def test_value_first_target_phrasings(phrase: str, expected: float) -> None:
+    spec = _spec_of(f"buy nifty when rsi cracks 30, {phrase}, stop loss 1%")
+    assert spec.exit.target_pct == expected
+
+
+@pytest.mark.parametrize(
+    "phrase,expected",
+    [
+        ("stop loss at 0.8%", 0.8),
+        ("stop loss 0.8%", 0.8),
+    ],
+)
+def test_value_first_and_at_stop_phrasings(phrase: str, expected: float) -> None:
+    spec = _spec_of(f"buy nifty when rsi cracks 30, target 2%, {phrase}")
+    assert spec.exit.stop_pct == expected
+
+
+# ------------------------------------------------------------- inline-period
+
+@pytest.mark.parametrize(
+    "phrase,ind_id,length",
+    [
+        ("rsi7 < 28", "rsi7", 7),
+        ("rsi14 < 30", "rsi14", 14),
+        ("adx14 > 18", "adx14", 14),
+        ("ema8 crosses above ema21", "ema8", 8),
+    ],
+)
+def test_inline_period_indicators_are_recognised(phrase: str, ind_id: str, length: int) -> None:
+    spec = _spec_of(f"buy nifty when {phrase}, stop 1%, target 2%")
+    ids = {i.id: i for i in spec.indicators}
+    assert ind_id in ids
+    assert ids[ind_id].params["length"] == length
+
+
+@pytest.mark.parametrize("text", ["rsi0", "rsi9999"])
+def test_inline_period_zero_or_absurd_is_refused_not_clamped(text: str) -> None:
+    result = parse(f"buy nifty when {text} < 30, stop 1%, target 2%")
+    assert result.spec is None
+    assert result.questions
+
+
+def test_inline_period_ema9999_is_refused_not_clamped() -> None:
+    result = parse("buy nifty when ema9999 crosses above ema21, stop 1%, target 2%")
+    assert result.spec is None
+    assert result.questions
+
+
+# --------------------------------------------------------- indicator-vs-indicator
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["ema8 crosses above ema21", "close crosses above vwap"],
+)
+def test_indicator_vs_indicator_crossing(phrase: str) -> None:
+    spec = _spec_of(f"buy tcs when {phrase}, stop 1%, target 2%, use 5-minute candles")
+    assert spec.entry.kind == "compare"
+    assert spec.entry.op == "crosses_above"
+    assert isinstance(spec.entry.left, type(spec.entry.right))  # both Ref
+
+
+@pytest.mark.parametrize(
+    "phrase,left_id,right_id",
+    [
+        ("ema8 > ema21", "ema8", "ema21"),
+        ("close > vwap", "close", "vwap"),
+    ],
+)
+def test_indicator_vs_indicator_state(phrase: str, left_id: str, right_id: str) -> None:
+    spec = _spec_of(f"buy tcs when {phrase}, stop 1%, target 2%, use 5-minute candles")
+    assert spec.entry.op == "gt"
+    assert spec.entry.left.name == left_id
+    assert spec.entry.right.name == right_id
+
+
+# ------------------------------------------------------- spelled-out numbers
+
+
+def test_spelled_out_percent_stop_and_target() -> None:
+    spec = _spec_of("buy reliance when rsi cracks 30 with 5 percent stop loss and 10 percent target")
+    assert spec.exit.stop_pct == 5.0
+    assert spec.exit.target_pct == 10.0
+
+
+def test_at_rsi_level_is_a_crossing_direction_dependent() -> None:
+    long_spec = _spec_of("buy reliance at rsi 30 with 5 percent stop loss and 10 percent target")
+    assert long_spec.entry.op == "crosses_below"
+    assert long_spec.entry.right.value == 30.0
+
+    short_spec = _spec_of(
+        "sell short reliance at rsi 70 with 5 percent stop loss and 10 percent target"
+    )
+    assert short_spec.entry.op == "crosses_above"
+    assert short_spec.entry.right.value == 70.0
+
+
+def test_rsi_between_becomes_an_all_of_two_bounds() -> None:
+    spec = _spec_of("buy nifty when rsi is between 40-60, stop 1%, target 2%")
+    assert spec.entry.kind == "all"
+    ops = sorted((c.op, c.right.value) for c in spec.entry.conditions)
+    assert ops == [("gte", 40.0), ("lte", 60.0)]
+
+
+# -------------------------------------------------------------------- vwap
+
+
+def test_vwap_on_daily_bars_refuses_naming_the_timeframe() -> None:
+    result = parse("buy tcs when close > vwap, stop 1%, target 2%")
+    assert result.spec is None
+    assert result.questions
+    assert result.questions[0].field == "instrument.timeframe"
+    assert "intraday" in result.questions[0].text.lower()
+
+
+def test_vwap_on_intraday_timeframe_parses() -> None:
+    spec = _spec_of("buy tcs when close > vwap, stop 1%, target 2%, use 15-minute candles")
+    assert any(i.type == "vwap" for i in spec.indicators)
+    assert spec.instrument.timeframe == "15m"
+
+
+def test_vwap_on_a_stock_universe_refuses_regardless_of_timeframe() -> None:
+    """Baskets are daily-only in this platform today (see nlt/engine/basket.py),
+    so VWAP on a universe can never run, not even on an intraday timeframe."""
+    result = parse(
+        "buy nifty 100 stocks when close > vwap, stop 1%, target 2%, use 5-minute candles"
+    )
+    assert result.spec is None
+    assert result.questions
+    assert "basket" in result.questions[0].text.lower()
+
+
+# ---------------------------------------------------- crossing vs state, stocks
+
+
+@pytest.mark.parametrize(
+    "text,expected_op",
+    [
+        ("rsi14 cracks 30", "crosses_below"),
+        ("rsi14 < 30", "lt"),
+        ("rsi7 crosses above 70", "crosses_above"),
+        ("rsi7 > 70", "gt"),
+    ],
+)
+def test_inline_period_still_honours_crossing_vs_state(text: str, expected_op: str) -> None:
+    spec = _spec_of(f"buy tcs when {text}, stop 1%, target 2%")
+    assert spec.entry.op == expected_op
+
+
+# --------------------------------------------------------------- backtest window
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["backtest this for the last 3 months", "backtest for 2024", "full year 2024"],
+)
+def test_trailing_backtest_window_does_not_block_parsing(phrase: str) -> None:
+    result = parse(f"buy itc when rsi cracks 30, stop 1%, target 2%. {phrase}.")
+    assert result.spec is not None, result.questions
+    assert any("backtest" in n.lower() for n in result.notes)
+    assert result.unparsed == []
+
+
+# --------------------------------------------------------------- determinism
+
+
+def test_deterministic_output_for_indicator_vs_indicator() -> None:
+    text = "Buy NIFTY 100 stocks when ema8 crosses above ema21 and adx14 > 20, sell at 3% profit, stop loss 1.5%"
+    a = parse(text)
+    b = parse(text)
+    assert a.spec is not None
+    assert a.spec.model_dump_json() == b.spec.model_dump_json()
+
+
+def test_deterministic_output_for_anaphoric_exit() -> None:
+    text = "buy nifty when rsi drops below 30, sell when it crosses above 70, stop 1%, target 2%"
+    a = parse(text)
+    b = parse(text)
+    assert a.spec is not None
+    assert a.spec.model_dump_json() == b.spec.model_dump_json()

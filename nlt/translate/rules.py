@@ -22,6 +22,20 @@ the bar the level is breached) and "RSI is below 30" (true on every bar it holds
 produce wildly different trade counts from the same number. Users say "cracks"
 and "breaks" and mean the former; conflating the two turns one intended trade
 into dozens of silent re-entries.
+
+Two more judgment calls recur often enough to spell out here rather than only in
+a code comment where they are made:
+
+  * "at RSI 30" names a level with no up/down verb attached. We read it as a
+    crossing (see `_build_at_rsi_level`) because "buy at RSI 30" is swing-trade
+    shorthand for "the moment RSI gets there", not "for as long as it happens to
+    sit there" -- and we pick the direction of the crossing from the trade's own
+    direction (long -> falling to the level, short -> rising to it), the same
+    trick `_build_pattern_needs_direction` already uses for "harami"/"marubozu".
+  * "it" in a second clause ("...sell when it crosses 70") refers back to
+    whichever indicator the first clause named. If the first clause named more
+    than one, "it" is ambiguous and we ask rather than pick one -- see
+    `_find_antecedent`.
 """
 
 from __future__ import annotations
@@ -107,7 +121,7 @@ _FILLER = {
     "and", "or", "when", "if", "only", "but", "of", "for", "my", "strategy",
     "then", "so", "it", "is", "s", "this", "that", "would", "like", "d",
     "me", "build", "make", "create", "trade", "trading",
-    "while", "as", "long", "still", "open", "just", "now", "up",
+    "while", "as", "long", "still", "open", "just", "now", "up", "not",
     "candle", "candles", "pattern", "forms", "instantly", "use", "using",
 }
 
@@ -603,6 +617,105 @@ _STATE_UP_WORDS = r"is above|is over|while above|above|over|>"
 
 _LEN = r"(?:\s*\(?\s*(?P<len>\d{1,3})\s*\)?)?"
 
+_AT_RSI_LEVEL = re.compile(r"\bat rsi\s*(?P<level>\d+(?:\.\d+)?)\b")
+
+
+def _build_at_rsi_level(
+    m: re.Match, ind: _Indicators, notes: list[str], direction: str = "long"
+) -> Condition:
+    """"at RSI 30" names a level with no up/down verb -- see the module docstring
+    for why we read it as a crossing whose direction follows the trade direction,
+    rather than as a state true on every bar.
+
+    Deliberately does not share `_LEN` with the other RSI patterns: with nothing
+    but whitespace between an optional inline length and the mandatory level
+    ("at rsi14 30"), a greedy-then-backtracking `_LEN` can eat part of the level
+    itself (matching "at rsi 30" as length="3", level="0"). Keeping this pattern
+    to the plain "at RSI <level>" phrasing users actually type avoids that trap
+    outright rather than fixing it with a more delicate regex.
+    """
+    ref = _rsi(ind, None)
+    op = "crosses_below" if direction == "long" else "crosses_above"
+    verb = "dropping to" if direction == "long" else "rising to"
+    notes.append(
+        f"'at RSI {m.group('level')}' was read as RSI {verb} that level, based on "
+        f"the {direction} direction of the trade -- say 'crosses below'/'crosses "
+        "above' explicitly if that is not what you meant."
+    )
+    return Compare(op=op, left=ref, right=Const(value=float(m.group("level"))))
+
+
+def _try_at_rsi_level(
+    clause: str, ind: _Indicators, notes: list[str], direction: str
+) -> tuple[Condition, str] | None:
+    m = _AT_RSI_LEVEL.search(clause)
+    if not m:
+        return None
+    cond = _build_at_rsi_level(m, ind, notes, direction=direction)
+    residual = clause[: m.start()] + " " + clause[m.end() :]
+    return cond, residual
+
+
+_RSI_BETWEEN = re.compile(
+    rf"rsi{_LEN}\s*is\s*between\s*(?P<lo>\d+(?:\.\d+)?)\s*(?:-|to|and)\s*(?P<hi>\d+(?:\.\d+)?)"
+)
+
+
+def _build_rsi_between(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+    length = int(m.group("len")) if m.groupdict().get("len") else None
+    ref = _rsi(ind, length)
+    lo, hi = float(m.group("lo")), float(m.group("hi"))
+    return All(
+        conditions=[
+            Compare(op="gte", left=ref, right=Const(value=lo)),
+            Compare(op="lte", left=ref, right=Const(value=hi)),
+        ]
+    )
+
+
+# ------------------------------------------------------ indicator-vs-indicator
+#
+# "ema8 > ema21", "ema8 crosses above ema21", "close > vwap" -- both sides name
+# a value rather than one side being a fixed number. `Compare` already allows
+# this (see `nlt/spec/models.py`); what was missing was a way to *recognise* it
+# in English. `_OPERAND_TOKEN` is deliberately narrow: only the handful of
+# things a user is likely to put on either side of a bare comparison verb, in
+# the inline-suffix spelling ("ema8", not "8 ema" -- that format already has
+# its own patterns above). Widening this alternation is exactly the kind of
+# change that risks swallowing something it should not, so anything not listed
+# here still falls through to `unparsed` rather than being guessed at.
+_OPERAND_TOKEN = r"(?:close|price|vwap|rsi\d{0,3}|adx\d{0,3}|(?:ema|sma|wma|hma)\d{1,4})"
+
+
+def _operand_ref(token: str, ind: _Indicators) -> Ref:
+    if token in ("close", "price"):
+        return Ref(name="close")
+    if token == "vwap":
+        ind.declare("vwap", "vwap", {})
+        return Ref(name="vwap")
+    m = re.fullmatch(r"rsi(\d{0,3})", token)
+    if m:
+        length = int(m.group(1)) if m.group(1) else None
+        return _rsi(ind, length)
+    m = re.fullmatch(r"adx(\d{0,3})", token)
+    if m:
+        length = int(m.group(1)) if m.group(1) else None
+        return _adx_ref(ind, length)
+    m = re.fullmatch(r"(ema|sma|wma|hma)(\d{1,4})", token)
+    if m:
+        return _ma_ref(ind, m.group(1), int(m.group(2)))
+    raise AssertionError(f"unhandled operand token {token!r}")  # pragma: no cover
+
+
+def _build_generic_compare(op: str):
+    def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+        left = _operand_ref(m.group("left"), ind)
+        right = _operand_ref(m.group("right"), ind)
+        return Compare(op=op, left=left, right=right)
+
+    return build
+
+
 CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "rsi_crosses_below",
@@ -855,6 +968,36 @@ CONDITION_PATTERNS: list[PatternRule] = [
         "breaks out to a 50 day low",
     ),
     PatternRule(
+        "rsi_between",
+        _RSI_BETWEEN,
+        _build_rsi_between,
+        "RSI is between 40-60",
+    ),
+    PatternRule(
+        "generic_crosses_below",
+        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_CROSS_DOWN_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        _build_generic_compare("crosses_below"),
+        "ema8 crosses below ema21",
+    ),
+    PatternRule(
+        "generic_crosses_above",
+        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_CROSS_UP_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        _build_generic_compare("crosses_above"),
+        "ema8 crosses above ema21",
+    ),
+    PatternRule(
+        "generic_lt",
+        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_STATE_DOWN_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        _build_generic_compare("lt"),
+        "close below vwap",
+    ),
+    PatternRule(
+        "generic_gt",
+        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_STATE_UP_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        _build_generic_compare("gt"),
+        "close above vwap",
+    ),
+    PatternRule(
         "pct_falls",
         re.compile(r"falls?\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"),
         _build_pct_change("lte", -1.0),
@@ -961,6 +1104,11 @@ def _parse_atomic_clause(
             residual = clause[: m.start()] + " " + clause[m.end() :]
             return cond, ind.as_list(), notes, None, residual
 
+    at_rsi = _try_at_rsi_level(clause, ind, notes, direction)
+    if at_rsi is not None:
+        cond, residual = at_rsi
+        return cond, ind.as_list(), notes, None, residual
+
     directional = _try_directional_patterns(clause, ind, notes, direction)
     if directional is not None:
         for word in _DIRECTIONAL_PATTERNS:
@@ -1034,6 +1182,14 @@ _TARGET_PATTERNS = [
     re.compile(r"sell at\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*gain"),
     re.compile(r"(?:^|\s)\+(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"(?:up|gain of)\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
+    # value-first, "profit" rather than "gain": "sell at 2% profit", "Sell at
+    # 3% profit" -- the exact wording fixture #58/#59/#33 use. Kept as its own
+    # pattern rather than widening "sell at N% gain" above, so "gain" and
+    # "profit" stay two independently readable rows instead of one regex that
+    # tries to cover both and is harder to see the vocabulary of at a glance.
+    re.compile(r"sell at\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*profit"),
+    re.compile(r"book\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*profit"),
+    re.compile(r"price\s*reaches\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*profit"),
     # value-first order: "6% take profit" rather than "take profit 6%".
     re.compile(r"(?P<v>\d+(?:\.\d+)?)\s*%\s*(?:take profit|target|book profit)"),
 ]
@@ -1041,6 +1197,7 @@ _STOP_PATTERNS = [
     re.compile(r"stop\s*loss(?:\s*of)?\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"\bsl\s*(?:of)?\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"stop at\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
+    re.compile(r"stop\s*loss\s*at\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"with a\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*stop"),
     re.compile(r"\bstop\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"(?:^|\s)-(?P<v>\d+(?:\.\d+)?)\s*%"),
@@ -1122,12 +1279,60 @@ def _extract_exit_rest(
 
 _EXIT_CONDITION_MARKERS = re.compile(r"\b(?:exit|sell|cover|square off)\s*when\b")
 
+# ------------------------------------------------------------------- anaphora
+#
+# "Buy X when RSI drops below 30, sell when it crosses 70" -- "it" names
+# whichever indicator the entry clause just talked about. Each entry below is
+# (family label, pattern matching that family with an optional inline length),
+# restricted to the indicators that ever appear as a bare "<name> <verb> <level>"
+# condition -- the only shape "it <verb> <level>" could possibly be standing in
+# for. Two distinct families mentioned in the entry make "it" genuinely
+# ambiguous, so we ask instead of picking the first one we saw.
+_ANTECEDENT_FAMILIES: list[tuple[str, str, re.Pattern[str]]] = [
+    ("RSI", "rsi", re.compile(r"\brsi(?P<len>\d{1,3})?\b")),
+    ("ADX", "adx", re.compile(r"\badx(?P<len>\d{1,3})?\b")),
+    ("stochastic", "stochastic", re.compile(r"\bstochastic(?P<len>\d{1,3})?\b")),
+    ("CCI", "cci", re.compile(r"\bcci(?P<len>\d{1,3})?\b")),
+    ("Williams %R", "williamsr", re.compile(r"\bwilliams\s*%?r(?P<len>\d{1,3})?\b")),
+]
 
-def _extract_exit_condition(text: str, direction: str) -> tuple[str, Condition | None, list[dict], list[str]]:
-    """The second (or later) 'when ...' clause in the text is an exit condition."""
+
+def _find_antecedent(entry_text: str) -> tuple[str | None, str | None]:
+    """Returns (substitution token, ambiguity description).
+
+    Exactly one of the two is set: a substitution token (e.g. "rsi14", to
+    splice in for a bare "it") when the entry names exactly one recognised
+    family, or a human-readable list of the families found when it names more
+    than one -- the caller turns that into a refusal rather than a guess.
+    """
+    tokens: list[str] = []
+    labels_seen: list[str] = []
+    for label, token_prefix, pattern in _ANTECEDENT_FAMILIES:
+        m = pattern.search(entry_text)
+        if m:
+            labels_seen.append(label)
+            length = m.group("len")
+            tokens.append(f"{token_prefix}{length}" if length else token_prefix)
+    if len(labels_seen) > 1:
+        return None, " and ".join(labels_seen)
+    if len(labels_seen) == 1:
+        return tokens[0], None
+    return None, None
+
+
+def _extract_exit_condition(
+    text: str, direction: str
+) -> tuple[str, Condition | None, list[dict], list[str], str | None]:
+    """The second (or later) 'when ...' clause in the text is an exit condition.
+
+    Returns (text, condition, indicators, notes, ambiguous_antecedent). The last
+    value set means: a bare "it" in the exit clause could refer to more than one
+    indicator named in the entry -- stop and ask, the same discipline an
+    unsupported indicator gets elsewhere in this file.
+    """
     whens = list(re.finditer(r"\bwhen\b", text))
     if len(whens) < 2:
-        return text, None, [], []
+        return text, None, [], [], None
 
     start = whens[1].end()
     rest = text[start:]
@@ -1135,9 +1340,26 @@ def _extract_exit_condition(text: str, direction: str) -> tuple[str, Condition |
     end = end_marker.start() if end_marker else len(rest)
     clause_text = rest[:end]
 
+    if re.search(r"\bit\b", clause_text):
+        entry_text = text[: whens[1].start()]
+        token, ambiguous = _find_antecedent(entry_text)
+        if ambiguous:
+            return (
+                text,
+                None,
+                [],
+                [],
+                (
+                    f"'it' in \"...{clause_text.strip()}\" could mean either the {ambiguous} "
+                    "mentioned in the entry -- say which one, e.g. 'sell when RSI crosses 70'."
+                ),
+            )
+        if token:
+            clause_text = re.sub(r"\bit\b", token, clause_text)
+
     cond, inds, notes, _leftover, refusal = _parse_condition_text(clause_text, direction)
     if refusal or cond is None:
-        return text, None, [], []
+        return text, None, [], [], None
 
     # Also blank a leading "exit"/"sell"/"cover"/"square off" marker word right
     # before this "when", so it doesn't show up as unparsed leftover once the
@@ -1148,7 +1370,7 @@ def _extract_exit_condition(text: str, direction: str) -> tuple[str, Condition |
         blank_start = marker.start()
     blank_end = start + end
     text = text[:blank_start] + " " * (blank_end - blank_start) + text[blank_end:]
-    return text, cond, inds, notes
+    return text, cond, inds, notes, None
 
 
 # --------------------------------------------------------------------- timeframe
@@ -1230,6 +1452,45 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
     return text, None, None
 
 
+# ---------------------------------------------------------------- backtest window
+#
+# "Backtest this for the last 3 months", "backtest for 2024", "full year 2024" --
+# a date range to run the backtest over, not anything about what the strategy
+# itself does. `StrategySpec` has no field for a date range (that is a property
+# of a single run, not of the strategy), and inventing one here would be out of
+# scope for a parser whose whole job is staying inside the spec it is given.
+# Previously this just sat in `unparsed` and blocked the parse outright; now it
+# is recognised, stripped so it stops blocking, and named in a note so nothing
+# the user typed is silently dropped on the floor.
+
+_BACKTEST_WINDOW_PATTERNS = [
+    re.compile(
+        r"backtest\s*(?:this\s*)?for\s*(?:the\s*)?last\s*\d+\s*"
+        r"(?:days?|weeks?|months?|years?)\b"
+    ),
+    re.compile(r"backtest\s*(?:for|on)\s*\d{4}\b"),
+    re.compile(r"\bfor\s*(?:the\s*)?last\s*\d+\s*(?:days?|weeks?|months?|years?)\b"),
+    re.compile(r"\bfull\s*year\s*\d{4}\b"),
+    re.compile(r"\bfor\s*last\s*year\b"),
+]
+
+
+def _extract_backtest_window(text: str) -> tuple[str, str | None]:
+    found: list[str] = []
+    for pat in _BACKTEST_WINDOW_PATTERNS:
+        m = pat.search(text)
+        if m:
+            found.append(text[m.start() : m.end()].strip())
+            text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+    if not found:
+        return text, None
+    return text, (
+        "The description mentioned a backtest date range (" + "; ".join(found) + ") -- "
+        "this platform has no field for that on the strategy itself, so it was left out; "
+        "set the backtest window separately when you actually run it."
+    )
+
+
 # ----------------------------------------------------------------------- sizing
 
 _LOTS_PATTERN = re.compile(r"(?P<v>\d+)\s*lots?\b")
@@ -1288,6 +1549,76 @@ def _merge_indicators(*groups: list[dict]) -> list[dict]:
     return [{"id": k, **v} for k, v in merged.items()]
 
 
+# ------------------------------------------------------------------------- vwap
+#
+# VWAP resets every trading session. On an intraday bar that means something --
+# "above VWAP" tracks where price sits relative to the session's volume-weighted
+# average so far. On a daily bar, a whole session IS one bar, so VWAP collapses
+# to that single bar's own typical price: "close above VWAP" would silently
+# become "close above roughly its own high/low/close average", which is not a
+# question anyone asking for VWAP meant to ask. Rather than run that, we refuse
+# by name -- the same policy an unsupported indicator or an unsupported
+# timeframe already gets elsewhere in this file.
+#
+# Baskets (`Instrument.symbol` universes, and single stocks -- see
+# `nlt/engine/basket.py`) are daily-only in this platform today regardless of
+# what the user asked for, so a VWAP basket strategy cannot be backtested at
+# all yet; that is a stronger and permanent refusal, not just "pick a smaller
+# bar size".
+
+
+def _is_universe_symbol(symbol: str) -> bool:
+    from nlt.data.universe import is_universe
+
+    return is_universe(symbol)
+
+
+def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question | None:
+    if not any(d["type"] == "vwap" for d in indicators):
+        return None
+
+    symbol = instrument_kwargs.get("symbol", "NIFTY")
+    trade_as = instrument_kwargs.get("trade_as", "index")
+    timeframe = instrument_kwargs.get("timeframe", "1d")
+    is_basket = trade_as == "stock" and _is_universe_symbol(symbol)
+
+    vwap_explainer = (
+        "VWAP only means something on intraday candles -- on a daily bar, a whole "
+        "trading session is a single bar, so VWAP collapses to that bar's own "
+        "typical price, not what 'above VWAP' usually means."
+    )
+
+    if is_basket:
+        return Question(
+            text=(
+                f"{vwap_explainer} On top of that, {symbol} resolves to a basket of "
+                "stocks, and every stock in this platform only has daily price data "
+                "available today -- so a VWAP strategy on this basket cannot be "
+                "backtested yet, on any timeframe."
+            ),
+            why=(
+                "Running this on daily bars would silently answer a different "
+                "question than the one asked, and there is no intraday stock data "
+                "yet that would let it run the way it was actually described."
+            ),
+            suggestion="Try VWAP on a single stock or NIFTY/BANKNIFTY on an intraday timeframe instead.",
+            field="instrument.timeframe",
+        )
+
+    if timeframe == "1d":
+        return Question(
+            text=(
+                f"{vwap_explainer} Pick an intraday timeframe (1m, 3m, 5m, 15m or 30m) "
+                "for this condition to do anything meaningful."
+            ),
+            why="Running this on daily bars would silently answer a question you didn't ask.",
+            suggestion="Say e.g. 'use 5-minute candles'.",
+            field="instrument.timeframe",
+        )
+
+    return None
+
+
 def parse(description: str, *, answers: dict[str, str] | None = None) -> TranslationResult:
     answers = answers or {}
     original = description.strip()
@@ -1309,6 +1640,11 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
 
     text = original.lower()
+    # "5 percent" -> "5%" and "close_price" -> "close" up front so every pattern
+    # below only has to know the "%"/"close" spelling, not every synonym a user
+    # might type for it.
+    text = re.sub(r"(\d+(?:\.\d+)?)\s*percent\b", r"\1%", text)
+    text = re.sub(r"\bclose_price\b", "close", text)
 
     text, instrument_kwargs, instrument_question = _extract_instrument(text)
     if instrument_question is not None:
@@ -1352,8 +1688,31 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if timeframe:
         instrument_kwargs["timeframe"] = timeframe
 
+    text, backtest_note = _extract_backtest_window(text)
+    if backtest_note:
+        notes.append(backtest_note)
+
     text, percent_exits = _extract_percent_exits(text)
-    text, exit_condition, exit_cond_inds, exit_cond_notes = _extract_exit_condition(text, direction)
+    text, exit_condition, exit_cond_inds, exit_cond_notes, exit_ambiguous = _extract_exit_condition(
+        text, direction
+    )
+    if exit_ambiguous:
+        return TranslationResult(
+            spec=None,
+            questions=[
+                Question(
+                    text=exit_ambiguous,
+                    why=(
+                        "Guessing which indicator 'it' refers to could exit the trade on a "
+                        "condition you never actually described."
+                    ),
+                    suggestion=None,
+                    field="exit.condition",
+                )
+            ],
+            notes=notes,
+            source="rules",
+        )
     notes.extend(exit_cond_notes)
 
     text, sizing = _extract_sizing(text)
@@ -1389,6 +1748,10 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
 
     all_indicators = _merge_indicators(entry_inds, exit_ind.as_list(), exit_cond_inds)
+
+    vwap_question = _vwap_refusal(all_indicators, instrument_kwargs)
+    if vwap_question is not None:
+        return TranslationResult(spec=None, questions=[vwap_question], notes=notes, source="rules")
 
     stop_pct = percent_exits.get("stop_pct") or _float_answer(answers, "exit.stop_pct")
     target_pct = percent_exits.get("target_pct") or _float_answer(answers, "exit.target_pct")

@@ -395,3 +395,131 @@ def test_stock_and_universe_round_trip_contains_key_concepts(
     rendered = describe(result.spec)
     for term in expected_terms:
         assert term.lower() in rendered.lower(), f"{term!r} missing from readback:\n{rendered}"
+
+
+# ============================================================================
+# Readback for the six new gaps -- these must read in plain English a
+# beginner could check against what they actually typed.
+# ============================================================================
+
+
+def test_inline_period_indicator_readback() -> None:
+    spec = _minimal_spec(
+        Compare(op="lt", left=Ref(name="rsi7"), right=Const(value=28)),
+        indicators=[IndicatorSpec(id="rsi7", type="rsi", params={"length": 7})],
+    )
+    assert "RSI(7)" in describe(spec)
+
+
+def test_indicator_vs_indicator_readback() -> None:
+    spec = _minimal_spec(
+        Compare(op="crosses_above", left=Ref(name="ema8"), right=Ref(name="ema21")),
+        indicators=[
+            IndicatorSpec(id="ema8", type="ema", params={"length": 8}),
+            IndicatorSpec(id="ema21", type="ema", params={"length": 21}),
+        ],
+    )
+    text = describe(spec)
+    assert "crosses above" in text
+    assert "8" in text and "21" in text
+    assert "Exponential Moving Average" in text
+
+
+def test_close_vs_vwap_readback() -> None:
+    spec = StrategySpec(
+        name="Test Strategy",
+        description="test",
+        instrument=Instrument(symbol="TCS", trade_as="stock", timeframe="15m"),
+        indicators=[IndicatorSpec(id="vwap", type="vwap", params={})],
+        entry=Compare(op="gt", left=Ref(name="close"), right=Ref(name="vwap")),
+        exit=ExitRules(stop_pct=1.0),
+    )
+    text = describe(spec)
+    assert "the price" in text
+    assert "VWAP" in text
+    assert "is above" in text
+
+
+def test_rsi_between_readback_shows_both_bounds() -> None:
+    spec = _minimal_spec(
+        All(
+            conditions=[
+                Compare(op="gte", left=Ref(name="rsi14"), right=Const(value=40)),
+                Compare(op="lte", left=Ref(name="rsi14"), right=Const(value=60)),
+            ]
+        ),
+        indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
+    )
+    text = describe(spec)
+    assert "40" in text and "60" in text
+    assert " and " in text
+
+
+def test_anaphoric_exit_condition_reads_as_the_same_indicator() -> None:
+    """The exit condition, once 'it' has been resolved during parsing, renders
+    exactly like any other indicator comparison -- nothing anaphora-specific
+    is left for the readback to handle, which is itself part of the safety
+    story: the user reads the same plain sentence either way."""
+    result = parse(
+        "buy nifty when rsi drops below 30, sell when it crosses above 70, stop 1%, target 2%"
+    )
+    assert result.spec is not None
+    text = describe(result.spec)
+    assert "Exit when RSI(14) crosses above 70" in text
+
+
+ROUND_TRIP_NEW_GAP_CASES = [
+    (
+        "Buy RELIANCE at RSI 30 with 5 percent stop loss and 10 percent target",
+        ["RELIANCE", "RSI(14)", "crosses below", "30", "+10%", "-5%"],
+    ),
+    (
+        "Instantly buy NIFTY 100 stocks when ema8 crosses above ema21 and adx14 > 20. "
+        "Sell at 3% profit. Stop loss 1.5%.",
+        ["NIFTY 100", "8-day Exponential Moving Average", "crosses above", "ADX(14)", "+3%", "-1.5%"],
+    ),
+]
+
+
+@pytest.mark.parametrize("text,expected_terms", ROUND_TRIP_NEW_GAP_CASES)
+def test_new_gap_round_trip_contains_key_concepts(text: str, expected_terms: list[str]) -> None:
+    result = parse(text)
+    assert result.spec is not None, f"expected a spec for {text!r}: {result.questions}"
+    rendered = describe(result.spec)
+    for term in expected_terms:
+        assert term.lower() in rendered.lower(), f"{term!r} missing from readback:\n{rendered}"
+
+
+# ---------------------------------------------------------------------------
+# The readback must not promise behaviour the engine will not perform
+#
+# It claimed "Square off at 15:15 if still open" on daily strategies, where the
+# engine skips every time-of-day rule -- a daily bar's timestamp carries no
+# intraday clock, and the engine says so in its own warnings. A readback line
+# that is merely plausible is worse than no line: its entire value is that a
+# non-technical reader can trust it literally.
+# ---------------------------------------------------------------------------
+
+
+def test_daily_strategy_does_not_promise_a_square_off():
+    from nlt.translate.rules import parse
+
+    result = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%")
+    assert result.spec is not None
+    assert result.spec.instrument.timeframe == "1d"
+
+    text = describe(result.spec)
+    assert "Square off" not in text, (
+        "the readback promises a square-off on a daily strategy, which the "
+        "engine explicitly skips"
+    )
+
+
+def test_intraday_strategy_does_promise_a_square_off():
+    """The mirror: where it genuinely happens, it must be stated."""
+    from nlt.translate.rules import parse
+
+    result = parse("buy nifty when rsi cracks 30 on 15 minute chart, target 2%, stop 1%")
+    assert result.spec is not None
+    assert result.spec.instrument.timeframe == "15m"
+    assert "Square off at 15:15" in describe(result.spec)

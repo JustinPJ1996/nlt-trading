@@ -265,7 +265,13 @@ def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str)
         lines.append(f"Exit when {_describe_condition(e.condition, indicators, timeframe)}")
     if e.max_bars_held:
         lines.append(f"Exit after {_plural(e.max_bars_held, _bar_word(timeframe))} if still open")
-    if spec.schedule.intraday:
+    # Only promise the square-off when it will actually happen. The engine skips
+    # every time-of-day rule on daily bars, because a daily bar's timestamp
+    # carries no intraday clock -- so saying "square off at 15:15" on a daily
+    # strategy describes behaviour that will not occur. The readback's whole
+    # value is that it says what the spec really does, so a line that is merely
+    # plausible is worse than no line.
+    if spec.schedule.intraday and timeframe != "1d":
         lines.append(f"Square off at {spec.schedule.square_off.strftime('%H:%M')} if still open")
     return lines
 
