@@ -1374,3 +1374,48 @@ def test_stocks_on_a_small_account_are_not_warned_about():
     result = run_backtest(_capped_spec(20.0, lots=1, trade_as="stock"), bars,
                           capital=50_000.0, lot_size=1, slippage_pct=0.0)
     assert not any("SMALL ACCOUNT" in w for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Lot sizes come from one table, and it is today's
+# ---------------------------------------------------------------------------
+
+
+def test_engine_and_readback_agree_on_lot_size():
+    """Two sources of truth would let the readback describe a different size
+    from the one traded -- the exact failure the readback exists to prevent."""
+    from nlt.data.instruments import lot_size
+    from nlt.engine.backtest import _default_lot_size
+    from nlt.translate.readback import _lot_size_for
+
+    for trade_as in ("option", "stock", "index"):
+        spec = _capped_spec(10.0, lots=1, trade_as=trade_as).model_copy(
+            update={
+                "instrument": Instrument(symbol="NIFTY", trade_as=trade_as),
+            }
+        )
+        expected = lot_size("NIFTY", trade_as)
+        assert _default_lot_size(spec) == expected
+        assert _lot_size_for(spec) == expected
+
+
+def test_current_nifty_lot_size_is_used():
+    """NSE cut NIFTY from 75 to 65 for the January 2026 series. A stale number
+    here silently mis-sizes every options backtest."""
+    from nlt.data.instruments import lot_size
+
+    assert lot_size("NIFTY", "option") == 65
+    assert lot_size("BANKNIFTY", "option") == 30
+
+
+def test_options_backtest_reports_which_lot_size_it_used():
+    """The choice to use today's lot for historical years is a real trade-off,
+    so it is stated rather than assumed."""
+    bars = _flat_price_bars(100.0)
+    spec = _capped_spec(10.0, lots=1, trade_as="option").model_copy(
+        update={"instrument": Instrument(symbol="NIFTY", trade_as="option")}
+    )
+    result = run_backtest(spec, bars, capital=5_000_000.0, slippage_pct=0.0)
+
+    assert any("65 units" in w for w in result.warnings), result.warnings
+    assert result.trades and result.trades[0].quantity % 65 == 0

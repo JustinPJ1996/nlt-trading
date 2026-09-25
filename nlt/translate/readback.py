@@ -281,12 +281,16 @@ def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str)
 # shares a lot is. Quantity is the one word that is correct everywhere -- it is
 # also what a contract note and a broker's order window both show -- so the
 # readback speaks in quantity and mentions the lot only where a lot exists.
-_OPTIONS_LOT_SIZE = 75
-
-
 def _lot_size_for(spec: StrategySpec) -> int:
-    """Units per lot. Mirrors the engine's own `_default_lot_size`."""
-    return _OPTIONS_LOT_SIZE if spec.instrument.trade_as == "option" else 1
+    """Units per lot, from the same table the engine uses.
+
+    Duplicating the number here would let the readback quietly describe a
+    different position size from the one traded, which is the exact failure the
+    readback exists to prevent.
+    """
+    from nlt.data.instruments import lot_size
+
+    return lot_size(spec.instrument.symbol, spec.instrument.trade_as)
 
 
 def _sizing_desc(spec: StrategySpec) -> str:

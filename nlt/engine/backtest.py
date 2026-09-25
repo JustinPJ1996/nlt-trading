@@ -62,6 +62,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from nlt.data.instruments import lot_size as exchange_lot_size
+from nlt.data.instruments import lot_size_note
 from nlt.data.session import (
     NSE_EQUITY,
     Session,
@@ -98,15 +100,18 @@ def _zero_charges(price: float, quantity: int, side: str) -> float:
 def _default_lot_size(spec: StrategySpec) -> int:
     """The tradeable unit when the caller does not specify one.
 
-    75 is NIFTY's *options* lot size -- a contract term, not a property of the
-    index. A cash-index backtest that inherited it as a default would buy 75
-    units of NIFTY per "1 lot", which on a modest account is several times
-    leverage the caller never asked for (this is exactly how the engine used
-    to report a -113% total return on a strategy that could not lose more than
-    its stop loss). An index backtest trades in units of 1; only an options
-    backtest inherits the options convention.
+    A lot is an *options* contract term, not a property of the index. A
+    cash-index backtest that inherited one would buy a whole lot of NIFTY per
+    "1 lot", which on a modest account is several times the leverage the caller
+    asked for -- exactly how the engine once reported a -113% total return on a
+    strategy that could not lose more than its stop loss. An index or stock
+    backtest trades in units of 1; only options inherit the lot convention.
+
+    The size itself comes from `nlt.data.instruments`, which holds the CURRENT
+    exchange lot for every symbol and explains why the current one is used even
+    for years when a different one applied.
     """
-    return 75 if spec.instrument.trade_as == "option" else 1
+    return exchange_lot_size(spec.instrument.symbol, spec.instrument.trade_as)
 
 
 def _session_for_spec(spec: StrategySpec) -> Session:
@@ -220,6 +225,10 @@ def run_backtest(
         charge_fn = _zero_charges
         warnings.append("no charge_fn supplied; results exclude transaction costs")
 
+    note = lot_size_note(spec.instrument.symbol, spec.instrument.trade_as)
+    if note:
+        warnings.append(note)
+
     if spec.instrument.trade_as == "option" and capital < FNO_MINIMUM_CAPITAL:
         # Not a preference -- arithmetic. A NIFTY option lot is 75 units, and it
         # cannot be divided, so a small account either cannot buy one at all or
@@ -230,7 +239,8 @@ def run_backtest(
         warnings.append(
             f"OPTIONS ON A SMALL ACCOUNT: this was tested with "
             f"Rs {capital:,.0f}. Options are not really tradeable below about "
-            f"Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one NIFTY lot is 75 units and "
+            f"Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one NIFTY lot is "
+            f"{exchange_lot_size('NIFTY', 'option')} units and "
             "indivisible, so a smaller account must either skip most trades or "
             "bet far too much of itself on a single contract. Treat these "
             "results as theoretical."
