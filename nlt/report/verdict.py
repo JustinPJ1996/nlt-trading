@@ -319,6 +319,28 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
             )
         )
 
+    # Raised from an engine warning to a critical flag deliberately. It belongs
+    # above the numbers, not below them: the point is not that the result is
+    # poor but that the instrument is unsuitable at this account size, which is
+    # a conclusion the return figure cannot express and might actively hide by
+    # looking good.
+    if any("OPTIONS ON A SMALL ACCOUNT" in w for w in result.warnings):
+        flags.append(
+            Flag(
+                severity="critical",
+                code="options_need_a_bigger_account",
+                headline="Options are not suitable for an account this size.",
+                detail=(
+                    "One NIFTY option lot is 75 units and cannot be split, so a small "
+                    "account either cannot afford a single lot or has to put far too "
+                    "much of itself into one contract -- and an option can lose its "
+                    "entire premium in a session. Roughly Rs 10,00,000 is where options "
+                    "start to make sense. Below that, the same idea is usually better "
+                    "expressed on the index or on shares."
+                ),
+            )
+        )
+
     if any("no charge_fn supplied" in w for w in result.warnings):
         flags.append(
             Flag(

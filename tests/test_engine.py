@@ -1352,3 +1352,25 @@ def test_rail_is_proportional_to_capital():
         sizes.append(max(t.quantity * t.entry_price for t in result.trades))
 
     assert sizes[1] == pytest.approx(sizes[0] * 5, rel=0.01)
+
+
+def test_options_on_a_small_account_are_warned_about():
+    """A NIFTY lot is indivisible, so a small account cannot size proportionately."""
+    bars = _flat_price_bars(100.0)
+    spec = _capped_spec(10.0, lots=1, trade_as="option")
+
+    small = run_backtest(spec, bars, capital=100_000.0, lot_size=75, slippage_pct=0.0)
+    assert any("SMALL ACCOUNT" in w for w in small.warnings)
+
+    large = run_backtest(spec, bars, capital=2_000_000.0, lot_size=75, slippage_pct=0.0)
+    assert not any("SMALL ACCOUNT" in w for w in large.warnings), (
+        "an account well above the threshold must not be warned"
+    )
+
+
+def test_stocks_on_a_small_account_are_not_warned_about():
+    """The warning is about lot indivisibility, which shares do not have."""
+    bars = _flat_price_bars(100.0)
+    result = run_backtest(_capped_spec(20.0, lots=1, trade_as="stock"), bars,
+                          capital=50_000.0, lot_size=1, slippage_pct=0.0)
+    assert not any("SMALL ACCOUNT" in w for w in result.warnings)

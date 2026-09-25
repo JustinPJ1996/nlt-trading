@@ -691,3 +691,50 @@ def test_benchmark_name_flows_from_the_benchmark_into_the_comparison():
     )
     benchmark = buy_and_hold(bars, 100_000.0, name="holding TCS")
     assert compare(result, benchmark, bars).benchmark_name == "holding TCS"
+
+
+# ---------------------------------------------------------------------------
+# Options on a small account
+#
+# Not a preference but arithmetic: a NIFTY lot is 75 units and indivisible, so a
+# small account either cannot afford one or must put far too much of itself into
+# a single contract that can lose its whole premium in a session.
+#
+# This sits above the numbers rather than below them, because the conclusion is
+# that the instrument is unsuitable -- something a return figure cannot express
+# and might actively hide by looking good.
+# ---------------------------------------------------------------------------
+
+
+def _with_warning(warning: str) -> BacktestResult:
+    idx = _bdate_index(400)
+    return _build_result(
+        trades=[_mk_trade(idx, i * 6, net_pnl=250.0) for i in range(60)],
+        equity=_flat_equity(400, end_capital=115_000.0),
+        warnings=[warning],
+    )
+
+
+def test_small_account_options_warning_becomes_a_critical_flag():
+    from nlt.report.verdict import assess
+
+    result = _with_warning("OPTIONS ON A SMALL ACCOUNT: this was tested with Rs 100,000.")
+    verdict = assess(result, _comparison(result))
+
+    flag = next(
+        (f for f in verdict.flags if f.code == "options_need_a_bigger_account"), None
+    )
+    assert flag is not None, "an unsuitable instrument must be flagged"
+    assert flag.severity == "critical"
+    assert verdict.passed is False, (
+        "a profitable backtest must still not pass when the instrument is "
+        "unsuitable for the account"
+    )
+
+
+def test_no_small_account_flag_without_the_warning():
+    from nlt.report.verdict import assess
+
+    result = _with_warning("no charge_fn supplied; results exclude transaction costs")
+    verdict = assess(result, _comparison(result))
+    assert not any(f.code == "options_need_a_bigger_account" for f in verdict.flags)

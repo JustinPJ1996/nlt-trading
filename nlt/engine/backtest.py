@@ -178,6 +178,14 @@ class _OpenPosition:
     pending_condition_exit: bool = False
 
 
+# Below this, index options stop being a sensible instrument rather than merely
+# an aggressive one. A 75-unit lot is indivisible, so a small account cannot take
+# a proportionate position -- it either cannot afford one lot at all, or one lot
+# is most of the account. Later this becomes a setting; for now it is a warning
+# nobody can miss.
+FNO_MINIMUM_CAPITAL = 1_000_000.0
+
+
 def run_backtest(
     spec: StrategySpec,
     bars: pd.DataFrame,
@@ -211,6 +219,22 @@ def run_backtest(
     if charge_fn is None:
         charge_fn = _zero_charges
         warnings.append("no charge_fn supplied; results exclude transaction costs")
+
+    if spec.instrument.trade_as == "option" and capital < FNO_MINIMUM_CAPITAL:
+        # Not a preference -- arithmetic. A NIFTY option lot is 75 units, and it
+        # cannot be divided, so a small account either cannot buy one at all or
+        # has to put an irresponsible share of itself into a single contract that
+        # can lose its entire premium in a session. Below this figure the honest
+        # answer is that options are not a suitable instrument yet, whatever the
+        # backtest says.
+        warnings.append(
+            f"OPTIONS ON A SMALL ACCOUNT: this was tested with "
+            f"Rs {capital:,.0f}. Options are not really tradeable below about "
+            f"Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one NIFTY lot is 75 units and "
+            "indivisible, so a smaller account must either skip most trades or "
+            "bet far too much of itself on a single contract. Treat these "
+            "results as theoretical."
+        )
 
     is_intraday_tf = spec.instrument.timeframe != "1d"
     session = _session_for_spec(spec)
