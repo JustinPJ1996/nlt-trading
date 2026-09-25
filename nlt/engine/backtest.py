@@ -737,6 +737,11 @@ def _size_position(
             lots = math.floor(units / lot_size)
             quantity = max(lots, 1) * lot_size
 
+    # No lot cap is the normal case for stocks; capital and max_loss_per_trade
+    # are what bound a stock position, and both scale with the share price.
+    if spec.risk.max_lots is None:
+        return quantity, used_fallback
+
     max_quantity = spec.risk.max_lots * lot_size
     return min(quantity, max_quantity), used_fallback
 

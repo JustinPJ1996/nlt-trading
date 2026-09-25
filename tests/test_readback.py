@@ -273,8 +273,12 @@ ROUND_TRIP_CASES = [
         ["Stochastic", "20"],
     ),
     (
+        # "2 lots" of an index is a quantity of 2: a lot is an options contract
+        # term, and saying "2 lots" about something that has no lots would be
+        # the readback repeating the user's words rather than reporting what
+        # the engine will actually do.
         "Buy 2 lots of NIFTY when RSI cracks 30, stop 1%, target 2%",
-        ["2 lots", "RSI"],
+        ["Quantity 2", "RSI"],
     ),
 ]
 
@@ -523,3 +527,74 @@ def test_intraday_strategy_does_promise_a_square_off():
     assert result.spec is not None
     assert result.spec.instrument.timeframe == "15m"
     assert "Square off at 15:15" in describe(result.spec)
+
+
+# ---------------------------------------------------------------------------
+# Quantity, not lots
+#
+# A lot is an options contract term. Saying "1 lot of TCS" is not something
+# anyone says, and a reader who owns shares would reasonably ask how many shares
+# a lot is. Quantity is correct everywhere and is what a contract note and a
+# broker's order window both show.
+#
+# The wording change surfaced a real defect behind it: max_lots defaulted to 2,
+# and for a stock one lot is one share, so every stock position was capped at
+# two shares whatever sizing was asked for.
+# ---------------------------------------------------------------------------
+
+
+def test_stock_readback_says_quantity_not_lots():
+    from nlt.translate.rules import parse
+
+    spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
+    rendered = describe(spec)
+    assert "lot" not in rendered.lower(), (
+        f"a stock readback must not mention lots:\n{rendered}"
+    )
+
+
+def test_stock_has_no_share_count_cap():
+    """A fixed count cannot bound risk across a Rs 50 and a Rs 20,000 share."""
+    from nlt.translate.rules import parse
+
+    spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
+    assert spec.risk.max_lots is None
+    assert "quantity above" not in describe(spec).lower(), (
+        "the readback states a cap the engine does not enforce"
+    )
+
+
+def test_stock_sizing_defaults_to_risking_capital_not_one_share():
+    """"1 lot" of a stock is one share -- about Rs 640 on a Rs 1,00,000 account,
+    which tests nothing. Risk-based sizing works at any share price."""
+    from nlt.translate.rules import parse
+
+    spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
+    assert spec.sizing.mode == "risk_based"
+    assert spec.sizing.risk_pct == 1.0
+    assert "Risk 1% of capital per trade" in describe(spec)
+
+
+def test_an_explicit_lot_count_is_still_honoured():
+    """Saying "2 lots" must still mean two lots, not be overridden by a default."""
+    from nlt.translate.rules import parse
+
+    spec = parse("Buy 2 lots of NIFTY when RSI cracks 30, stop 1%, target 2%").spec
+    assert spec.sizing.mode == "fixed_lots"
+    assert spec.sizing.lots == 2
+
+
+def test_risk_limits_default_to_no_quantity_cap():
+    """The spec's own default matters, not just the parser's override.
+
+    The parser sets this explicitly for every strategy it produces, which masks
+    the default entirely -- restoring the old two-share cap left the whole suite
+    green. Anything building a spec directly (a saved strategy, a future API, a
+    test) would still inherit it, so the default is asserted at its source.
+    """
+    from nlt.spec.models import RiskLimits
+
+    assert RiskLimits().max_lots is None, (
+        "a cap counted in lots means nothing for a stock, where one lot is one "
+        "share -- the default must not silently bound every position"
+    )

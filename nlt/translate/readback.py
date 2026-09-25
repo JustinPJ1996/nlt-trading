@@ -1,7 +1,7 @@
 """Turn a `StrategySpec` back into plain English.
 
 This is the entire safety story for a non-technical user: they cannot audit
-JSON, but they can read "Buy 1 lot of NIFTY when RSI(14) crosses below 30" and
+JSON, but they can read "Buy NIFTY when RSI(14) crosses below 30" and
 say "no, that's not what I meant." So `describe` has exactly one job -- say
 what the spec *says*, mechanically and completely, with nothing invented and
 nothing left silent. No LLM, no paraphrasing, no field left out: a field this
@@ -276,10 +276,32 @@ def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str)
     return lines
 
 
+# Options and futures are dealt in lots; stocks are not. "1 lot of TCS" is not a
+# thing anyone says, and a reader who owns shares would rightly wonder how many
+# shares a lot is. Quantity is the one word that is correct everywhere -- it is
+# also what a contract note and a broker's order window both show -- so the
+# readback speaks in quantity and mentions the lot only where a lot exists.
+_OPTIONS_LOT_SIZE = 75
+
+
+def _lot_size_for(spec: StrategySpec) -> int:
+    """Units per lot. Mirrors the engine's own `_default_lot_size`."""
+    return _OPTIONS_LOT_SIZE if spec.instrument.trade_as == "option" else 1
+
+
 def _sizing_desc(spec: StrategySpec) -> str:
     s = spec.sizing
     if s.mode == "fixed_lots":
-        return f"{_plural(s.lots, 'lot')} per trade"
+        lot_size = _lot_size_for(spec)
+        quantity = s.lots * lot_size
+        if lot_size > 1:
+            # Say both: the quantity is what gets ordered, the lot count is what
+            # the user typed and what an F&O trader thinks in.
+            return (
+                f"Quantity {quantity:,} per trade "
+                f"({_plural(s.lots, 'lot')} of {lot_size})"
+            )
+        return f"Quantity {quantity:,} per trade"
     if s.mode == "fixed_value":
         return f"About {format_inr(s.value)} per trade"
     return f"Risk {_num(s.risk_pct)}% of capital per trade"
@@ -287,12 +309,26 @@ def _sizing_desc(spec: StrategySpec) -> str:
 
 def _risk_lines(spec: StrategySpec) -> list[str]:
     r = spec.risk
-    return [
+    lines = [
         f"Stop trading for the day after losing {format_inr(r.max_daily_loss)}",
         f"Never risk more than {format_inr(r.max_loss_per_trade)} on one trade",
         f"At most {_plural(r.max_concurrent_positions, 'position')} open at a time",
-        f"Never hold more than {_plural(r.max_lots, 'lot')} at once",
     ]
+
+    # Only mention a quantity cap where one exists. Stocks have none, because a
+    # fixed count cannot bound risk across a market priced from Rs 50 to
+    # Rs 20,000 a share -- the rupee limits above do that instead, and stating
+    # a cap that is not enforced would be the readback lying again.
+    if r.max_lots is not None:
+        lot_size = _lot_size_for(spec)
+        max_quantity = r.max_lots * lot_size
+        lines.append(
+            f"Never hold a quantity above {max_quantity:,} "
+            f"({_plural(r.max_lots, 'lot')} of {lot_size})"
+            if lot_size > 1
+            else f"Never hold a quantity above {max_quantity:,}"
+        )
+    return lines
 
 
 def describe(spec: StrategySpec) -> str:

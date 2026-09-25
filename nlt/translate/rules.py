@@ -1498,7 +1498,25 @@ _RISK_PCT_PATTERN = re.compile(r"risk\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*per\s*trade")
 _VALUE_PATTERN = re.compile(r"with\s*(?:rs\.?|₹|rupees)?\s*(?P<v>\d{4,9})\b")
 
 
-def _extract_sizing(text: str) -> tuple[str, Sizing]:
+# Position size when the user did not say. "1 lot" is the right default for an
+# options strategy, where a lot is a real contract term. It is meaningless for a
+# stock, where one lot is one share -- so "Buy RELIANCE when RSI cracks 30" on a
+# Rs 1,00,000 account bought Rs 640 of stock and reported a return of -0.03%,
+# which is not a test of the strategy so much as a test of nothing at all.
+#
+# Risking a fixed slice of capital is the standard answer and works at any share
+# price. It needs a stop distance to divide by, which is always available here
+# because a strategy without a stop loss is refused before it reaches this point.
+DEFAULT_RISK_PCT_PER_TRADE = 1.0
+
+
+def _default_sizing(instrument_kwargs: dict) -> Sizing:
+    if instrument_kwargs.get("trade_as") == "option":
+        return Sizing(mode="fixed_lots", lots=1)
+    return Sizing(mode="risk_based", risk_pct=DEFAULT_RISK_PCT_PER_TRADE)
+
+
+def _extract_sizing(text: str, instrument_kwargs: dict | None = None) -> tuple[str, Sizing]:
     text, m = _consume(text, _RISK_PCT_PATTERN)
     if m:
         return text, Sizing(mode="risk_based", risk_pct=float(m.group("v")))
@@ -1511,7 +1529,7 @@ def _extract_sizing(text: str) -> tuple[str, Sizing]:
     if m:
         return text, Sizing(mode="fixed_value", value=float(m.group("v")))
 
-    return text, Sizing()
+    return text, _default_sizing(instrument_kwargs or {})
 
 
 # --------------------------------------------------------------------- unparsed
@@ -1634,9 +1652,17 @@ def _default_risk(instrument_kwargs: dict) -> RiskLimits:
     from nlt.data.universe import is_universe
 
     symbol = instrument_kwargs.get("symbol", "")
+    # A lot cap belongs to instruments that trade in lots. Applying one to a
+    # stock caps the position at that many SHARES, which is never what anyone
+    # means -- the account balance and the per-trade loss limit already bound a
+    # stock position, and unlike a lot count they scale with the share price.
+    lot_cap = 2 if instrument_kwargs.get("trade_as") == "option" else None
+
     if symbol and is_universe(symbol):
-        return RiskLimits(max_concurrent_positions=BASKET_DEFAULT_CONCURRENT)
-    return RiskLimits()
+        return RiskLimits(
+            max_concurrent_positions=BASKET_DEFAULT_CONCURRENT, max_lots=lot_cap
+        )
+    return RiskLimits(max_lots=lot_cap)
 
 
 def parse(description: str, *, answers: dict[str, str] | None = None) -> TranslationResult:
@@ -1735,7 +1761,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
     notes.extend(exit_cond_notes)
 
-    text, sizing = _extract_sizing(text)
+    text, sizing = _extract_sizing(text, instrument_kwargs)
 
     entry_condition, entry_inds, entry_notes, entry_leftover, entry_refusal = _parse_condition_text(
         text, direction

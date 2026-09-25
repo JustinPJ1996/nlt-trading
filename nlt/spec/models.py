@@ -240,7 +240,17 @@ class RiskLimits(Base):
     max_daily_loss: float = Field(default=2000.0, gt=0)
     max_loss_per_trade: float = Field(default=5000.0, gt=0)
     max_concurrent_positions: int = Field(default=1, ge=1, le=10)
-    max_lots: int = Field(default=2, ge=1, le=100)
+
+    # A cap counted in LOTS only means something where lots exist. For a stock,
+    # one lot is one share, so the old default of 2 silently capped every stock
+    # position at two shares -- overriding whatever sizing the user asked for,
+    # and no fixed number could work across a market priced from Rs 50 to
+    # Rs 20,000 a share.
+    #
+    # None means no lot cap, which is the right answer for stocks: the limits
+    # that bind there are the account balance and `max_loss_per_trade`, both of
+    # which scale with price on their own.
+    max_lots: int | None = Field(default=None, ge=1, le=100)
 
 
 # ---------------------------------------------------------------- schedule
