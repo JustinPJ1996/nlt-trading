@@ -45,6 +45,21 @@ def _full_day(date: dt.date) -> pd.DataFrame:
     return _session_bars(date, "09:15", "15:15")
 
 
+def _latest_trading_day(date: dt.date | None = None) -> dt.date:
+    """`date` (default today) if it is a trading weekday, else the most recent one.
+
+    These fixtures build one session's bars and the loader drops anything
+    outside a trading session, so a test anchored on a raw `dt.date.today()`
+    passes Monday to Friday and fails every Saturday and Sunday -- the fixture
+    is filtered away to nothing and the assert sees 0 bars. Anchor on the last
+    trading day instead so the test means the same thing on any day it runs.
+    """
+    d = date or dt.date.today()
+    while d.weekday() not in NSE_EQUITY.weekdays:
+        d -= dt.timedelta(days=1)
+    return d
+
+
 def _prior_trading_day(date: dt.date, days_back: int) -> dt.date:
     """`date` minus `days_back` trading (Mon-Fri) days -- keeps fixtures off weekends."""
     d = date
@@ -61,19 +76,26 @@ def _prior_trading_day(date: dt.date, days_back: int) -> dt.date:
 
 
 def test_cache_round_trip_no_download_when_fresh(source, monkeypatch):
-    today = dt.date.today()
+    today = _latest_trading_day()
     path = source._cache_path("NIFTY", "15m")
     _full_day(today).to_parquet(path)
 
     now = pd.Timestamp(f"{today} 15:20", tz=IST)  # inside session, just after last bar
 
-    def explode(*a, **k):
-        raise AssertionError("re-downloaded a cache that was still fresh")
+    # Record the call rather than raising: `_load_cached` catches *every*
+    # exception from `_download` and falls back to the cache, so a tripwire
+    # that raises is swallowed and can never fail this test.
+    calls = []
 
-    monkeypatch.setattr(source, "_download", explode)
+    def spy(*a, **k):
+        calls.append(1)
+        return _full_day(today)
+
+    monkeypatch.setattr(source, "_download", spy)
     monkeypatch.setattr(pd.Timestamp, "now", staticmethod(lambda tz=None: now))
 
     result = source.bars("NIFTY", "15m", max_age_minutes=15)
+    assert not calls, "re-downloaded a cache that was still fresh"
     assert len(result) == 25
 
 
@@ -83,7 +105,7 @@ def test_cache_round_trip_no_download_when_fresh(source, monkeypatch):
 
 
 def test_refresh_appends_without_duplicating(source, monkeypatch):
-    today = dt.date.today()
+    today = _latest_trading_day()
     path = source._cache_path("NIFTY", "15m")
     seed = _full_day(today).iloc[:10]  # first 10 bars only, stale on purpose
     seed.to_parquet(path)
@@ -111,7 +133,7 @@ def test_refresh_appends_without_duplicating(source, monkeypatch):
 
 
 def test_stale_during_market_hours_when_older_than_max_age(source, monkeypatch):
-    today = dt.date.today()
+    today = _latest_trading_day()
     path = source._cache_path("NIFTY", "15m")
     _session_bars(today, "09:15", "09:45").to_parquet(path)  # last bar 09:45
 
@@ -132,18 +154,22 @@ def test_stale_during_market_hours_when_older_than_max_age(source, monkeypatch):
 def test_not_stale_outside_market_hours_even_if_old(source, monkeypatch):
     # Cache already covers today's full session; asking well after close
     # (or on a weekend) must not trigger a re-download.
-    today = dt.date.today()
+    today = _latest_trading_day()
     path = source._cache_path("NIFTY", "15m")
     _full_day(today).to_parquet(path)
 
     now = pd.Timestamp(f"{today} 22:00", tz=IST)  # long after close, same day
     monkeypatch.setattr(pd.Timestamp, "now", staticmethod(lambda tz=None: now))
 
-    def explode(*a, **k):
-        raise AssertionError("re-downloaded outside market hours with a cache already current")
+    calls = []
 
-    monkeypatch.setattr(source, "_download", explode)
+    def spy(*a, **k):  # recorded, not raised -- see the note above
+        calls.append(1)
+        return _full_day(today)
+
+    monkeypatch.setattr(source, "_download", spy)
     result = source.bars("NIFTY", "15m", max_age_minutes=15)
+    assert not calls, "re-downloaded outside market hours with a cache already current"
     assert len(result) == 25
 
 
@@ -218,7 +244,7 @@ def test_coverage_reports_missing_bars_and_uncached_symbol(source):
 
 
 def test_out_of_hours_cached_bar_does_not_survive_load(source, monkeypatch):
-    today = dt.date.today()
+    today = _latest_trading_day()
     full = _full_day(today)
     out_of_hours = _session_bars(today, "16:00", "16:00")  # single bar, after close
     combined = pd.concat([full, out_of_hours])
@@ -226,11 +252,16 @@ def test_out_of_hours_cached_bar_does_not_survive_load(source, monkeypatch):
 
     now = pd.Timestamp(f"{today} 22:00", tz=IST)
     monkeypatch.setattr(pd.Timestamp, "now", staticmethod(lambda tz=None: now))
-    monkeypatch.setattr(
-        source, "_download", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no download"))
-    )
+    calls = []
+
+    def spy(*a, **k):  # recorded, not raised -- see the note above
+        calls.append(1)
+        return _full_day(today)
+
+    monkeypatch.setattr(source, "_download", spy)
 
     result = source.bars("NIFTY", "15m")
+    assert not calls, "re-downloaded when the cache already covered the session"
     assert pd.Timestamp(f"{today} 16:00", tz=IST) not in result.index
     assert len(result) == 25
     assert "16:00" in " ".join(source.last_notes) or any(
