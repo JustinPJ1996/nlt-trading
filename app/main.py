@@ -27,7 +27,7 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 
-from app import logic
+from app import auth, logic
 from app.charts import equity_and_drawdown_figure
 from nlt.store.db import Store
 from nlt.translate.rules import Question
@@ -444,6 +444,13 @@ def page_safety() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Trading Strategy Builder", page_icon="chart", layout="wide")
+
+    # First, before anything renders. `require_password` calls `st.stop()` when
+    # the viewer is not authenticated, so nothing below this line is sent to an
+    # unauthenticated browser -- including the sidebar and the Safety page's
+    # kill switch. See `app/auth.py` for why it fails closed.
+    auth.require_password()
+
     _init_state()
     _apply_pending_navigation()
 
