@@ -15,7 +15,6 @@ from pathlib import Path
 
 from app.auth import ENV_VAR, configured_password, password_matches
 
-
 # ------------------------------------------------------------------ reading
 
 

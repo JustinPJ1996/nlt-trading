@@ -33,6 +33,12 @@ markers = ["network: touches the live network/market data, skipped by default"]
 line-length = 100
 target-version = "py312"
 
+# `legacy/` is an abandoned prototype kept only for reference -- it describes an
+# approach this project deliberately moved away from. Linting it produced ten of
+# the eleven errors in the repo and none of them were ever going to be fixed,
+# which is how a tool teaches you to ignore its output.
+exclude = ["legacy"]
+
 [tool.ruff.lint]
 # Pyflakes and pycodestyle catch real mistakes; isort keeps imports tidy;
 # pyupgrade keeps us on current syntax. Everything else is style opinion we
