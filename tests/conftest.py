@@ -51,12 +51,31 @@ def synthetic_bars() -> pd.DataFrame:
     )
 
 
+# Every test built on real NIFTY history is cut off here.
+#
+# The cache grows: `bars()` refreshes it whenever it goes stale, so without a
+# cut-off these fixtures return a different frame depending on the day you run
+# them. `test_daily_nifty_rsi_regression_pinned` pins an exact trade count, and
+# on 2026-09-29 it broke -- not because anything regressed, but because the
+# market had opened and added a bar, turning 56 trades into 57. A test whose
+# result depends on the date is not pinning anything.
+#
+# Moving this date forward is a deliberate act: it will move the pinned numbers
+# in `test_daily_nifty_rsi_regression_pinned`, and those numbers exist to prove
+# that daily-bar runs take none of the intraday session code paths. Re-pin them
+# in the same commit, and only after checking the change is the new data and
+# not a real regression.
+NIFTY_FIXTURE_CUTOFF = "2026-09-25"
+
+
 @pytest.fixture(scope="session")
 def nifty_bars() -> pd.DataFrame:
-    """Real NIFTY daily bars, skipped if the cache has not been populated."""
+    """Real NIFTY daily bars up to `NIFTY_FIXTURE_CUTOFF`, so the frame is
+    identical on every run. Skipped if the cache has not been populated."""
     from nlt.data.source import CACHE_DIR
 
     path = CACHE_DIR / "yahoo_NIFTY_1d.parquet"
     if not path.exists():
         pytest.skip("NIFTY cache not populated; run scripts/fetch_data.py")
-    return pd.read_parquet(path)
+    bars = pd.read_parquet(path)
+    return bars.loc[: f"{NIFTY_FIXTURE_CUTOFF} 23:59:59+05:30"]
