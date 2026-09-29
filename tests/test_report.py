@@ -760,3 +760,26 @@ def test_no_small_account_flag_without_the_warning():
     result = _with_warning("no charge_fn supplied; results exclude transaction costs")
     verdict = assess(result, _comparison(result))
     assert not any(f.code == "options_need_a_bigger_account" for f in verdict.flags)
+
+
+def test_the_lot_size_on_screen_is_the_one_the_engine_sizes_with():
+    """This flag told users "one NIFTY option lot is 75 units" for months after
+    NSE cut it to 65 (circular of 28 Nov 2025), because the number was written
+    into the sentence by hand.
+
+    A figure shown on screen that contradicts the one the engine actually used
+    is the readback lying in miniature, and the exchange will move this number
+    again. So it is read from the lot table, and this asserts the two agree
+    rather than asserting any particular number.
+    """
+    from nlt.data.instruments import lot_size
+    from nlt.report.verdict import assess
+
+    result = _with_warning("OPTIONS ON A SMALL ACCOUNT: this was tested with Rs 100,000.")
+    verdict = assess(result, _comparison(result))
+
+    flag = next(f for f in verdict.flags if f.code == "options_need_a_bigger_account")
+    expected = lot_size("NIFTY", "option")
+    assert f"{expected} units" in flag.detail, (
+        f"the flag should quote the live lot size ({expected}), not a hardcoded one: {flag.detail}"
+    )

@@ -21,6 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nlt.data.instruments import lot_size as exchange_lot_size
+
 if TYPE_CHECKING:
     from nlt.engine.backtest import BacktestResult
     from nlt.report.benchmark import Comparison
@@ -331,7 +333,13 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 code="options_need_a_bigger_account",
                 headline="Options are not suitable for an account this size.",
                 detail=(
-                    "One NIFTY option lot is 75 units and cannot be split, so a small "
+                    # Read from the lot table rather than written out, because the
+                    # exchange moves it: NSE cut NIFTY from 75 to 65 in the circular
+                    # of 28 Nov 2025 and this sentence went on saying 75 to users
+                    # for months. A number shown on screen that contradicts the one
+                    # the engine sized with is the readback lying in miniature.
+                    f"One NIFTY option lot is {exchange_lot_size('NIFTY', 'option')} units "
+                    "and cannot be split, so a small "
                     "account either cannot afford a single lot or has to put far too "
                     "much of itself into one contract -- and an option can lose its "
                     "entire premium in a session. Roughly Rs 10,00,000 is where options "

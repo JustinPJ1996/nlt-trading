@@ -325,12 +325,36 @@ def _extract_instrument(
 
     option_word = re.search(r"\b(call|put|ce|pe|option|options)\b", text)
     if option_word:
-        kwargs["trade_as"] = "option"
-        if re.search(r"\b(call|ce)\b", text):
-            kwargs["option_type"] = "CE"
-        elif re.search(r"\b(put|pe)\b", text):
-            kwargs["option_type"] = "PE"
-        text = re.sub(r"\b(call|put|ce|pe|options?)\b", " ", text)
+        # Refused rather than parsed, until there is option price data to test
+        # against. This used to build an option spec, and the readback would
+        # faithfully describe "at-the-money call option, nearest weekly expiry"
+        # while the engine backtested the index's own price and reported the
+        # result with no hint that it had traded something else entirely.
+        #
+        # Refusing costs the user a strategy they could not have trusted anyway.
+        # Parsing it cost them a number they had every reason to believe.
+        #
+        # Removed in the phase that adds real contract resolution; the
+        # extraction below is what it will grow back into.
+        return (
+            text,
+            None,
+            Question(
+                text=(
+                    "I can't test option strategies yet -- option price history is "
+                    "being wired in now. Try the same idea on the index itself, "
+                    "e.g. 'buy NIFTY when RSI crosses below 30, target 2%, stop 1%'."
+                ),
+                why=(
+                    "There is no option price data here yet. Testing an option "
+                    "strategy against the index's own price would give you a "
+                    "confident-looking number for a completely different trade -- "
+                    "a 2% move in NIFTY is nothing like a 2% move in a premium."
+                ),
+                suggestion=None,
+                field="instrument.trade_as",
+            ),
+        )
 
     if "symbol" not in kwargs:
         found = _find_stock_ticker(text)

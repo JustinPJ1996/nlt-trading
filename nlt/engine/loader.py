@@ -47,6 +47,34 @@ def load_for_spec(
     notes: list[str] = []
     symbol = spec.instrument.symbol
 
+    # Options are refused here rather than backtested on the wrong series.
+    #
+    # Until this check existed, `trade_as="option"` fell straight through to the
+    # index branch below: a spec whose readback said "NIFTY, at-the-money call
+    # option, nearest weekly expiry" was handed NIFTY *spot* bars and bought 65
+    # units of the index at ~24,000 each -- about Rs 15.6 lakh on a Rs 1 lakh
+    # account -- while "+2% target" silently meant 2% of the index rather than
+    # 2% of the premium. The number that came back looked like every other
+    # number the dashboard produces.
+    #
+    # That is the readback stating something untrue, which HANDOFF.md names as
+    # the most serious bug class in this project. A missing feature that says so
+    # is recoverable; a wrong answer delivered confidently is not.
+    #
+    # This is the loading path only. `run_backtest` still accepts an option spec
+    # with bars passed in directly, which is what the sizing, lot-cap and
+    # small-account tests exercise -- those are about position mechanics and do
+    # not depend on the series being real option premiums.
+    #
+    # Removed when the F&O source lands and this function can resolve a real
+    # contract. See the plan's Phase 4.
+    if spec.instrument.trade_as == "option":
+        raise NotImplementedError(
+            "options cannot be backtested yet -- there is no option price data "
+            "wired in, and testing an option strategy against the index's own "
+            "price would produce a confident, wrong answer. This is being built."
+        )
+
     if symbol in INDICES:
         source = YahooSource()
         bars = source.bars(symbol, interval=spec.instrument.timeframe, start=start, end=end)

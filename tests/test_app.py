@@ -224,6 +224,83 @@ def test_charge_model_for_label_defaults_to_options() -> None:
     assert isinstance(logic.charge_model_for_label("not a real label"), NseOptionsCharges)
 
 
+# --------------------------------------------- costs must match what is traded
+#
+# The cost dropdown defaults to index options. Nothing reconciled it against the
+# strategy, so a share strategy run on the untouched default was charged option
+# STT -- a different tax, on a different base, big enough to move a marginal
+# result across the line. These assert the two can no longer disagree silently.
+
+
+def _spec_trading(trade_as: str):
+    """A minimal real spec with the given `trade_as`."""
+    from nlt.spec.models import Instrument
+    from nlt.translate.rules import parse
+
+    spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    assert spec is not None
+    symbol = "RELIANCE" if trade_as == "stock" else "NIFTY"
+    return spec.model_copy(update={"instrument": Instrument(symbol=symbol, trade_as=trade_as)})
+
+
+def test_a_share_strategy_is_not_charged_option_taxes() -> None:
+    from nlt.costs.charges import NseEquityDeliveryCharges
+
+    model, note = logic.charge_model_for_spec(
+        _spec_trading("stock"), "Index options (NIFTY/BANKNIFTY weekly)"
+    )
+    assert isinstance(model, NseEquityDeliveryCharges)
+    assert note is not None, "an override the user did not ask for must be said out loud"
+    assert "share" in note.lower()
+
+
+def test_the_override_note_names_the_setting_it_replaced() -> None:
+    """A note that says "costs were changed" without saying from what is not
+    something a non-technical user can check or argue with."""
+    _model, note = logic.charge_model_for_spec(
+        _spec_trading("stock"), "Index options (NIFTY/BANKNIFTY weekly)"
+    )
+    assert note is not None
+    assert "Index options" in note
+
+
+def test_a_share_strategy_already_on_equity_charges_is_left_alone() -> None:
+    from nlt.costs.charges import NseEquityDeliveryCharges
+
+    model, note = logic.charge_model_for_spec(_spec_trading("stock"), "Equity delivery")
+    assert isinstance(model, NseEquityDeliveryCharges)
+    assert note is None, "nothing was overridden, so there is nothing to report"
+
+
+def test_an_index_strategy_keeps_whichever_model_was_chosen() -> None:
+    """ "Buy NIFTY" is not directly tradable, so options-vs-futures is a real
+    choice only the user can make. It must not be overridden."""
+    from nlt.costs.charges import NseFuturesCharges, NseOptionsCharges
+
+    model, note = logic.charge_model_for_spec(_spec_trading("index"), "Index futures")
+    assert isinstance(model, NseFuturesCharges)
+    assert note is None
+
+    model, note = logic.charge_model_for_spec(
+        _spec_trading("index"), "Index options (NIFTY/BANKNIFTY weekly)"
+    )
+    assert isinstance(model, NseOptionsCharges)
+    assert note is None
+
+
+def test_no_costs_is_never_overridden() -> None:
+    """It is a comparison baseline. Quietly adding charges destroys the one
+    thing it exists for."""
+    from nlt.costs.charges import ZeroCharges
+
+    for trade_as in ("stock", "index"):
+        model, note = logic.charge_model_for_spec(
+            _spec_trading(trade_as), "No costs (for comparison only)"
+        )
+        assert isinstance(model, ZeroCharges), trade_as
+        assert note is None, trade_as
+
+
 # ------------------------------------------------------------------- charts
 
 

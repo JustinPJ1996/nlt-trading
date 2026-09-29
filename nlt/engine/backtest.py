@@ -184,7 +184,7 @@ class _OpenPosition:
 
 
 # Below this, index options stop being a sensible instrument rather than merely
-# an aggressive one. A 75-unit lot is indivisible, so a small account cannot take
+# an aggressive one. An index option lot is indivisible, so a small account cannot take
 # a proportionate position -- it either cannot afford one lot at all, or one lot
 # is most of the account. Later this becomes a setting; for now it is a warning
 # nobody can miss.
@@ -206,7 +206,7 @@ def run_backtest(
     `lot_size` is optional and should almost always be left unset: it is
     derived from `spec.instrument.trade_as` (see `_default_lot_size`) so that
     an index backtest trades in units of 1 and only an options backtest
-    inherits the 75-share options convention. Pass it explicitly only to
+    inherits the index-option lot convention. Pass it explicitly only to
     model a specific contract's lot size (e.g. BANKNIFTY's, which differs
     from NIFTY's).
 
@@ -230,7 +230,9 @@ def run_backtest(
         warnings.append(note)
 
     if spec.instrument.trade_as == "option" and capital < FNO_MINIMUM_CAPITAL:
-        # Not a preference -- arithmetic. A NIFTY option lot is 75 units, and it
+        # Not a preference -- arithmetic. An index option lot is tens of units
+        # (NIFTY is 65 as of the NSE circular of 28 Nov 2025, and the exchange
+        # revises it), and it
         # cannot be divided, so a small account either cannot buy one at all or
         # has to put an irresponsible share of itself into a single contract that
         # can lose its entire premium in a session. Below this figure the honest

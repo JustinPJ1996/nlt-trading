@@ -71,6 +71,7 @@ __all__ = [
     "Verdict",
     "answers_from_questions",
     "charge_model_for_label",
+    "charge_model_for_spec",
     "color_for_flag",
     "color_for_pnl",
     "describe_spec",
@@ -112,6 +113,40 @@ COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
 def charge_model_for_label(label: str) -> ChargeModel:
     """Looks up a cost model by its dropdown label, defaulting to options costs."""
     return COST_MODEL_LABELS.get(label, NseOptionsCharges())
+
+
+def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, str | None]:
+    """The cost model to actually use, and a note if it overrode the dropdown.
+
+    The dropdown is a real choice for an index strategy -- "buy NIFTY" is not
+    directly tradable, so whether you would express it as options or futures
+    changes the costs and only the user knows which they meant.
+
+    It is not a real choice for shares. A strategy that buys RELIANCE pays
+    equity delivery charges, and the dropdown defaults to *options* costs, so
+    the untouched default silently applied option STT to a share trade. The two
+    differ enough to move a marginal strategy from profitable to not, which is
+    exactly the kind of wrong answer this project treats as serious.
+
+    So: shares are reconciled to equity charges and the override is said out
+    loud rather than done quietly. "No costs" is never overridden -- it is a
+    deliberate comparison baseline, and silently adding charges to it would
+    destroy the one thing it is for.
+    """
+    chosen = charge_model_for_label(label)
+
+    if isinstance(chosen, ZeroCharges):
+        return chosen, None
+
+    if spec.instrument.trade_as == "stock" and not isinstance(chosen, NseEquityDeliveryCharges):
+        return NseEquityDeliveryCharges(), (
+            f"Costs: this strategy buys and sells shares, so equity delivery charges "
+            f"were applied instead of '{label}'. Share trades are not taxed the way "
+            f"index options are, and using the option figures would have overstated "
+            f"what this strategy costs to run."
+        )
+
+    return chosen, None
 
 
 # ---------------------------------------------------------------- formatting
@@ -335,7 +370,7 @@ def run_pipeline(
 
     spec = translation.spec
     try:
-        model = charge_model_for_label(cost_model_label)
+        model, cost_note = charge_model_for_spec(spec, cost_model_label)
         cf = _adapt_charge_fn(model)
 
         # `load_for_spec` knows how to turn a symbol into bars whether it names
@@ -355,6 +390,8 @@ def run_pipeline(
             )
 
         bars_by_symbol, data_notes = load_for_spec(load_spec, start=start, end=end)
+        if cost_note:
+            data_notes = [cost_note, *data_notes]
         if not bars_by_symbol or all(df.empty for df in bars_by_symbol.values()):
             return PipelineResult(
                 translation=translation,
