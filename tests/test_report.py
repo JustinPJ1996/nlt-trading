@@ -241,7 +241,12 @@ def test_compare_time_in_market_and_excess_return():
         index=idx,
     )
     benchmark = Benchmark(
-        name="bm", total_return_pct=2.0, cagr_pct=1.0, max_drawdown_pct=-3.0, sharpe=0.5, equity=equity
+        name="bm",
+        total_return_pct=2.0,
+        cagr_pct=1.0,
+        max_drawdown_pct=-3.0,
+        sharpe=0.5,
+        equity=equity,
     )
 
     comparison = compare(result, benchmark, bars)
@@ -260,7 +265,14 @@ def test_compare_rejects_mismatched_lengths():
     equity = _flat_equity(n)
     result = _build_result([], equity)
     bars = pd.DataFrame({"open": [1.0] * (n - 1)}, index=idx[:-1])
-    benchmark = Benchmark(name="bm", total_return_pct=0.0, cagr_pct=0.0, max_drawdown_pct=0.0, sharpe=None, equity=equity)
+    benchmark = Benchmark(
+        name="bm",
+        total_return_pct=0.0,
+        cagr_pct=0.0,
+        max_drawdown_pct=0.0,
+        sharpe=None,
+        equity=equity,
+    )
 
     with pytest.raises(ValueError):
         compare(result, benchmark, bars)
@@ -288,7 +300,9 @@ def test_baseline_good_result_passes_clean():
 
 def test_lost_money_fires_on_negative_return():
     result = _baseline_good_result()
-    result.equity.iloc[:] = _equity_with_drawdown(len(result.equity), 100_000.0, trough_pct=-20.0, end_pct=-5.0)
+    result.equity.iloc[:] = _equity_with_drawdown(
+        len(result.equity), 100_000.0, trough_pct=-20.0, end_pct=-5.0
+    )
     result.metrics.update(
         compute_metrics(result.trades, result.equity, 100_000.0, bars_per_year=252)
     )
@@ -306,7 +320,9 @@ def test_lost_money_absent_when_profitable():
 
 def test_underperformed_benchmark_fires_and_is_critical_when_also_lost_money():
     result = _baseline_good_result()
-    result.equity.iloc[:] = _equity_with_drawdown(len(result.equity), 100_000.0, trough_pct=-20.0, end_pct=-5.0)
+    result.equity.iloc[:] = _equity_with_drawdown(
+        len(result.equity), 100_000.0, trough_pct=-20.0, end_pct=-5.0
+    )
     result.metrics.update(
         compute_metrics(result.trades, result.equity, 100_000.0, bars_per_year=252)
     )
@@ -514,7 +530,9 @@ def test_untested_costs_absent_when_no_such_warning():
 def test_long_losing_streak_fires_above_8_in_a_row():
     idx = _bdate_index(300)
     trades = [_mk_trade(idx, i * 4, net_pnl=-100.0, charges=5.0, bars_held=2) for i in range(9)]
-    trades += [_mk_trade(idx, 100 + i * 4, net_pnl=500.0, charges=5.0, bars_held=2) for i in range(20)]
+    trades += [
+        _mk_trade(idx, 100 + i * 4, net_pnl=500.0, charges=5.0, bars_held=2) for i in range(20)
+    ]
     equity = _flat_equity(300, 100_000.0, end_capital=105_000.0)
     result = _build_result(trades, equity)
     comparison = _comparison(result, beats=True)
@@ -526,7 +544,9 @@ def test_long_losing_streak_fires_above_8_in_a_row():
 def test_long_losing_streak_absent_at_8_or_fewer():
     idx = _bdate_index(300)
     trades = [_mk_trade(idx, i * 4, net_pnl=-100.0, charges=5.0, bars_held=2) for i in range(8)]
-    trades += [_mk_trade(idx, 100 + i * 4, net_pnl=500.0, charges=5.0, bars_held=2) for i in range(20)]
+    trades += [
+        _mk_trade(idx, 100 + i * 4, net_pnl=500.0, charges=5.0, bars_held=2) for i in range(20)
+    ]
     equity = _flat_equity(300, 100_000.0, end_capital=105_000.0)
     result = _build_result(trades, equity)
     comparison = _comparison(result, beats=True)
@@ -599,8 +619,12 @@ def test_summary_contains_no_jargon(make_verdict):
 
 def _lost_and_underperformed():
     result = _baseline_good_result()
-    result.equity.iloc[:] = _equity_with_drawdown(len(result.equity), 100_000.0, trough_pct=-20.0, end_pct=-5.0)
-    result.metrics.update(compute_metrics(result.trades, result.equity, 100_000.0, bars_per_year=252))
+    result.equity.iloc[:] = _equity_with_drawdown(
+        len(result.equity), 100_000.0, trough_pct=-20.0, end_pct=-5.0
+    )
+    result.metrics.update(
+        compute_metrics(result.trades, result.equity, 100_000.0, bars_per_year=252)
+    )
     return result, _comparison(result, beats=False)
 
 
@@ -721,9 +745,7 @@ def test_small_account_options_warning_becomes_a_critical_flag():
     result = _with_warning("OPTIONS ON A SMALL ACCOUNT: this was tested with Rs 100,000.")
     verdict = assess(result, _comparison(result))
 
-    flag = next(
-        (f for f in verdict.flags if f.code == "options_need_a_bigger_account"), None
-    )
+    flag = next((f for f in verdict.flags if f.code == "options_need_a_bigger_account"), None)
     assert flag is not None, "an unsuitable instrument must be flagged"
     assert flag.severity == "critical"
     assert verdict.passed is False, (

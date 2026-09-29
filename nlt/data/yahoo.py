@@ -35,7 +35,6 @@ class YahooSource:
     def _cache_path(self, symbol: str, interval: str) -> Path:
         return self.cache_dir / f"{self.name}_{symbol}_{interval}.parquet"
 
-
     def _load_cached(self, path: Path, symbol: str, interval: str) -> pd.DataFrame:
         """Return cached bars, re-downloading when they have gone stale.
 

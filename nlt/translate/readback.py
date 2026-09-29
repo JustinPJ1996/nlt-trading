@@ -301,10 +301,7 @@ def _sizing_desc(spec: StrategySpec) -> str:
         if lot_size > 1:
             # Say both: the quantity is what gets ordered, the lot count is what
             # the user typed and what an F&O trader thinks in.
-            return (
-                f"Quantity {quantity:,} per trade "
-                f"({_plural(s.lots, 'lot')} of {lot_size})"
-            )
+            return f"Quantity {quantity:,} per trade ({_plural(s.lots, 'lot')} of {lot_size})"
         return f"Quantity {quantity:,} per trade"
     if s.mode == "fixed_value":
         return f"About {format_inr(s.value)} per trade"
@@ -325,8 +322,7 @@ def _risk_lines(spec: StrategySpec) -> list[str]:
     # a cap that is not enforced would be the readback lying again.
     if r.max_position_pct is not None:
         lines.append(
-            f"Never put more than {_num(r.max_position_pct)}% of the account "
-            "into one position"
+            f"Never put more than {_num(r.max_position_pct)}% of the account into one position"
         )
     if r.max_lots is not None:
         lot_size = _lot_size_for(spec)

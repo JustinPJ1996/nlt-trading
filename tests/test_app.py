@@ -304,9 +304,7 @@ def test_basket_benchmark_is_the_same_stocks_held_not_the_index() -> None:
     # The equal-weight basket of 100 stocks is nothing like NIFTY's own return
     # over the same window, so a mix-up would be visible as a near-identical number.
     nifty = logic.run_pipeline("buy nifty when rsi cracks 30, target 2%, stop loss 1%")
-    assert abs(
-        result.comparison.benchmark_return_pct - nifty.comparison.benchmark_return_pct
-    ) > 1.0
+    assert abs(result.comparison.benchmark_return_pct - nifty.comparison.benchmark_return_pct) > 1.0
 
 
 def test_symbol_override_is_honoured_not_silently_ignored() -> None:

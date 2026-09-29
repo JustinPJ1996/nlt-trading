@@ -190,8 +190,9 @@ def test_apply_floor_is_inclusive_of_the_floor_date():
     from nlt.data.source import apply_floor
 
     idx = pd.date_range("2019-12-28", periods=10, freq="D", tz="Asia/Kolkata")
-    df = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
-                      index=idx)
+    df = pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0}, index=idx
+    )
     out = apply_floor(df, dt.date(2020, 1, 1))
     assert out.index[0].date() == dt.date(2020, 1, 1)
     assert len(out) == 6

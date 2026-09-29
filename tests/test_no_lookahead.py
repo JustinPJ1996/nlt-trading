@@ -51,7 +51,11 @@ def test_prefix_invariance(name, synthetic_bars):
             assert a.equals(b), f"{name}.{col}: boolean output changed with future data"
         else:
             pd.testing.assert_series_equal(
-                a, b, check_names=False, rtol=1e-9, atol=1e-9,
+                a,
+                b,
+                check_names=False,
+                rtol=1e-9,
+                atol=1e-9,
                 obj=f"{name}.{col} leaks future data",
             )
 
@@ -75,6 +79,10 @@ def test_prefix_invariance_on_real_data(name, nifty_bars):
             assert a.equals(b), f"{name}.{col} changed with future data"
         else:
             pd.testing.assert_series_equal(
-                a, b, check_names=False, rtol=1e-9, atol=1e-9,
+                a,
+                b,
+                check_names=False,
+                rtol=1e-9,
+                atol=1e-9,
                 obj=f"{name}.{col} leaks future data",
             )

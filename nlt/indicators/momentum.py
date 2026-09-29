@@ -27,15 +27,11 @@ def rsi(close: pd.Series, length: int = 14) -> pd.Series:
     return out
 
 
-def macd(
-    close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9
-) -> pd.DataFrame:
+def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
     """MACD line, signal line and histogram -- Pine `ta.macd`."""
     line = ema(close, fast) - ema(close, slow)
     sig = ema(line, signal)
-    return pd.DataFrame(
-        {"macd": line, "signal": sig, "histogram": line - sig}, index=close.index
-    )
+    return pd.DataFrame({"macd": line, "signal": sig, "histogram": line - sig}, index=close.index)
 
 
 def stochastic(
@@ -79,9 +75,7 @@ def stoch_rsi(
     return pd.DataFrame({"k": k, "d": sma(k, smooth_d)}, index=close.index)
 
 
-def cci(
-    high: pd.Series, low: pd.Series, close: pd.Series, length: int = 20
-) -> pd.Series:
+def cci(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 20) -> pd.Series:
     """Commodity Channel Index -- uses mean absolute deviation, not stdev."""
     tp = (high + low + close) / 3.0
     ma = sma(tp, length)
@@ -93,9 +87,7 @@ def cci(
     return out
 
 
-def williams_r(
-    high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14
-) -> pd.Series:
+def williams_r(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
     """Williams %R -- ranges from -100 (weakest) to 0 (strongest)."""
     highest = high.rolling(length, min_periods=length).max()
     lowest = low.rolling(length, min_periods=length).min()

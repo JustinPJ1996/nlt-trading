@@ -48,7 +48,8 @@ def _crossover_spec() -> StrategySpec:
                 {"id": "sma50", "type": "sma", "params": {"length": 50}},
             ],
             "entry": {
-                "kind": "compare", "op": "crosses_above",
+                "kind": "compare",
+                "op": "crosses_above",
                 "left": {"kind": "ref", "name": "sma20"},
                 "right": {"kind": "ref", "name": "sma50"},
             },
@@ -102,7 +103,8 @@ def test_engine_finds_every_crossover_it_could_act_on(nifty_bars):
 
     entered_after = {positions[t.entry_time] - 1 for t in result.trades}
     missed = [
-        ts for ts in crossovers
+        ts
+        for ts in crossovers
         if positions[ts] not in held
         and positions[ts] not in entered_after
         and positions[ts] < len(bars) - 2

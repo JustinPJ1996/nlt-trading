@@ -117,12 +117,59 @@ class _Indicators:
 
 # Filler words stripped out before deciding what counts as "unparsed" input.
 _FILLER = {
-    "please", "i", "want", "to", "a", "an", "the", "on", "in", "at", "with",
-    "and", "or", "when", "if", "only", "but", "of", "for", "my", "strategy",
-    "then", "so", "it", "is", "s", "this", "that", "would", "like", "d",
-    "me", "build", "make", "create", "trade", "trading",
-    "while", "as", "long", "still", "open", "just", "now", "up", "not",
-    "candle", "candles", "pattern", "forms", "instantly", "use", "using",
+    "please",
+    "i",
+    "want",
+    "to",
+    "a",
+    "an",
+    "the",
+    "on",
+    "in",
+    "at",
+    "with",
+    "and",
+    "or",
+    "when",
+    "if",
+    "only",
+    "but",
+    "of",
+    "for",
+    "my",
+    "strategy",
+    "then",
+    "so",
+    "it",
+    "is",
+    "s",
+    "this",
+    "that",
+    "would",
+    "like",
+    "d",
+    "me",
+    "build",
+    "make",
+    "create",
+    "trade",
+    "trading",
+    "while",
+    "as",
+    "long",
+    "still",
+    "open",
+    "just",
+    "now",
+    "up",
+    "not",
+    "candle",
+    "candles",
+    "pattern",
+    "forms",
+    "instantly",
+    "use",
+    "using",
 }
 
 
@@ -305,9 +352,7 @@ def _extract_instrument(
 # "I want to buy NIFTY when..." is a completely ordinary way to open a request
 # and treating it as unrecognised would be a false refusal on the most common
 # possible phrasing.
-_LEAD_FILLER = (
-    r"(?:please\s+)?(?:instantly\s+)?(?:i(?:'d| would)? (?:want to|like to)\s+)?"
-)
+_LEAD_FILLER = r"(?:please\s+)?(?:instantly\s+)?(?:i(?:'d| would)? (?:want to|like to)\s+)?"
 _DIRECTION_LEAD = re.compile(
     rf"^\s*{_LEAD_FILLER}(buy|go long|long|sell short|short sell|short|go short|sell)\b"
 )
@@ -329,6 +374,7 @@ def _extract_direction(text: str) -> tuple[str, str, bool]:
 
 
 # ---------------------------------------------------------- indicator ids
+
 
 def _len_suffix(prefix: str, length: int | None, default: int) -> tuple[str, int]:
     n = length if length is not None else default
@@ -540,12 +586,16 @@ def _extremes_ref(ind: _Indicators, length: int, output: str) -> Ref:
 
 def _build_breakout_high(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
     length = int(m.group("len"))
-    return Compare(op="crosses_above", left=Ref(name="close"), right=_extremes_ref(ind, length, "highest"))
+    return Compare(
+        op="crosses_above", left=Ref(name="close"), right=_extremes_ref(ind, length, "highest")
+    )
 
 
 def _build_breakout_low(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
     length = int(m.group("len"))
-    return Compare(op="crosses_below", left=Ref(name="close"), right=_extremes_ref(ind, length, "lowest"))
+    return Compare(
+        op="crosses_below", left=Ref(name="close"), right=_extremes_ref(ind, length, "lowest")
+    )
 
 
 _PATTERN_ALIASES = {
@@ -578,7 +628,9 @@ def _build_pattern(pattern_id: str):
 def _build_pattern_needs_direction(base: str, default_note: str):
     """'harami'/'marubozu' with no bullish/bearish qualifier -- pick from direction."""
 
-    def build(m: re.Match, ind: _Indicators, notes: list[str], direction: str = "long") -> Condition:
+    def build(
+        m: re.Match, ind: _Indicators, notes: list[str], direction: str = "long"
+    ) -> Condition:
         variant = f"{base}_{'bullish' if direction == 'long' else 'bearish'}"
         notes.append(default_note.format(variant=variant))
         ind.declare(variant, variant, {})
@@ -623,7 +675,7 @@ _AT_RSI_LEVEL = re.compile(r"\bat rsi\s*(?P<level>\d+(?:\.\d+)?)\b")
 def _build_at_rsi_level(
     m: re.Match, ind: _Indicators, notes: list[str], direction: str = "long"
 ) -> Condition:
-    """"at RSI 30" names a level with no up/down verb -- see the module docstring
+    """ "at RSI 30" names a level with no up/down verb -- see the module docstring
     for why we read it as a crossing whose direction follows the trade direction,
     rather than as a state true on every bar.
 
@@ -836,7 +888,9 @@ CONDITION_PATTERNS: list[PatternRule] = [
     ),
     PatternRule(
         "adx_above",
-        re.compile(rf"adx{_LEN}\s*(?:{_STATE_UP_WORDS}|{_CROSS_UP_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"),
+        re.compile(
+            rf"adx{_LEN}\s*(?:{_STATE_UP_WORDS}|{_CROSS_UP_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"
+        ),
         _build_adx_gt,
         "ADX above 25",
     ),
@@ -878,25 +932,33 @@ CONDITION_PATTERNS: list[PatternRule] = [
     ),
     PatternRule(
         "stoch_below",
-        re.compile(rf"stochastic{_LEN}\s*(?:{_STATE_DOWN_WORDS}|{_CROSS_DOWN_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"),
+        re.compile(
+            rf"stochastic{_LEN}\s*(?:{_STATE_DOWN_WORDS}|{_CROSS_DOWN_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"
+        ),
         _stoch_builder("lt"),
         "stochastic below 20",
     ),
     PatternRule(
         "stoch_above",
-        re.compile(rf"stochastic{_LEN}\s*(?:{_STATE_UP_WORDS}|{_CROSS_UP_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"),
+        re.compile(
+            rf"stochastic{_LEN}\s*(?:{_STATE_UP_WORDS}|{_CROSS_UP_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"
+        ),
         _stoch_builder("gt"),
         "stochastic above 80",
     ),
     PatternRule(
         "cci_below",
-        re.compile(rf"cci{_LEN}\s*(?:{_STATE_DOWN_WORDS}|{_CROSS_DOWN_WORDS})\s*(?P<level>-?\d+(?:\.\d+)?)"),
+        re.compile(
+            rf"cci{_LEN}\s*(?:{_STATE_DOWN_WORDS}|{_CROSS_DOWN_WORDS})\s*(?P<level>-?\d+(?:\.\d+)?)"
+        ),
         _cci_builder("lt"),
         "CCI below -100",
     ),
     PatternRule(
         "cci_above",
-        re.compile(rf"cci{_LEN}\s*(?:{_STATE_UP_WORDS}|{_CROSS_UP_WORDS})\s*(?P<level>-?\d+(?:\.\d+)?)"),
+        re.compile(
+            rf"cci{_LEN}\s*(?:{_STATE_UP_WORDS}|{_CROSS_UP_WORDS})\s*(?P<level>-?\d+(?:\.\d+)?)"
+        ),
         _cci_builder("gt"),
         "CCI above 100",
     ),
@@ -928,7 +990,8 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "below_prev_day_low",
         re.compile(
-            _OPT_PRICE + r"(?:closes?\s*)?(?:below|under)\s*(?:the\s*)?(?:previous|prior|yesterday'?s?)"
+            _OPT_PRICE
+            + r"(?:closes?\s*)?(?:below|under)\s*(?:the\s*)?(?:previous|prior|yesterday'?s?)"
             r"\s*(?:day'?s?\s*)?low"
         ),
         _build_prior_level("lt", "low", "day"),
@@ -975,43 +1038,57 @@ CONDITION_PATTERNS: list[PatternRule] = [
     ),
     PatternRule(
         "generic_crosses_below",
-        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_CROSS_DOWN_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        re.compile(
+            rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_CROSS_DOWN_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"
+        ),
         _build_generic_compare("crosses_below"),
         "ema8 crosses below ema21",
     ),
     PatternRule(
         "generic_crosses_above",
-        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_CROSS_UP_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        re.compile(
+            rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_CROSS_UP_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"
+        ),
         _build_generic_compare("crosses_above"),
         "ema8 crosses above ema21",
     ),
     PatternRule(
         "generic_lt",
-        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_STATE_DOWN_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        re.compile(
+            rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_STATE_DOWN_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"
+        ),
         _build_generic_compare("lt"),
         "close below vwap",
     ),
     PatternRule(
         "generic_gt",
-        re.compile(rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_STATE_UP_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"),
+        re.compile(
+            rf"(?P<left>{_OPERAND_TOKEN})\s*(?:{_STATE_UP_WORDS})\s*(?P<right>{_OPERAND_TOKEN})"
+        ),
         _build_generic_compare("gt"),
         "close above vwap",
     ),
     PatternRule(
         "pct_falls",
-        re.compile(r"falls?\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"),
+        re.compile(
+            r"falls?\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"
+        ),
         _build_pct_change("lte", -1.0),
         "NIFTY falls 1%",
     ),
     PatternRule(
         "pct_drops",
-        re.compile(r"drops?\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"),
+        re.compile(
+            r"drops?\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"
+        ),
         _build_pct_change("lte", -1.0),
         "drops 2% in 3 days",
     ),
     PatternRule(
         "pct_rises",
-        re.compile(r"(?:rises?|gains?)\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"),
+        re.compile(
+            r"(?:rises?|gains?)\s*(?P<pct>\d+(?:\.\d+)?)\s*%(?:\s*in\s*(?P<bars>\d+)\s*(?:days?|bars?))?"
+        ),
         _build_pct_change("gte", 1.0),
         "gains 2% in 3 days",
     ),
@@ -1207,8 +1284,12 @@ _STOP_PATTERNS = [
 _ATR_STOP_PATTERN = re.compile(
     r"stop(?:\s*loss)?\s*(?:at|of)?\s*(?P<mult>\d+(?:\.\d+)?)\s*x?\s*(?:times\s*)?atr"
 )
-_TRAILING_PATTERN = re.compile(r"trailing\s*stop\s*(?:of)?\s*(?P<v>\d+(?:\.\d+)?)\s*%|trail(?:ing)?\s*by\s*(?P<v2>\d+(?:\.\d+)?)\s*%")
-_MAX_BARS_PATTERN = re.compile(r"(?:hold|max)\s*(?:for\s*)?(?:a\s*)?(?:max\s*(?:of\s*)?)?(?P<v>\d+)\s*days?")
+_TRAILING_PATTERN = re.compile(
+    r"trailing\s*stop\s*(?:of)?\s*(?P<v>\d+(?:\.\d+)?)\s*%|trail(?:ing)?\s*by\s*(?P<v2>\d+(?:\.\d+)?)\s*%"
+)
+_MAX_BARS_PATTERN = re.compile(
+    r"(?:hold|max)\s*(?:for\s*)?(?:a\s*)?(?:max\s*(?:of\s*)?)?(?P<v>\d+)\s*days?"
+)
 _SQUARE_OFF_PATTERN = re.compile(r"square\s*off\s*at\s*(?P<h>\d{1,2}):(?P<m>\d{2})")
 _EOD_PATTERN = re.compile(r"end of (?:the )?day|intraday only|eod")
 
@@ -1243,9 +1324,7 @@ def _extract_percent_exits(text: str) -> tuple[str, dict]:
     return text, out
 
 
-def _extract_exit_rest(
-    text: str, ind: _Indicators
-) -> tuple[str, dict, list[str]]:
+def _extract_exit_rest(text: str, ind: _Indicators) -> tuple[str, dict, list[str]]:
     out: dict = {}
     notes: list[str] = []
 
@@ -1382,7 +1461,9 @@ def _extract_exit_condition(
 # described, so we refuse by name instead, the same policy as an unsupported
 # indicator gets elsewhere in this file.
 
-_MINUTE_TIMEFRAME = re.compile(r"(?P<n>\d{1,3})\s*-?\s*min(?:ute)?s?\s*(?:candles?|chart|bars?|timeframe)")
+_MINUTE_TIMEFRAME = re.compile(
+    r"(?P<n>\d{1,3})\s*-?\s*min(?:ute)?s?\s*(?:candles?|chart|bars?|timeframe)"
+)
 _HOUR_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*hours?\s*(?:candles?|chart|bars?|timeframe)")
 _DAY_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*days?\s*timeframe")
 _DAILY_TIMEFRAME = re.compile(r"\bdaily\b")
@@ -1404,9 +1485,13 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
         text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
         if n not in _SUPPORTED_MINUTES:
             supported = ", ".join(f"{v}" for v in sorted(_SUPPORTED_MINUTES, key=int))
-            return text, None, (
-                f"{n}-minute candles are not a timeframe this platform runs. "
-                f"Supported minute candles: {supported}."
+            return (
+                text,
+                None,
+                (
+                    f"{n}-minute candles are not a timeframe this platform runs. "
+                    f"Supported minute candles: {supported}."
+                ),
             )
         return text, _SUPPORTED_MINUTES[n], None
 
@@ -1415,9 +1500,13 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
         n = m.group("n")
         text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
         if n != "1":
-            return text, None, (
-                f"{n}-hour candles are not a timeframe this platform runs. "
-                "Only 1-hour candles are available above minute bars."
+            return (
+                text,
+                None,
+                (
+                    f"{n}-hour candles are not a timeframe this platform runs. "
+                    "Only 1-hour candles are available above minute bars."
+                ),
             )
         return text, "1h", None
 
@@ -1426,9 +1515,13 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
         n = m.group("n")
         text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
         if n != "1":
-            return text, None, (
-                f"{n}-day candles are not a timeframe this platform runs; "
-                "only 1-day (daily) bars are."
+            return (
+                text,
+                None,
+                (
+                    f"{n}-day candles are not a timeframe this platform runs; "
+                    "only 1-day (daily) bars are."
+                ),
             )
         return text, "1d", None
 
@@ -1635,7 +1728,6 @@ def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question |
         )
 
     return None
-
 
 
 # A basket strategy holding one position at a time is not what anyone means by
@@ -1861,7 +1953,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if unparsed:
         questions.append(
             Question(
-                text=f"I didn't understand this part: \"{'; '.join(unparsed)}\". Did you mean something specific?",
+                text=f'I didn\'t understand this part: "{"; ".join(unparsed)}". Did you mean something specific?',
                 why="Silently ignoring words you typed could mean the strategy misses a rule you intended.",
                 suggestion=None,
                 field="unparsed",
@@ -1869,7 +1961,9 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
 
     if questions or entry_condition is None:
-        return TranslationResult(spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules")
+        return TranslationResult(
+            spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules"
+        )
 
     exit_kwargs: dict = {}
     if target_pct:
@@ -1917,9 +2011,13 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
                 field="spec",
             )
         )
-        return TranslationResult(spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules")
+        return TranslationResult(
+            spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules"
+        )
 
-    return TranslationResult(spec=spec, questions=[], notes=notes, unparsed=unparsed, source="rules")
+    return TranslationResult(
+        spec=spec, questions=[], notes=notes, unparsed=unparsed, source="rules"
+    )
 
 
 def _float_answer(answers: dict[str, str], field_name: str) -> float | None:

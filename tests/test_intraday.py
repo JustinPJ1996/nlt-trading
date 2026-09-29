@@ -225,9 +225,7 @@ def test_coverage_reports_missing_bars_and_uncached_symbol(source):
 
     full_day = _prior_trading_day(dt.date.today(), 2)
     short_day = _prior_trading_day(dt.date.today(), 1)
-    combined = pd.concat(
-        [_full_day(full_day), _session_bars(short_day, "09:15", "10:45")]
-    )
+    combined = pd.concat([_full_day(full_day), _session_bars(short_day, "09:15", "10:45")])
     combined.to_parquet(source._cache_path("NIFTY", "15m"))
 
     cov = source.coverage("NIFTY", "15m")
@@ -264,9 +262,7 @@ def test_out_of_hours_cached_bar_does_not_survive_load(source, monkeypatch):
     assert not calls, "re-downloaded when the cache already covered the session"
     assert pd.Timestamp(f"{today} 16:00", tz=IST) not in result.index
     assert len(result) == 25
-    assert "16:00" in " ".join(source.last_notes) or any(
-        "outside" in n for n in source.last_notes
-    )
+    assert "16:00" in " ".join(source.last_notes) or any("outside" in n for n in source.last_notes)
 
 
 # ---------------------------------------------------------------------------

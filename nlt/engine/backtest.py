@@ -175,10 +175,10 @@ class _OpenPosition:
     entry_time: pd.Timestamp
     entry_price: float
     quantity: int
-    stop_level: float | None       # fixed stop (from stop_pct / stop_atr_mult), set once at entry
+    stop_level: float | None  # fixed stop (from stop_pct / stop_atr_mult), set once at entry
     target_level: float | None
     trailing_pct: float | None
-    trail_best: float              # best price seen since entry; only moves favourably
+    trail_best: float  # best price seen since entry; only moves favourably
     bars_held: int = 0
     pending_condition_exit: bool = False
 
@@ -327,8 +327,15 @@ def run_backtest(
                 committed = sum(p.entry_price * p.quantity for p in open_positions)
                 capital_spare = capital_total - committed
                 pos, used_fallback, capped = _open_position(
-                    spec, features, i, ts, bar, slippage_pct, lot_size,
-                    capital_total, capital_spare,
+                    spec,
+                    features,
+                    i,
+                    ts,
+                    bar,
+                    slippage_pct,
+                    lot_size,
+                    capital_total,
+                    capital_spare,
                 )
                 if pos is not None:
                     open_positions.append(pos)
@@ -819,8 +826,10 @@ def _check_exit(
     """
     long = pos.direction == "long"
 
-    if is_intraday_tf and spec.schedule.intraday and (
-        ts.time() >= spec.schedule.square_off or is_last_bar_of_session
+    if (
+        is_intraday_tf
+        and spec.schedule.intraday
+        and (ts.time() >= spec.schedule.square_off or is_last_bar_of_session)
     ):
         # `is_last_bar_of_session` is the fallback for a short/early-close day
         # that ends before the clock ever reaches `square_off` (a muhurat
@@ -853,9 +862,7 @@ def _check_exit(
             # lie a backtester can tell: it makes every stop-loss strategy look
             # like its worst case is bounded by the stop, when overnight gaps are
             # exactly when large losses happen.
-            gapped_through = (
-                bar.open < pos.stop_level if long else bar.open > pos.stop_level
-            )
+            gapped_through = bar.open < pos.stop_level if long else bar.open > pos.stop_level
             fill = bar.open if gapped_through else pos.stop_level
             return "stop", fill, target_hit
 
@@ -880,9 +887,7 @@ def _check_exit(
         # Mirror of the stop case: a gap past the target fills at the open, which
         # here is in our favour. Modelling only the unfavourable gap would bias
         # results the other way.
-        gapped_past = (
-            bar.open > pos.target_level if long else bar.open < pos.target_level
-        )
+        gapped_past = bar.open > pos.target_level if long else bar.open < pos.target_level
         return "target", (bar.open if gapped_past else pos.target_level), False
 
     if pos.pending_condition_exit:
@@ -903,8 +908,13 @@ def _describe(condition: Condition) -> str:
         left = _describe_operand(condition.left)
         right = _describe_operand(condition.right)
         verbs = {
-            "lt": "<", "lte": "<=", "gt": ">", "gte": ">=", "eq": "==",
-            "crosses_above": "crossed above", "crosses_below": "crossed below",
+            "lt": "<",
+            "lte": "<=",
+            "gt": ">",
+            "gte": ">=",
+            "eq": "==",
+            "crosses_above": "crossed above",
+            "crosses_below": "crossed below",
         }
         return f"{left} {verbs[condition.op]} {right}"
     if isinstance(condition, IsTrue):

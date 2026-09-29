@@ -72,9 +72,7 @@ class IntradaySource:
         max_age_minutes: int = 15,
     ) -> pd.DataFrame:
         if interval not in SUPPORTED:
-            raise ValueError(
-                f"IntradaySource supports {sorted(SUPPORTED)}, not {interval!r}."
-            )
+            raise ValueError(f"IntradaySource supports {sorted(SUPPORTED)}, not {interval!r}.")
 
         max_days = SUPPORTED[interval]
         if start is not None:
@@ -201,9 +199,12 @@ class IntradaySource:
             return True
         if last_session == latest_closed:
             expected = bars_per_session(self.session, interval)
-            bar_count = int((pd.Series(df.index).map(
-                lambda ts: session_date(ts, self.session)
-            ) == last_session).sum())
+            bar_count = int(
+                (
+                    pd.Series(df.index).map(lambda ts: session_date(ts, self.session))
+                    == last_session
+                ).sum()
+            )
             return bar_count < expected
         return False
 

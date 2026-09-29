@@ -47,9 +47,7 @@ def get_store() -> Store:
 
 
 @st.cache_data(ttl=3600, show_spinner="Fetching price history...")
-def cached_load_bars(
-    symbol: str, start: dt.date | None, end: dt.date | None
-) -> pd.DataFrame:
+def cached_load_bars(symbol: str, start: dt.date | None, end: dt.date | None) -> pd.DataFrame:
     return logic.load_bars(symbol, start, end)
 
 
@@ -108,7 +106,9 @@ def _render_readback(spec) -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(f'<div class="nlt-readback">{logic.describe_spec(spec)}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="nlt-readback">{logic.describe_spec(spec)}</div>', unsafe_allow_html=True
+    )
 
 
 def _render_questions(questions: list[Question]) -> None:
@@ -117,7 +117,9 @@ def _render_questions(questions: list[Question]) -> None:
     for q in questions:
         if q.field == "unparsed":
             continue
-        values[q.field] = st.text_input(q.text, value=q.suggestion or "", help=q.why, key=f"q_{q.field}")
+        values[q.field] = st.text_input(
+            q.text, value=q.suggestion or "", help=q.why, key=f"q_{q.field}"
+        )
     if st.button("Use these answers", type="primary"):
         st.session_state["answers"] = logic.answers_from_questions(questions, values)
         st.session_state["translation"] = logic.translate_text(
@@ -175,7 +177,9 @@ def page_new_strategy() -> None:
 def _render_backtest_panel(spec) -> None:
     st.markdown("---")
     st.markdown("### Run a backtest")
-    st.caption("This checks how the strategy would have done on real past prices. It is not a guarantee.")
+    st.caption(
+        "This checks how the strategy would have done on real past prices. It is not a guarantee."
+    )
 
     c1, c2 = st.columns(2)
     with c1:
@@ -202,7 +206,7 @@ def _render_backtest_panel(spec) -> None:
         )
 
     if st.button("Run backtest", type="primary"):
-        start, end = (date_range if isinstance(date_range, tuple) else (None, None))
+        start, end = date_range if isinstance(date_range, tuple) else (None, None)
         # No pre-flight load here. `run_pipeline` resolves the symbol itself --
         # an index, a ticker or a whole universe -- and reports failures as
         # `result.error`. Loading separately first meant asking Yahoo for a
@@ -249,7 +253,7 @@ def page_results() -> None:
     st.markdown(
         f"""
         <div style="border-left: 6px solid {verdict_color}; padding: 0.75rem 1rem;
-                    background: rgba({'12,163,12' if verdict.passed else '208,59,59'}, 0.08);
+                    background: rgba({"12,163,12" if verdict.passed else "208,59,59"}, 0.08);
                     border-radius: 4px; margin-bottom: 1rem;">
             <span style="font-size: 1.4rem; font-weight: 600; color: {verdict_color};">
                 {verdict.summary}
@@ -282,8 +286,16 @@ def page_results() -> None:
     st.markdown("### The numbers, side by side")
     m = bt.metrics
     rows = [
-        ("Total return", logic.format_signed_pct(m.get("total_return_pct")), logic.format_signed_pct(bench.total_return_pct)),
-        ("Biggest drop from a peak (max drawdown)", logic.format_pct(m.get("max_drawdown_pct")), logic.format_pct(bench.max_drawdown_pct)),
+        (
+            "Total return",
+            logic.format_signed_pct(m.get("total_return_pct")),
+            logic.format_signed_pct(bench.total_return_pct),
+        ),
+        (
+            "Biggest drop from a peak (max drawdown)",
+            logic.format_pct(m.get("max_drawdown_pct")),
+            logic.format_pct(bench.max_drawdown_pct),
+        ),
         ("Win rate", logic.format_pct(m.get("win_rate_pct")), "n/a"),
         ("Number of trades", str(int(m.get("total_trades") or 0)), "1 (buy and hold)"),
         ("Time spent in the market", logic.format_pct(comp.time_in_market_pct), "100.0%"),
@@ -392,7 +404,9 @@ def page_safety() -> None:
     store = get_store()
 
     st.markdown("### Kill switch")
-    engaged, err = logic.safe_call(store.kill_switch_engaged, on_error="Could not read kill switch status")
+    engaged, err = logic.safe_call(
+        store.kill_switch_engaged, on_error="Could not read kill switch status"
+    )
     if err:
         st.error(err)
     elif engaged:
@@ -425,12 +439,16 @@ def page_safety() -> None:
         if err or days is None:
             st.info(f"{symbol}: no data cached yet.")
         elif days > 3:
-            st.error(f"{symbol}: price data is {days} trading day(s) old. Refresh before trusting a new backtest.")
+            st.error(
+                f"{symbol}: price data is {days} trading day(s) old. Refresh before trusting a new backtest."
+            )
         else:
             st.success(f"{symbol}: price data is up to date ({days} trading day(s) old).")
 
     st.markdown("### Recent activity")
-    trail, err = logic.safe_call(lambda: store.audit_trail(limit=50), on_error="Could not load the audit log")
+    trail, err = logic.safe_call(
+        lambda: store.audit_trail(limit=50), on_error="Could not load the audit log"
+    )
     if err:
         st.error(err)
     elif not trail:
@@ -455,9 +473,7 @@ def main() -> None:
     _apply_pending_navigation()
 
     st.sidebar.title("Trading Strategy Builder")
-    page = st.sidebar.radio(
-        "Go to", [PAGE_NEW, PAGE_RESULTS, PAGE_MINE, PAGE_SAFETY], key="page"
-    )
+    page = st.sidebar.radio("Go to", [PAGE_NEW, PAGE_RESULTS, PAGE_MINE, PAGE_SAFETY], key="page")
 
     pages = {
         PAGE_NEW: page_new_strategy,

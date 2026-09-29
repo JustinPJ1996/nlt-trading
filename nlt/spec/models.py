@@ -29,6 +29,7 @@ class Base(BaseModel):
 
 # --------------------------------------------------------------- value refs
 
+
 class Ref(Base):
     """A reference to a computed value on some bar.
 
@@ -59,6 +60,7 @@ Operand = Annotated[Ref | Const, Field(discriminator="kind")]
 
 
 # -------------------------------------------------------------- conditions
+
 
 class Compare(Base):
     """A comparison between two values on the same bar."""
@@ -125,6 +127,7 @@ Not.model_rebuild()
 
 # -------------------------------------------------------------- indicators
 
+
 class IndicatorSpec(Base):
     """One indicator the strategy needs, with the id its conditions refer to."""
 
@@ -136,9 +139,7 @@ class IndicatorSpec(Base):
     @classmethod
     def _known_type(cls, v: str) -> str:
         if v not in REGISTRY:
-            raise ValueError(
-                f"unknown indicator {v!r}; available: {', '.join(sorted(REGISTRY))}"
-            )
+            raise ValueError(f"unknown indicator {v!r}; available: {', '.join(sorted(REGISTRY))}")
         return v
 
     @model_validator(mode="after")
@@ -166,6 +167,7 @@ class IndicatorSpec(Base):
 
 
 # ------------------------------------------------------------------- exits
+
 
 class ExitRules(Base):
     """How a position is closed. At least one exit must exist.
@@ -211,6 +213,7 @@ class ExitRules(Base):
 
 # ------------------------------------------------------------------ sizing
 
+
 class Sizing(Base):
     """How large a position to take.
 
@@ -233,6 +236,7 @@ class Sizing(Base):
 
 
 # -------------------------------------------------------------------- risk
+
 
 class RiskLimits(Base):
     """Per-strategy limits. The risk manager enforces account-wide ones on top."""
@@ -264,6 +268,7 @@ class RiskLimits(Base):
 
 
 # ---------------------------------------------------------------- schedule
+
 
 class Schedule(Base):
     """When the strategy is allowed to act.
@@ -370,6 +375,7 @@ class Instrument(Base):
 
 # --------------------------------------------------------------- the spec
 
+
 class StrategySpec(Base):
     """A complete, runnable strategy."""
 
@@ -418,9 +424,7 @@ class StrategySpec(Base):
     def _volume_indicators_need_volume(self):
         """Index feeds often report zero volume, which makes these silently useless."""
         if self.instrument.symbol in ("NIFTY", "BANKNIFTY"):
-            offenders = [
-                i.id for i in self.indicators if get_indicator(i.type).needs_volume
-            ]
+            offenders = [i.id for i in self.indicators if get_indicator(i.type).needs_volume]
             if offenders:
                 raise ValueError(
                     f"volume-based indicators {offenders} cannot be used on index data, "
@@ -479,8 +483,7 @@ def _check_ref(ref: Ref, by_id: dict[str, IndicatorSpec], where: str) -> None:
             )
         if ref.output not in d.outputs:
             raise ValueError(
-                f"{where}: {spec.type} has no output {ref.output!r}; "
-                f"available: {list(d.outputs)}"
+                f"{where}: {spec.type} has no output {ref.output!r}; available: {list(d.outputs)}"
             )
     elif ref.output is not None and ref.output not in d.outputs:
         raise ValueError(f"{where}: {spec.type} has no output {ref.output!r}")

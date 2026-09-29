@@ -73,8 +73,9 @@ def bars_per_session(session: Session, timeframe: str) -> int:
     multiple of the bar size still owns one final, shorter bar.
     """
     if timeframe not in _MINUTES_PER_BAR:
-        raise ValueError(f"unknown intraday timeframe {timeframe!r}, expected one of "
-                          f"{sorted(_MINUTES_PER_BAR)}")
+        raise ValueError(
+            f"unknown intraday timeframe {timeframe!r}, expected one of {sorted(_MINUTES_PER_BAR)}"
+        )
     minutes = _session_minutes(session)
     bar_len = _MINUTES_PER_BAR[timeframe]
     return -(-minutes // bar_len)  # ceil division
@@ -188,9 +189,7 @@ def filter_to_session(bars: pd.DataFrame, session: Session) -> tuple[pd.DataFram
     if bars.empty:
         return bars, notes
 
-    mask = pd.Series(
-        [is_session_time(session, ts) for ts in bars.index], index=bars.index
-    )
+    mask = pd.Series([is_session_time(session, ts) for ts in bars.index], index=bars.index)
     dropped = bars.index[~mask]
     if len(dropped) > 0:
         sample = ", ".join(str(t) for t in dropped[:5])

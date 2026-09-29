@@ -18,6 +18,7 @@ from nlt.indicators.smoothing import ema, rma, sma, stdev, true_range, wma
 
 # --------------------------------------------------------------- primitives
 
+
 def test_sma_known_values():
     s = pd.Series([1.0, 2, 3, 4, 5, 6])
     assert sma(s, 3).tolist()[2:] == [2.0, 3.0, 4.0, 5.0]
@@ -67,6 +68,7 @@ def test_true_range_uses_previous_close(synthetic_bars):
 
 # --------------------------------------------------------------------- RSI
 
+
 def _wilder_rsi_longhand(close: pd.Series, length: int) -> pd.Series:
     """Wilder's RSI written out step by step, independent of our implementation."""
     values = close.to_numpy(dtype="float64")
@@ -92,9 +94,7 @@ def _wilder_rsi_longhand(close: pd.Series, length: int) -> pd.Series:
 def test_rsi_matches_wilder_longhand(synthetic_bars):
     got = momentum.rsi(synthetic_bars.close, 14)
     want = _wilder_rsi_longhand(synthetic_bars.close, 14)
-    pd.testing.assert_series_equal(
-        got.dropna(), want.dropna(), check_names=False, rtol=1e-9
-    )
+    pd.testing.assert_series_equal(got.dropna(), want.dropna(), check_names=False, rtol=1e-9)
 
 
 def test_rsi_is_not_ema_smoothed(synthetic_bars):
@@ -125,6 +125,7 @@ def test_rsi_flat_series_is_fifty():
 
 # ------------------------------------------------------------------ others
 
+
 def test_atr_is_rma_of_true_range(synthetic_bars):
     b = synthetic_bars
     pd.testing.assert_series_equal(
@@ -154,9 +155,7 @@ def test_bollinger_bands_and_percent_b(synthetic_bars):
 def test_macd_components(synthetic_bars):
     m = momentum.macd(synthetic_bars.close, 12, 26, 9)
     close = synthetic_bars.close
-    pd.testing.assert_series_equal(
-        m.macd, ema(close, 12) - ema(close, 26), check_names=False
-    )
+    pd.testing.assert_series_equal(m.macd, ema(close, 12) - ema(close, 26), check_names=False)
     pd.testing.assert_series_equal(m.histogram, m.macd - m.signal, check_names=False)
 
 
@@ -228,8 +227,6 @@ def test_prior_day_levels_come_from_a_completed_day(nifty_bars):
 
 
 def test_cpr_tc_is_above_bc(nifty_bars):
-    c = levels.central_pivot_range(
-        nifty_bars.high, nifty_bars.low, nifty_bars.close
-    ).dropna()
+    c = levels.central_pivot_range(nifty_bars.high, nifty_bars.low, nifty_bars.close).dropna()
     assert (c.tc >= c.bc).all()
     assert (c.width_pct >= 0).all()

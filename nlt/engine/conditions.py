@@ -37,9 +37,13 @@ def evaluate(condition: Condition, features: pd.DataFrame) -> pd.Series:
     elif isinstance(condition, PercentChange):
         result = _evaluate_percent_change(condition, features)
     elif isinstance(condition, All):
-        result = pd.concat([evaluate(c, features) for c in condition.conditions], axis=1).all(axis=1)
+        result = pd.concat([evaluate(c, features) for c in condition.conditions], axis=1).all(
+            axis=1
+        )
     elif isinstance(condition, Any_):
-        result = pd.concat([evaluate(c, features) for c in condition.conditions], axis=1).any(axis=1)
+        result = pd.concat([evaluate(c, features) for c in condition.conditions], axis=1).any(
+            axis=1
+        )
     elif isinstance(condition, Not):
         result = ~evaluate(condition.condition, features)
     else:
@@ -91,7 +95,9 @@ def _evaluate_compare(condition: Compare, features: pd.DataFrame) -> pd.Series:
     if op == "eq":
         # Exact float equality on indicator values is essentially never true;
         # np.isclose gives the "same price" the user meant.
-        result = np.isclose(left.to_numpy(dtype="float64"), right.to_numpy(dtype="float64"), equal_nan=False)
+        result = np.isclose(
+            left.to_numpy(dtype="float64"), right.to_numpy(dtype="float64"), equal_nan=False
+        )
         return pd.Series(result, index=features.index)
     raise ValueError(f"unknown comparison op {op!r}")
 

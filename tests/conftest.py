@@ -29,12 +29,14 @@ def synthetic_bars() -> pd.DataFrame:
     rng = np.random.default_rng(20260922)
     n = 600
 
-    drift = np.concatenate([
-        np.linspace(0.0, 0.6, 200),      # uptrend
-        np.full(200, 0.6),               # sideways
-        np.linspace(0.6, -0.9, 100),     # decline
-        np.linspace(-0.9, 0.3, 100),     # recovery
-    ])
+    drift = np.concatenate(
+        [
+            np.linspace(0.0, 0.6, 200),  # uptrend
+            np.full(200, 0.6),  # sideways
+            np.linspace(0.6, -0.9, 100),  # decline
+            np.linspace(-0.9, 0.3, 100),  # recovery
+        ]
+    )
     noise = rng.normal(0, 0.8, n)
     close = 20000 + np.cumsum(drift + noise) * 12
 

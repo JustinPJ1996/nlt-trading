@@ -39,9 +39,7 @@ PASSWORD_FILE = Path.home() / ".nlt-dashboard-password"
 _STATE_KEY = "_auth_ok"
 
 
-def configured_password(
-    env: dict[str, str] | None = None, path: Path | None = None
-) -> str | None:
+def configured_password(env: dict[str, str] | None = None, path: Path | None = None) -> str | None:
     """The expected password, or None if none is configured.
 
     The environment wins over the file so a one-off run can override without

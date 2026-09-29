@@ -52,8 +52,7 @@ def _one_shot_bars(base: float, n: int = 2, start: str = "2024-01-01") -> pd.Dat
     highs = [o + 3 for o in opens]
     lows = [c - 3 for c in closes]
     return pd.DataFrame(
-        {"open": opens, "high": highs, "low": lows, "close": closes,
-         "volume": [1_000_000.0] * n},
+        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": [1_000_000.0] * n},
         index=idx,
     )
 
@@ -91,8 +90,9 @@ def test_shared_capital_caps_concurrent_exposure_and_counts_the_shortfall():
 
     spec = _spec()
     # Enough for S1 (100) + S2 (200) = 300, not enough for a third.
-    res = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=350.0,
-                               slippage_pct=0.0)
+    res = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=350.0, slippage_pct=0.0
+    )
 
     filled_symbols = {t.symbol for t in res.trades}
     assert filled_symbols == {"S1", "S2"}
@@ -109,8 +109,9 @@ def test_portfolio_concurrency_never_exceeds_the_limit():
     bars_by_symbol = {f"S{i + 1}": _one_shot_bars(b) for i, b in enumerate(bases)}
 
     spec = _spec(risk=RiskLimits(max_lots=100, max_concurrent_positions=2))
-    res = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                               slippage_pct=0.0)
+    res = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
 
     assert _max_concurrent(res.trades) <= 2
     filled_symbols = {t.symbol for t in res.trades}
@@ -126,10 +127,12 @@ def test_contention_is_deterministic_across_runs():
     bars_by_symbol = {f"S{i + 1}": _one_shot_bars(b) for i, b in enumerate(bases)}
 
     spec = _spec(risk=RiskLimits(max_lots=100, max_concurrent_positions=2))
-    res1 = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                                slippage_pct=0.0)
-    res2 = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                                slippage_pct=0.0)
+    res1 = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
+    res2 = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
 
     assert res1.trades == res2.trades
     assert len(res1.trades) > 0
@@ -157,8 +160,13 @@ def test_ranked_selection_orders_by_signal_bar_move_then_symbol_name():
         highs = [c + 1 for c in closes]
         lows = [c - 1 for c in closes]
         return pd.DataFrame(
-            {"open": opens, "high": highs, "low": lows, "close": closes,
-             "volume": [1_000_000.0] * len(closes)},
+            {
+                "open": opens,
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": [1_000_000.0] * len(closes),
+            },
             index=idx,
         )
 
@@ -172,8 +180,9 @@ def test_ranked_selection_orders_by_signal_bar_move_then_symbol_name():
         instrument=Instrument(symbol="NIFTY", selection="ranked"),
         risk=RiskLimits(max_lots=100, max_concurrent_positions=2),
     )
-    res = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                               slippage_pct=0.0)
+    res = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
 
     filled_symbols = {t.symbol for t in res.trades}
     assert filled_symbols == {"BBB", "AAA"}
@@ -197,8 +206,13 @@ def test_alignment_no_forward_fill_and_no_cross_contamination():
         highs = [c + 1 for c in closes]
         lows = [c - 1 for c in closes]
         return pd.DataFrame(
-            {"open": opens, "high": highs, "low": lows, "close": closes,
-             "volume": [1_000_000.0] * n},
+            {
+                "open": opens,
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": [1_000_000.0] * n,
+            },
             index=idx,
         )
 
@@ -209,8 +223,9 @@ def test_alignment_no_forward_fill_and_no_cross_contamination():
     }
 
     spec = _spec(exit=ExitRules(max_bars_held=1))
-    res = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                               slippage_pct=0.0)
+    res = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
 
     # No forward-fill: BBB's missing day never appears in its own bars, and
     # the union clock does not manufacture a row for it there either.
@@ -239,8 +254,9 @@ def test_per_symbol_pnl_sums_to_portfolio_total():
     bars_by_symbol = {f"S{i + 1}": _one_shot_bars(b, n=3) for i, b in enumerate(bases)}
 
     spec = _spec()
-    res = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                               slippage_pct=0.0)
+    res = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
 
     per_symbol_total = sum(v["net_pnl"] for v in res.per_symbol.values())
     trades_total = sum(t.net_pnl for t in res.trades)
@@ -261,14 +277,20 @@ def test_matches_single_symbol_run_backtest_exactly():
     """
     idx = pd.bdate_range("2024-01-01", periods=40, tz="Asia/Kolkata")
     import numpy as np
+
     rng = np.random.default_rng(7)
     closes = 100 + np.cumsum(rng.normal(0, 1.0, len(idx)))
     opens = closes - rng.normal(0, 0.3, len(idx))
     highs = np.maximum(opens, closes) + np.abs(rng.normal(0, 1.0, len(idx)))
     lows = np.minimum(opens, closes) - np.abs(rng.normal(0, 1.0, len(idx)))
     bars = pd.DataFrame(
-        {"open": opens, "high": highs, "low": lows, "close": closes,
-         "volume": [1_000_000.0] * len(idx)},
+        {
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": [1_000_000.0] * len(idx),
+        },
         index=idx,
     )
 
@@ -301,7 +323,9 @@ def test_a_bad_symbol_is_skipped_not_fatal():
     spec = _spec()
     res = run_basket_backtest(
         bars_by_symbol={"GOOD": good, "BAD": bad, "EMPTY": pd.DataFrame()},
-        spec=spec, capital=1_000_000.0, slippage_pct=0.0,
+        spec=spec,
+        capital=1_000_000.0,
+        slippage_pct=0.0,
     )
 
     assert "BAD" in res.skipped
@@ -323,8 +347,9 @@ def test_survivorship_warning_fires_for_a_universe_started_long_before_snapshot(
         "TCS": _one_shot_bars(200.0, n=3, start="2005-01-03"),
     }
     spec = _spec(instrument=Instrument(symbol="NIFTY 50"))
-    res = run_basket_backtest(bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-                               slippage_pct=0.0)
+    res = run_basket_backtest(
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+    )
 
     assert any("snapshot" in w.lower() for w in res.warnings)
 
@@ -341,8 +366,11 @@ def test_charges_applied_per_trade_and_sum_matches_portfolio():
 
     spec = _spec()
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0,
-        charge_fn=charge_fn, slippage_pct=0.0,
+        bars_by_symbol=bars_by_symbol,
+        spec=spec,
+        capital=1_000_000.0,
+        charge_fn=charge_fn,
+        slippage_pct=0.0,
     )
 
     assert res.trades, "test is vacuous with zero trades"
@@ -371,9 +399,7 @@ def test_real_nifty50_rsi_basket_smoke():
 
     universe = get_universe("NIFTY 50")
     source = StockSource()
-    bars_by_symbol = source.bars_many(
-        list(universe.symbols), start=dt.date(2020, 1, 1)
-    )
+    bars_by_symbol = source.bars_many(list(universe.symbols), start=dt.date(2020, 1, 1))
     assert bars_by_symbol, "no NIFTY 50 data could be loaded; check network/cache"
 
     spec = StrategySpec(
@@ -435,8 +461,13 @@ def _staggered_bars(base: float, signal_on: int, n: int = 8) -> pd.DataFrame:
     closes[signal_on] = base - 1.0
     opens = [base] * n
     return pd.DataFrame(
-        {"open": opens, "high": [c + 0.5 for c in opens], "low": [c - 1.5 for c in closes],
-         "close": closes, "volume": [1_000_000.0] * n},
+        {
+            "open": opens,
+            "high": [c + 0.5 for c in opens],
+            "low": [c - 1.5 for c in closes],
+            "close": closes,
+            "volume": [1_000_000.0] * n,
+        },
         index=idx,
     )
 
@@ -460,9 +491,7 @@ def test_capital_committed_on_an_earlier_bar_still_blocks_a_later_entry():
         risk=RiskLimits(max_lots=100, max_concurrent_positions=5),
     )
 
-    result = run_basket_backtest(
-        spec, bars_by_symbol, capital=120.0, slippage_pct=0.0
-    )
+    result = run_basket_backtest(spec, bars_by_symbol, capital=120.0, slippage_pct=0.0)
 
     peak = _peak_exposure(result.trades)
     assert peak <= 120.0 * 1.001, (

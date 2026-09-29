@@ -21,7 +21,9 @@ FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "strategies.json").r
 
 def _spec_of(text: str, **kw) -> StrategySpec:
     result = parse(text, **kw)
-    assert result.spec is not None, f"expected a spec for {text!r}, got questions: {result.questions}"
+    assert result.spec is not None, (
+        f"expected a spec for {text!r}, got questions: {result.questions}"
+    )
     return result.spec
 
 
@@ -258,9 +260,7 @@ def test_moving_average_crossover() -> None:
 
 
 def test_moving_average_crossover_worded() -> None:
-    spec = _spec_of(
-        "buy nifty when 20 day moving average crosses the 50 day, stop 1%, target 2%"
-    )
+    spec = _spec_of("buy nifty when 20 day moving average crosses the 50 day, stop 1%, target 2%")
     ids = {i.id for i in spec.indicators}
     assert {"sma20", "sma50"} <= ids
 
@@ -499,9 +499,7 @@ def test_and_combination() -> None:
 
 
 def test_or_combination() -> None:
-    spec = _spec_of(
-        "buy nifty when rsi cracks 30 or macd turns positive, stop 1%, target 2%"
-    )
+    spec = _spec_of("buy nifty when rsi cracks 30 or macd turns positive, stop 1%, target 2%")
     assert spec.entry.kind == "any"
     assert len(spec.entry.conditions) == 2
 
@@ -610,7 +608,9 @@ def test_fixtures_validate(case: dict) -> None:
         StrategySpec.model_validate(result.spec.model_dump())
     else:
         assert result.spec is None, f"expected a refusal/questions: {case['note']}"
-        assert result.questions, f"a refusal with no questions leaves the user with nothing: {case['note']}"
+        assert result.questions, (
+            f"a refusal with no questions leaves the user with nothing: {case['note']}"
+        )
 
 
 def test_every_fixture_spec_passes_validation() -> None:
@@ -632,6 +632,7 @@ def test_every_fixture_spec_passes_validation() -> None:
 # Nothing else catches this: both rules produce a valid spec, so validation,
 # the readback and every existing test stayed green while the meaning was wrong.
 # ---------------------------------------------------------------------------
+
 
 def _entry_op(text: str):
     result = parse(f"buy nifty when {text}, target 2%, stop loss 1%")
@@ -662,7 +663,9 @@ def test_no_pattern_is_shadowed_by_an_earlier_one():
     for i, rule in enumerate(CONDITION_PATTERNS):
         for earlier in CONDITION_PATTERNS[:i]:
             if earlier.regex.search(rule.example.lower()):
-                shadowed.append(f"{rule.name!r} (example {rule.example!r}) shadowed by {earlier.name!r}")
+                shadowed.append(
+                    f"{rule.name!r} (example {rule.example!r}) shadowed by {earlier.name!r}"
+                )
                 break
     assert not shadowed, "unreachable pattern rules:\n  " + "\n  ".join(shadowed)
 
@@ -670,11 +673,16 @@ def test_no_pattern_is_shadowed_by_an_earlier_one():
 @pytest.mark.parametrize(
     "verb, expected",
     [
-        ("goes under", "crosses_below"), ("dips below", "crosses_below"),
-        ("slips below", "crosses_below"), ("drops under", "crosses_below"),
-        ("crosses under", "crosses_below"), ("falls under", "crosses_below"),
-        ("goes over", "crosses_above"), ("crosses over", "crosses_above"),
-        ("moves above", "crosses_above"), ("pops above", "crosses_above"),
+        ("goes under", "crosses_below"),
+        ("dips below", "crosses_below"),
+        ("slips below", "crosses_below"),
+        ("drops under", "crosses_below"),
+        ("crosses under", "crosses_below"),
+        ("falls under", "crosses_below"),
+        ("goes over", "crosses_above"),
+        ("crosses over", "crosses_above"),
+        ("moves above", "crosses_above"),
+        ("pops above", "crosses_above"),
     ],
 )
 def test_widened_crossing_verbs(verb, expected):
@@ -683,7 +691,7 @@ def test_widened_crossing_verbs(verb, expected):
 
 @pytest.mark.parametrize("subject", ["price", "the price", "close", "nifty", "it", ""])
 def test_leading_subject_does_not_break_parsing(subject):
-    """"price closes above ..." must not leave "price" as an unparsed fragment."""
+    """ "price closes above ..." must not leave "price" as an unparsed fragment."""
     result = parse(f"buy nifty when {subject} closes above yesterday's high, target 2%, stop 1%")
     assert result.spec is not None, result.unparsed
     assert not result.unparsed
@@ -745,9 +753,7 @@ def test_unsupported_timeframes_are_refused_not_rounded(phrase: str) -> None:
 
 
 def test_use_5_minute_candles_on_a_stock_strategy() -> None:
-    spec = _spec_of(
-        "buy itc when rsi drops below 30, stop 1%, target 2%. use 5-minute candles."
-    )
+    spec = _spec_of("buy itc when rsi drops below 30, stop 1%, target 2%. use 5-minute candles.")
     assert spec.instrument.symbol == "ITC"
     assert spec.instrument.timeframe == "5m"
 
@@ -941,6 +947,7 @@ def test_value_first_and_at_stop_phrasings(phrase: str, expected: float) -> None
 
 # ------------------------------------------------------------- inline-period
 
+
 @pytest.mark.parametrize(
     "phrase,ind_id,length",
     [
@@ -1002,7 +1009,9 @@ def test_indicator_vs_indicator_state(phrase: str, left_id: str, right_id: str) 
 
 
 def test_spelled_out_percent_stop_and_target() -> None:
-    spec = _spec_of("buy reliance when rsi cracks 30 with 5 percent stop loss and 10 percent target")
+    spec = _spec_of(
+        "buy reliance when rsi cracks 30 with 5 percent stop loss and 10 percent target"
+    )
     assert spec.exit.stop_pct == 5.0
     assert spec.exit.target_pct == 10.0
 

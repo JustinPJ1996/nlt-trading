@@ -85,7 +85,5 @@ def test_staleness_is_reportable(source):
     """Callers must be able to ask how old the data is before trusting it."""
     assert source.staleness_days("NIFTY") is None
 
-    _frame(dt.date.today() - dt.timedelta(days=14)).to_parquet(
-        source._cache_path("NIFTY", "1d")
-    )
+    _frame(dt.date.today() - dt.timedelta(days=14)).to_parquet(source._cache_path("NIFTY", "1d"))
     assert source.staleness_days("NIFTY") >= 9

@@ -69,14 +69,14 @@ def render(result: BacktestResult, comparison: Comparison, verdict: Verdict) -> 
     lines.append(f"Win rate:                {m['win_rate_pct']:.1f}%")
     lines.append(f"Winning / losing trades: {m['winning_trades']} / {m['losing_trades']}")
     lines.append(f"Average win / loss:      {_rupees(m['avg_win'])} / {_rupees(m['avg_loss'])}")
-    lines.append(f"Best / worst trade:      {_rupees(m['best_trade'])} / {_rupees(m['worst_trade'])}")
+    lines.append(
+        f"Best / worst trade:      {_rupees(m['best_trade'])} / {_rupees(m['worst_trade'])}"
+    )
     lines.append(f"Max consecutive losses:  {m['max_consecutive_losses']}")
     lines.append(f"Total charges paid:      {_rupees(m['total_charges'])}")
     lines.append(f"CAGR:                    {m['cagr_pct']:.1f}%")
     lines.append(f"Max drawdown:            {m['max_drawdown_pct']:.1f}%")
-    lines.append(
-        f"Max drawdown length:     {m['max_drawdown_duration_days']} day(s)"
-    )
+    lines.append(f"Max drawdown length:     {m['max_drawdown_duration_days']} day(s)")
     lines.append(f"Sharpe ratio:            {_fmt_ratio(m['sharpe'])}")
     lines.append(f"Sortino ratio:           {_fmt_ratio(m['sortino'])}")
     lines.append(f"Profit factor:           {_fmt_ratio(m['profit_factor'])}")

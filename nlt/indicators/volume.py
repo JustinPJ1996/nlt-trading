@@ -19,9 +19,7 @@ def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     return (direction * volume).cumsum()
 
 
-def _money_flow_multiplier(
-    high: pd.Series, low: pd.Series, close: pd.Series
-) -> pd.Series:
+def _money_flow_multiplier(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
     span = (high - low).replace(0.0, np.nan)
     return (((close - low) - (high - close)) / span).fillna(0.0)
 
@@ -59,9 +57,7 @@ def chaikin_oscillator(
     return ema(ad, fast) - ema(ad, slow)
 
 
-def vwap(
-    high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series
-) -> pd.Series:
+def vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
     """Session-anchored VWAP -- resets each trading day.
 
     On daily bars every session is one bar, so this collapses to the typical

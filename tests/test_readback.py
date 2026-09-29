@@ -68,9 +68,7 @@ def test_is_true_renders() -> None:
 
 
 def test_percent_change_renders() -> None:
-    spec = _minimal_spec(
-        PercentChange(ref=Ref(name="close"), lookback=3, op="lte", value=-1.0)
-    )
+    spec = _minimal_spec(PercentChange(ref=Ref(name="close"), lookback=3, op="lte", value=-1.0))
     text = describe(spec)
     assert "falls more than 1%" in text
     assert "3 days" in text or "3 bars" in text
@@ -102,7 +100,9 @@ def test_any_renders() -> None:
 
 
 def test_not_renders() -> None:
-    spec = _minimal_spec(Not(condition=Compare(op="gt", left=Ref(name="close"), right=Const(value=100))))
+    spec = _minimal_spec(
+        Not(condition=Compare(op="gt", left=Ref(name="close"), right=Const(value=100)))
+    )
     assert "NOT" in describe(spec)
 
 
@@ -480,7 +480,14 @@ ROUND_TRIP_NEW_GAP_CASES = [
     (
         "Instantly buy NIFTY 100 stocks when ema8 crosses above ema21 and adx14 > 20. "
         "Sell at 3% profit. Stop loss 1.5%.",
-        ["NIFTY 100", "8-day Exponential Moving Average", "crosses above", "ADX(14)", "+3%", "-1.5%"],
+        [
+            "NIFTY 100",
+            "8-day Exponential Moving Average",
+            "crosses above",
+            "ADX(14)",
+            "+3%",
+            "-1.5%",
+        ],
     ),
 ]
 
@@ -514,8 +521,7 @@ def test_daily_strategy_does_not_promise_a_square_off():
 
     text = describe(result.spec)
     assert "Square off" not in text, (
-        "the readback promises a square-off on a daily strategy, which the "
-        "engine explicitly skips"
+        "the readback promises a square-off on a daily strategy, which the engine explicitly skips"
     )
 
 
@@ -548,9 +554,7 @@ def test_stock_readback_says_quantity_not_lots():
 
     spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
     rendered = describe(spec)
-    assert "lot" not in rendered.lower(), (
-        f"a stock readback must not mention lots:\n{rendered}"
-    )
+    assert "lot" not in rendered.lower(), f"a stock readback must not mention lots:\n{rendered}"
 
 
 def test_stock_has_no_share_count_cap():
@@ -565,7 +569,7 @@ def test_stock_has_no_share_count_cap():
 
 
 def test_stock_sizing_defaults_to_risking_capital_not_one_share():
-    """"1 lot" of a stock is one share -- about Rs 640 on a Rs 1,00,000 account,
+    """ "1 lot" of a stock is one share -- about Rs 640 on a Rs 1,00,000 account,
     which tests nothing. Risk-based sizing works at any share price."""
     from nlt.translate.rules import parse
 

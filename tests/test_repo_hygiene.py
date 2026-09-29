@@ -88,12 +88,13 @@ def test_no_source_directory_is_ignored():
 
     result = subprocess.run(
         ["git", "check-ignore", "-v", *candidates],
-        cwd=REPO, capture_output=True, text=True,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
     )
     # Exit code 1 means nothing matched, which is what we want.
     assert result.returncode == 1, (
-        "these source paths are excluded by .gitignore and would never be "
-        f"pushed:\n{result.stdout}"
+        f"these source paths are excluded by .gitignore and would never be pushed:\n{result.stdout}"
     )
 
 

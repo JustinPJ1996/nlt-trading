@@ -65,16 +65,18 @@ def _bars_frame(index: pd.DatetimeIndex) -> pd.DataFrame:
 @pytest.mark.parametrize(
     "timeframe, expected",
     [
-        ("1m", 375),   # 375 minutes / 1
-        ("5m", 75),    # 375 / 5
-        ("15m", 25),   # 375 / 15
-        ("30m", 13),   # ceil(375 / 30) = 12.5 -> 13
-        ("1h", 7),     # ceil(375 / 60) = 6.25 -> 7
+        ("1m", 375),  # 375 minutes / 1
+        ("5m", 75),  # 375 / 5
+        ("15m", 25),  # 375 / 15
+        ("30m", 13),  # ceil(375 / 30) = 12.5 -> 13
+        ("1h", 7),  # ceil(375 / 60) = 6.25 -> 7
     ],
 )
 def test_bars_per_session_matches_arithmetic(timeframe, expected):
-    minutes = (dt.datetime.combine(dt.date.today(), NSE_EQUITY.close_time)
-               - dt.datetime.combine(dt.date.today(), NSE_EQUITY.open_time)).seconds // 60
+    minutes = (
+        dt.datetime.combine(dt.date.today(), NSE_EQUITY.close_time)
+        - dt.datetime.combine(dt.date.today(), NSE_EQUITY.open_time)
+    ).seconds // 60
     bar_len = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}[timeframe]
     assert expected == -(-minutes // bar_len)
     assert bars_per_session(NSE_EQUITY, timeframe) == expected

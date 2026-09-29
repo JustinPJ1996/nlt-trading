@@ -81,9 +81,7 @@ def supertrend(
 
     start = int(np.argmax(~np.isnan(upper_basic))) if not np.isnan(upper_basic).all() else n
     if start >= n:
-        return pd.DataFrame(
-            {"supertrend": trend, "direction": direction}, index=close.index
-        )
+        return pd.DataFrame({"supertrend": trend, "direction": direction}, index=close.index)
 
     upper[start], lower[start] = upper_basic[start], lower_basic[start]
     direction[start] = 1.0
@@ -91,14 +89,10 @@ def supertrend(
 
     for i in range(start + 1, n):
         upper[i] = (
-            min(upper_basic[i], upper[i - 1])
-            if closes[i - 1] <= upper[i - 1]
-            else upper_basic[i]
+            min(upper_basic[i], upper[i - 1]) if closes[i - 1] <= upper[i - 1] else upper_basic[i]
         )
         lower[i] = (
-            max(lower_basic[i], lower[i - 1])
-            if closes[i - 1] >= lower[i - 1]
-            else lower_basic[i]
+            max(lower_basic[i], lower[i - 1]) if closes[i - 1] >= lower[i - 1] else lower_basic[i]
         )
 
         if closes[i] > upper[i - 1]:
@@ -110,9 +104,7 @@ def supertrend(
 
         trend[i] = lower[i] if direction[i] > 0 else upper[i]
 
-    return pd.DataFrame(
-        {"supertrend": trend, "direction": direction}, index=close.index
-    )
+    return pd.DataFrame({"supertrend": trend, "direction": direction}, index=close.index)
 
 
 def historical_volatility(close: pd.Series, length: int = 20, periods: int = 252) -> pd.Series:

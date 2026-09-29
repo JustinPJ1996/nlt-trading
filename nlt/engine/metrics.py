@@ -73,13 +73,19 @@ def compute_metrics(
     win_rate_pct = 100.0 * winning_trades / total_trades if total_trades else 0.0
     gross_profit = float(wins.sum()) if len(wins) else 0.0
     gross_loss = float(-losses.sum()) if len(losses) else 0.0
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (None if gross_profit == 0 else float("inf"))
+    profit_factor = (
+        (gross_profit / gross_loss)
+        if gross_loss > 0
+        else (None if gross_profit == 0 else float("inf"))
+    )
 
     avg_win = float(wins.mean()) if len(wins) else 0.0
     avg_loss = float(losses.mean()) if len(losses) else 0.0
     expectancy = float(pnls.mean())
 
-    total_return_pct = 100.0 * (equity.iloc[-1] - capital) / capital if capital > 0 and len(equity) else 0.0
+    total_return_pct = (
+        100.0 * (equity.iloc[-1] - capital) / capital if capital > 0 and len(equity) else 0.0
+    )
 
     years = len(equity) / bars_per_year if bars_per_year > 0 else 0.0
     if years > 0 and capital > 0 and equity.iloc[-1] > 0:

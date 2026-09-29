@@ -259,7 +259,9 @@ class NseFuturesCharges:
         _check_side(side)
         turnover = price * quantity
 
-        brokerage = min(FUTURES_BROKERAGE_RATE * turnover, FUTURES_BROKERAGE_CAP) if turnover > 0 else 0.0
+        brokerage = (
+            min(FUTURES_BROKERAGE_RATE * turnover, FUTURES_BROKERAGE_CAP) if turnover > 0 else 0.0
+        )
 
         stt = FUTURES_STT_SELL_RATE * turnover if side == "sell" else 0.0
         transaction_charges = FUTURES_TXN_CHARGE_RATE * turnover

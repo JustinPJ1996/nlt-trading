@@ -341,9 +341,7 @@ _add(
 _add(
     IndicatorDef(
         name="cpr",
-        fn=lambda df, period="day": levels.central_pivot_range(
-            df.high, df.low, df.close, period
-        ),
+        fn=lambda df, period="day": levels.central_pivot_range(df.high, df.low, df.close, period),
         inputs=("high", "low", "close"),
         outputs=("pivot", "tc", "bc", "width_pct"),
         params={"period": "day"},

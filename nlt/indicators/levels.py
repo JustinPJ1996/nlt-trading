@@ -28,9 +28,7 @@ def _prev_period_hlc(
     return prev.reindex(high.index, method="ffill")
 
 
-def pivots(
-    high: pd.Series, low: pd.Series, close: pd.Series, period: str = "day"
-) -> pd.DataFrame:
+def pivots(high: pd.Series, low: pd.Series, close: pd.Series, period: str = "day") -> pd.DataFrame:
     """Classic floor-trader pivots with three support and resistance levels."""
     prev = _prev_period_hlc(high, low, close, period)
     p = (prev.high + prev.low + prev.close) / 3.0
@@ -101,9 +99,7 @@ def rolling_extremes(high: pd.Series, low: pd.Series, length: int = 20) -> pd.Da
     )
 
 
-def fibonacci_retracement(
-    high: pd.Series, low: pd.Series, length: int = 60
-) -> pd.DataFrame:
+def fibonacci_retracement(high: pd.Series, low: pd.Series, length: int = 60) -> pd.DataFrame:
     """Fib retracement levels across the last `length` bars' swing.
 
     Levels are drawn from the swing low up to the swing high, so `level_0` is the

@@ -114,8 +114,13 @@ class Store:
                 ),
             )
             strategy_id = int(cur.lastrowid)
-            self._audit(conn, "strategy_created", strategy_id, None,
-                        {"name": spec.name, "version": version, "hash": digest})
+            self._audit(
+                conn,
+                "strategy_created",
+                strategy_id,
+                None,
+                {"name": spec.name, "version": version, "hash": digest},
+            )
             return strategy_id
 
     def get_strategy(self, strategy_id: int) -> dict | None:
@@ -187,8 +192,13 @@ class Store:
             conn.execute(
                 "UPDATE strategy SET allow_unproven = ? WHERE id = ?", (int(allow), strategy_id)
             )
-            self._audit(conn, "proving_gate_override", strategy_id, None,
-                        {"allow_unproven": allow, "reason": reason})
+            self._audit(
+                conn,
+                "proving_gate_override",
+                strategy_id,
+                None,
+                {"allow_unproven": allow, "reason": reason},
+            )
 
     # ------------------------------------------------------------------ runs
 
@@ -348,9 +358,7 @@ class Store:
         try:
             return [
                 dict(r)
-                for r in conn.execute(
-                    "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
-                )
+                for r in conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
             ]
         finally:
             conn.close()

@@ -8,9 +8,7 @@ import pandas as pd
 from nlt.indicators.smoothing import rma, true_range
 
 
-def adx(
-    high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14
-) -> pd.DataFrame:
+def adx(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.DataFrame:
     """ADX with +DI and -DI -- Wilder's original, as Pine implements it.
 
     ADX measures trend *strength* regardless of direction; +DI/-DI carry the

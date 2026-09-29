@@ -396,8 +396,7 @@ def _summary(
 
     if lost_money and underperformed:
         return (
-            "This strategy lost money, and it also did far worse than "
-            f"{comparison.benchmark_name}."
+            f"This strategy lost money, and it also did far worse than {comparison.benchmark_name}."
         )
     if lost_money:
         return (
@@ -406,8 +405,7 @@ def _summary(
         )
     if underperformed:
         return (
-            f"This made money, but did worse than {comparison.benchmark_name} over the "
-            "same period."
+            f"This made money, but did worse than {comparison.benchmark_name} over the same period."
         )
     if "too_few_trades" in codes and any(
         f.code == "too_few_trades" and f.severity == "critical" for f in flags

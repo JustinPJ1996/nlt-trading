@@ -70,6 +70,7 @@ def test_round_trips_the_spec(store):
 
 # ------------------------------------------------------------- proving gate
 
+
 def test_new_strategy_is_not_proven(store):
     assert store.is_proven(store.save_strategy(make_spec(), "rb")) is False
 
@@ -132,6 +133,7 @@ def test_proving_does_not_transfer_to_an_edited_strategy(store):
 
 # -------------------------------------------------------------- kill switch
 
+
 def test_kill_switch_halts_live_strategies(store):
     sid = store.save_strategy(make_spec(), "rb")
     store.set_allow_unproven(sid, True, "test")
@@ -158,6 +160,7 @@ def test_releasing_kill_switch_does_not_rearm(store):
 
 # -------------------------------------------------------------- daily pnl
 
+
 def test_daily_pnl_accumulates(store):
     sid = store.save_strategy(make_spec(), "rb")
     store.record_daily_pnl("2026-09-22", sid, "live", -500.0, 40.0)
@@ -173,6 +176,7 @@ def test_daily_pnl_is_scoped_by_day_and_mode(store):
 
 
 # ------------------------------------------------------------------- audit
+
 
 def test_audit_log_is_append_only_in_practice(store):
     sid = store.save_strategy(make_spec(), "rb")

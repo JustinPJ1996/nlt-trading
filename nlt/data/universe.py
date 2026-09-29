@@ -71,7 +71,6 @@ def list_universes() -> list[str]:
     return list(_load_snapshot()["universes"])
 
 
-
 def normalise_universe_name(raw: str) -> str:
     """Public form of the name canonicaliser: 'nifty50' -> 'NIFTY 50'."""
     return _canonical_name(raw)

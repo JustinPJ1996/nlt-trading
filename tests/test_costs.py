@@ -109,7 +109,9 @@ class TestNseOptionsCharges:
     def test_total_equals_sum_of_components(self) -> None:
         for side in ("buy", "sell"):
             b = self.model.charges(150, 75, side)
-            components = b.brokerage + b.stt + b.transaction_charges + b.sebi_fees + b.stamp_duty + b.gst
+            components = (
+                b.brokerage + b.stt + b.transaction_charges + b.sebi_fees + b.stamp_duty + b.gst
+            )
             assert b.total == pytest.approx(components, abs=1e-9)
 
     def test_invalid_side_raises(self) -> None:
@@ -262,7 +264,9 @@ class TestImpact:
 
     def test_breakeven_move_pct_matches_round_trip_cost(self) -> None:
         model = NseOptionsCharges()
-        assert breakeven_move_pct(model, 150, 75) == pytest.approx(round_trip_cost_pct(model, 150, 75))
+        assert breakeven_move_pct(model, 150, 75) == pytest.approx(
+            round_trip_cost_pct(model, 150, 75)
+        )
 
     def test_zero_inputs_do_not_raise(self) -> None:
         model = NseOptionsCharges()

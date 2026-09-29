@@ -260,7 +260,6 @@ class PipelineResult:
         return self.error is None and self.backtest is not None
 
 
-
 def _as_backtest_result(basket: BasketResult, spec: StrategySpec) -> BacktestResult:
     """Present a basket run in the shape the rest of the UI already understands.
 
@@ -371,9 +370,7 @@ def run_pipeline(
             # same names, which is the honest comparison: "would picking your
             # moments have beaten simply owning all of them?"
             bars = _equal_weight_index(bars_by_symbol)
-            benchmark_name = (
-                f"holding all {len(bars_by_symbol)} of these stocks equally"
-            )
+            benchmark_name = f"holding all {len(bars_by_symbol)} of these stocks equally"
             data_notes = data_notes + basket.warnings
         else:
             bars = next(iter(bars_by_symbol.values()))

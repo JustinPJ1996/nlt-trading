@@ -1,4 +1,4 @@
-""""Would I have done better just buying the index?" -- the question every
+""" "Would I have done better just buying the index?" -- the question every
 backtest result must be able to answer before anyone risks money on it.
 
 A strategy's own numbers, read in isolation, cannot tell a beginner whether

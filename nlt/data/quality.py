@@ -47,9 +47,7 @@ class Artefact:
         )
 
 
-def detect_artefacts(
-    bars: pd.DataFrame, threshold: float = ARTEFACT_THRESHOLD
-) -> list[Artefact]:
+def detect_artefacts(bars: pd.DataFrame, threshold: float = ARTEFACT_THRESHOLD) -> list[Artefact]:
     """Sessions whose close-to-close move is too large to be a real price move."""
     if bars.empty or len(bars) < 2:
         return []
@@ -64,9 +62,7 @@ def detect_artefacts(
     return out
 
 
-def usable_from(
-    bars: pd.DataFrame, threshold: float = ARTEFACT_THRESHOLD
-) -> pd.Timestamp | None:
+def usable_from(bars: pd.DataFrame, threshold: float = ARTEFACT_THRESHOLD) -> pd.Timestamp | None:
     """The first timestamp after the last artefact, or None if there are none.
 
     Everything before the final artefact is suspect: an unadjusted split rescales

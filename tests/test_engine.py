@@ -227,7 +227,9 @@ def test_no_trade_before_indicator_warm_up(synthetic_bars):
     spec = _spec(
         entry=Compare(op="gt", left=Ref(name="close"), right=Ref(name="sma200")),
         exit_rules=ExitRules(stop_pct=5.0, target_pct=5.0),
-        indicators=[IndicatorSpec(id="sma200", type="sma", params={"length": 200, "source": "close"})],
+        indicators=[
+            IndicatorSpec(id="sma200", type="sma", params={"length": 200, "source": "close"})
+        ],
     )
     res = run_backtest(spec, synthetic_bars, capital=100_000.0, lot_size=1)
 
@@ -274,9 +276,7 @@ def test_charges_are_subtracted_symmetrically(synthetic_bars):
         exit_rules=ExitRules(stop_pct=1.5, target_pct=2.5),
         indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
     )
-    res = run_backtest(
-        spec, synthetic_bars, capital=100_000.0, lot_size=1, charge_fn=flat_charge
-    )
+    res = run_backtest(spec, synthetic_bars, capital=100_000.0, lot_size=1, charge_fn=flat_charge)
 
     assert len(res.trades) > 0, "test is vacuous with zero trades"
     for trade in res.trades:
@@ -562,6 +562,7 @@ def test_bars_ago_shifts_the_referenced_series():
 # removed the netting and the whole suite stayed green. These tests close that.
 # ---------------------------------------------------------------------------
 
+
 def _always_entering_spec(max_concurrent: int, hold_bars: int = 30) -> StrategySpec:
     """A strategy that wants to enter on every bar and holds for a long time."""
     return StrategySpec.model_validate(
@@ -588,8 +589,7 @@ def _rising_bars(n: int = 60) -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=n, freq="D", tz="Asia/Kolkata")
     close.index = idx
     return pd.DataFrame(
-        {"open": close, "high": close * 1.02, "low": close * 0.99,
-         "close": close, "volume": 1e6},
+        {"open": close, "high": close * 1.02, "low": close * 0.99, "close": close, "volume": 1e6},
         index=idx,
     )
 
@@ -616,8 +616,9 @@ def test_concurrent_positions_never_exceed_capital_in_aggregate():
     asks for five concurrent positions -- so the limit has to bind.
     """
     capital = 5_000.0
-    result = run_backtest(_always_entering_spec(max_concurrent=5), _rising_bars(),
-                          capital=capital, lot_size=1)
+    result = run_backtest(
+        _always_entering_spec(max_concurrent=5), _rising_bars(), capital=capital, lot_size=1
+    )
 
     assert len(result.trades) > 1, "test is vacuous unless positions actually stack"
     peak = _peak_exposure(result.trades)
@@ -629,8 +630,9 @@ def test_concurrent_positions_never_exceed_capital_in_aggregate():
 
 def test_concurrency_limit_is_respected():
     """Never more open positions than the spec allows."""
-    result = run_backtest(_always_entering_spec(max_concurrent=2), _rising_bars(),
-                          capital=1_000_000.0, lot_size=1)
+    result = run_backtest(
+        _always_entering_spec(max_concurrent=2), _rising_bars(), capital=1_000_000.0, lot_size=1
+    )
 
     events = []
     for t in result.trades:
@@ -647,8 +649,9 @@ def test_concurrency_limit_is_respected():
 
 def test_single_position_case_still_bounded():
     """The original -113% shape: one position, index priced far above capital."""
-    result = run_backtest(_always_entering_spec(max_concurrent=1), _rising_bars(),
-                          capital=500.0, lot_size=1)
+    result = run_backtest(
+        _always_entering_spec(max_concurrent=1), _rising_bars(), capital=500.0, lot_size=1
+    )
     assert _peak_exposure(result.trades) <= 500.0 * 1.001
 
 
@@ -671,15 +674,18 @@ def test_stop_is_measured_from_entry_price_not_the_entry_bars_close():
     common_open = [100.0, 100.0]
 
     # Same open, wildly different closes on the entry bar.
-    fell = _mkbars(common_open + [95.0], [101.0, 105.0, 96.0], [99.0, 90.0, 94.0],
-                   [100.0, 91.0, 95.0])
-    rose = _mkbars(common_open + [95.0], [101.0, 105.0, 96.0], [99.0, 90.0, 94.0],
-                   [100.0, 104.0, 95.0])
+    fell = _mkbars(
+        common_open + [95.0], [101.0, 105.0, 96.0], [99.0, 90.0, 94.0], [100.0, 91.0, 95.0]
+    )
+    rose = _mkbars(
+        common_open + [95.0], [101.0, 105.0, 96.0], [99.0, 90.0, 94.0], [100.0, 104.0, 95.0]
+    )
 
     stops = []
     for bars in (fell, rose):
-        spec = _spec(entry=_signal_once(bars, at=0),
-                     exit_rules=ExitRules(stop_pct=1.0, target_pct=50.0))
+        spec = _spec(
+            entry=_signal_once(bars, at=0), exit_rules=ExitRules(stop_pct=1.0, target_pct=50.0)
+        )
         res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
         assert res.trades and res.trades[0].exit_reason == "stop"
         stops.append(res.trades[0].exit_price)
@@ -692,18 +698,20 @@ def test_stop_is_measured_from_entry_price_not_the_entry_bars_close():
 
 
 def test_stop_and_target_are_measured_from_the_signal_close():
-    """"1% stop, 2% target" must be two percentages of the SAME number.
+    """ "1% stop, 2% target" must be two percentages of the SAME number.
 
     That number is the signal bar's close -- the price at which the user's
     condition became true. Bar 0 closes at 100 and the fill happens at bar 1's
     open of 110, so the two bases are distinguishable: a 10% stop is 10 points
     (10% of 100), not 11 (10% of 110).
     """
-    bars = _mkbars([100.0, 110.0, 110.0], [101.0, 140.0, 111.0],
-                   [99.0, 80.0, 109.0], [100.0, 110.0, 110.0])
+    bars = _mkbars(
+        [100.0, 110.0, 110.0], [101.0, 140.0, 111.0], [99.0, 80.0, 109.0], [100.0, 110.0, 110.0]
+    )
 
-    spec = _spec(entry=_signal_once(bars, at=0),
-                 exit_rules=ExitRules(stop_pct=10.0, target_pct=20.0))
+    spec = _spec(
+        entry=_signal_once(bars, at=0), exit_rules=ExitRules(stop_pct=10.0, target_pct=20.0)
+    )
     res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
 
     trade = res.trades[0]
@@ -731,8 +739,9 @@ def test_stop_basis_is_the_signal_close_not_the_fill():
             [99.0, 10.0, gap_open - 1.0],
             [100.0, gap_open, gap_open],
         )
-        spec = _spec(entry=_signal_once(bars, at=0),
-                     exit_rules=ExitRules(stop_pct=10.0, target_pct=90.0))
+        spec = _spec(
+            entry=_signal_once(bars, at=0), exit_rules=ExitRules(stop_pct=10.0, target_pct=90.0)
+        )
         res = run_backtest(spec, bars, capital=10_000_000.0, lot_size=1, slippage_pct=0.0)
         trade = res.trades[0]
         assert trade.exit_reason == "stop"
@@ -762,12 +771,16 @@ def test_stop_basis_is_the_signal_close_not_the_fill():
 def _gap_spec() -> StrategySpec:
     return StrategySpec.model_validate(
         {
-            "name": "gap", "description": "x",
+            "name": "gap",
+            "description": "x",
             "instrument": {"symbol": "NIFTY", "timeframe": "1d", "trade_as": "index"},
             "indicators": [],
-            "entry": {"kind": "compare", "op": "gt",
-                      "left": {"kind": "ref", "name": "close"},
-                      "right": {"kind": "const", "value": 99.9}},
+            "entry": {
+                "kind": "compare",
+                "op": "gt",
+                "left": {"kind": "ref", "name": "close"},
+                "right": {"kind": "const", "value": 99.9},
+            },
             "exit": {"stop_pct": 1.0, "target_pct": 5.0},
             "sizing": {"mode": "fixed_lots", "lots": 1},
             "risk": {"max_concurrent_positions": 1},
@@ -911,7 +924,9 @@ def _full_day(day: dt.date, closes: list[float]) -> tuple[dt.date, dt.time, list
     return (day, dt.time(15, 15), closes)
 
 
-def _flat_day(day: dt.date, price: float = 100.0, n: int = 25) -> tuple[dt.date, dt.time, list[float]]:
+def _flat_day(
+    day: dt.date, price: float = 100.0, n: int = 25
+) -> tuple[dt.date, dt.time, list[float]]:
     return (day, dt.time(15, 15), [price] * n)
 
 
@@ -1094,14 +1109,22 @@ def test_partial_last_bar_is_dropped_and_warned_about():
     )
 
     res_dropped = run_backtest(
-        spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0,
+        spec,
+        bars,
+        capital=1_000_000.0,
+        lot_size=1,
+        slippage_pct=0.0,
         drop_partial_last_bar=True,
     )
     assert len(res_dropped.equity) == 2, "the 3rd (still-forming) bar should have been dropped"
     assert any("still-forming" in w for w in res_dropped.warnings)
 
     res_kept = run_backtest(
-        spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0,
+        spec,
+        bars,
+        capital=1_000_000.0,
+        lot_size=1,
+        slippage_pct=0.0,
         drop_partial_last_bar=False,
     )
     assert len(res_kept.equity) == 3, "with the guard off, all 3 bars should remain"
@@ -1230,10 +1253,12 @@ def test_engine_actually_calls_the_overnight_carry_invariant(monkeypatch):
     """
     import nlt.engine.backtest as bt
 
-    bars = _mkintraday_bars([
-        _flat_day(dt.date(2026, 9, 21), 100.0),
-        _flat_day(dt.date(2026, 9, 22), 100.0),
-    ])
+    bars = _mkintraday_bars(
+        [
+            _flat_day(dt.date(2026, 9, 21), 100.0),
+            _flat_day(dt.date(2026, 9, 22), 100.0),
+        ]
+    )
     # Enter on the first bar and never exit on merit, so only the forced
     # square-off can close the position -- which is what we are disabling.
     spec = _intraday_spec(
@@ -1242,8 +1267,9 @@ def test_engine_actually_calls_the_overnight_carry_invariant(monkeypatch):
     )
 
     # Disable every square-off path: nothing forces the position shut at the close.
-    monkeypatch.setattr(bt, "is_last_bar_of_session",
-                        lambda index, session: pd.Series(False, index=index))
+    monkeypatch.setattr(
+        bt, "is_last_bar_of_session", lambda index, session: pd.Series(False, index=index)
+    )
     original = bt._check_exit
 
     def no_square_off(*args, **kwargs):
@@ -1284,12 +1310,16 @@ def _flat_price_bars(price: float, n: int = 40) -> pd.DataFrame:
 def _capped_spec(pct: float | None, *, lots: int = 10, trade_as: str = "stock") -> StrategySpec:
     return StrategySpec.model_validate(
         {
-            "name": "cap", "description": "x",
+            "name": "cap",
+            "description": "x",
             "instrument": {"symbol": "TCS", "trade_as": trade_as},
             "indicators": [],
-            "entry": {"kind": "compare", "op": "gt",
-                      "left": {"kind": "ref", "name": "close"},
-                      "right": {"kind": "const", "value": 0}},
+            "entry": {
+                "kind": "compare",
+                "op": "gt",
+                "left": {"kind": "ref", "name": "close"},
+                "right": {"kind": "const", "value": 0},
+            },
             "exit": {"target_pct": 50.0, "stop_pct": 40.0},
             "sizing": {"mode": "fixed_lots", "lots": lots},
             "risk": {"max_position_pct": pct},
@@ -1301,8 +1331,9 @@ def test_concentration_rail_caps_an_explicitly_requested_size():
     """Asking for more than the rail allows must be cut down, not honoured."""
     # Rs 500 a share and 100 lots asks for Rs 50,000, well past the Rs 20,000 rail.
     bars = _flat_price_bars(500.0)
-    result = run_backtest(_capped_spec(20.0, lots=100), bars, capital=100_000.0,
-                          lot_size=1, slippage_pct=0.0)
+    result = run_backtest(
+        _capped_spec(20.0, lots=100), bars, capital=100_000.0, lot_size=1, slippage_pct=0.0
+    )
 
     biggest = max(t.quantity * t.entry_price for t in result.trades)
     assert biggest <= 20_000.0 * 1.001, (
@@ -1313,8 +1344,9 @@ def test_concentration_rail_caps_an_explicitly_requested_size():
 def test_without_the_rail_the_same_request_is_honoured():
     """The mirror -- proves the cap, not something else, is doing the work."""
     bars = _flat_price_bars(500.0)
-    result = run_backtest(_capped_spec(None, lots=100), bars, capital=100_000.0,
-                          lot_size=1, slippage_pct=0.0)
+    result = run_backtest(
+        _capped_spec(None, lots=100), bars, capital=100_000.0, lot_size=1, slippage_pct=0.0
+    )
 
     biggest = max(t.quantity * t.entry_price for t in result.trades)
     assert biggest == pytest.approx(50_000.0), "the full request should go through"
@@ -1324,16 +1356,26 @@ def test_rail_rounds_down_to_a_whole_lot():
     """One lot over the limit is still over it."""
     bars = _flat_price_bars(150.0)
     # 10% of 1,00,000 = 10,000; a 75-unit lot at 150 costs 11,250, so nothing fits.
-    result = run_backtest(_capped_spec(10.0, lots=1, trade_as="option"), bars,
-                          capital=100_000.0, lot_size=75, slippage_pct=0.0)
+    result = run_backtest(
+        _capped_spec(10.0, lots=1, trade_as="option"),
+        bars,
+        capital=100_000.0,
+        lot_size=75,
+        slippage_pct=0.0,
+    )
     assert result.trades == []
 
 
 def test_a_blocked_trade_says_it_was_the_rail_not_a_shortage_of_money():
     """Being told "not enough capital" while the balance sits untouched is baffling."""
     bars = _flat_price_bars(250.0)
-    result = run_backtest(_capped_spec(10.0, lots=1, trade_as="option"), bars,
-                          capital=100_000.0, lot_size=75, slippage_pct=0.0)
+    result = run_backtest(
+        _capped_spec(10.0, lots=1, trade_as="option"),
+        bars,
+        capital=100_000.0,
+        lot_size=75,
+        slippage_pct=0.0,
+    )
 
     skipped = [w for w in result.warnings if "skipped" in w and "signal" in w]
     assert skipped, "signals were dropped with no warning at all"
@@ -1347,8 +1389,9 @@ def test_rail_is_proportional_to_capital():
     bars = _flat_price_bars(5_000.0)
     sizes = []
     for capital in (100_000.0, 500_000.0):
-        result = run_backtest(_capped_spec(20.0, lots=100), bars, capital=capital,
-                              lot_size=1, slippage_pct=0.0)
+        result = run_backtest(
+            _capped_spec(20.0, lots=100), bars, capital=capital, lot_size=1, slippage_pct=0.0
+        )
         sizes.append(max(t.quantity * t.entry_price for t in result.trades))
 
     assert sizes[1] == pytest.approx(sizes[0] * 5, rel=0.01)
@@ -1371,8 +1414,13 @@ def test_options_on_a_small_account_are_warned_about():
 def test_stocks_on_a_small_account_are_not_warned_about():
     """The warning is about lot indivisibility, which shares do not have."""
     bars = _flat_price_bars(100.0)
-    result = run_backtest(_capped_spec(20.0, lots=1, trade_as="stock"), bars,
-                          capital=50_000.0, lot_size=1, slippage_pct=0.0)
+    result = run_backtest(
+        _capped_spec(20.0, lots=1, trade_as="stock"),
+        bars,
+        capital=50_000.0,
+        lot_size=1,
+        slippage_pct=0.0,
+    )
     assert not any("SMALL ACCOUNT" in w for w in result.warnings)
 
 

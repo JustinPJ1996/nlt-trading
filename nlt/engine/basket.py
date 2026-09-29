@@ -147,9 +147,7 @@ def run_basket_backtest(
             features = build_features(spec, bars)
             entry_signal = evaluate(spec.entry, features)
             exit_signal = (
-                evaluate(spec.exit.condition, features)
-                if spec.exit.condition is not None
-                else None
+                evaluate(spec.exit.condition, features) if spec.exit.condition is not None else None
             )
         except Exception as exc:  # a bad symbol must not abort the whole basket
             skipped[symbol] = f"failed to build signals: {exc}"
@@ -224,8 +222,15 @@ def run_basket_backtest(
             j = track.bars.index.get_loc(ts)
             bar = track.bars.iloc[j]
             pos, used_fallback, capped = _open_position(
-                spec, track.features, j, ts, bar, slippage_pct, lot_size,
-                capital_total, capital_spare,
+                spec,
+                track.features,
+                j,
+                ts,
+                bar,
+                slippage_pct,
+                lot_size,
+                capital_total,
+                capital_spare,
             )
             if pos is None:
                 dropped_for_capital += 1
