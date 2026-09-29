@@ -46,10 +46,16 @@ mutation: clean-cache
 	@$(PY) -m mutmut run
 	@$(PY) -m mutmut results
 
+# PATH is set explicitly because git hooks do not inherit the mise shims, and
+# this target is called from one. `mise install` rather than `mise use -g`:
+# the version is already pinned in ~/.config/mise/config.toml, which survives a
+# container rebuild even though the installed binary does not.
 secrets:
-	@command -v gitleaks >/dev/null 2>&1 || { \
-		echo "gitleaks not installed. Run: mise use -g gitleaks@8.30.1"; exit 1; }
-	@gitleaks git --no-banner --redact . && echo "No secrets found in history."
+	@PATH="/opt/mise/shims:$$HOME/.local/bin:$$PATH"; \
+	command -v gitleaks >/dev/null 2>&1 || { \
+		echo "gitleaks is not installed, so the history cannot be scanned."; \
+		echo "Run: mise install"; exit 1; }; \
+	gitleaks git --no-banner --redact . && echo "No secrets found in history."
 
 hooks:
 	@git config core.hooksPath .githooks
