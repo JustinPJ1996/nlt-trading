@@ -16,7 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.7"]
+dev = ["pytest>=8.0", "ruff>=0.7", "mutmut>=3.8"]
+
+# Reading the historical F&O exports. They are ClickHouse Native format, which
+# no ordinary library opens; `chdb` is an embedded ClickHouse that does. Kept
+# out of the main dependencies because only the import scripts need it -- the
+# engine reads the Parquet that comes out the other side.
+fno = ["chdb>=4.4"]
 
 [build-system]
 requires = ["hatchling"]
@@ -45,3 +51,27 @@ exclude = ["legacy"]
 # do not need a tool to arbitrate.
 select = ["E", "F", "I", "UP", "W"]
 ignore = ["E501"]  # line length is enforced by the formatter, not the linter
+
+[tool.mutmut]
+# Mutation testing: does a test actually FAIL when the code breaks, or does it
+# merely execute the line? This project has always done this by hand -- every
+# claim in HANDOFF.md was checked by mutating the code and confirming a test
+# noticed, which is how it found an engine reporting -113%, stops filling at
+# prices that never traded, and a readback promising a square-off the engine
+# skipped. None of those were caught by tests that already passed.
+#
+# Doing it by hand means it happens when someone remembers. This makes it a
+# command.
+#
+# Scoped deliberately to the code where a silent error costs money. Mutating
+# the whole tree takes hours and buries the signal; `app/` is layout, and
+# `nlt/translate/` is better served by the 70-sentence corpus, which is a
+# stronger test than any mutant.
+source_paths = ["nlt/engine", "nlt/costs", "nlt/spec"]
+
+# mutmut runs the suite against a rewritten copy of the tree, and copies only
+# what it mutates. Without this the copy has no `app/`, no `nlt/data/`, and no
+# bar cache, so collection dies on the first import and every mutant is scored
+# as "killed" by an error that has nothing to do with the mutation.
+also_copy = ["app", "nlt", "data", "tests/fixtures"]
+pytest_add_cli_args_test_selection = ["tests/"]

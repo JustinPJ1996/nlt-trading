@@ -1,0 +1,14 @@
+#!/bin/sh
+# The slow half. This repo is public and will hold broker credentials, so the
+# secret scan runs before anything leaves the machine.
+#
+# Mutation testing is deliberately NOT here -- it takes long enough that putting
+# it in a hook would train you to use --no-verify. Run `make mutation` when you
+# have written tests worth trusting.
+if command -v gitleaks >/dev/null 2>&1; then
+	echo "pre-push: scanning history for secrets"
+	make secrets || exit 1
+else
+	echo "pre-push: gitleaks not installed, skipping secret scan"
+	echo "          install it with: mise use -g gitleaks@8.30.1"
+fi

@@ -56,3 +56,10 @@ logs/
 *.sqlite
 *.db
 .venv/
+
+# mutmut copies the whole project here and rewrites it, one mutation at a time.
+# Anchored with a leading slash: the bare pattern `mutants/` would match a
+# directory of that name at any depth, which is exactly how `data/` once
+# swallowed `nlt/data/` and broke every push for days.
+/mutants/
+/.mutmut-cache

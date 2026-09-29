@@ -132,3 +132,65 @@ def test_a_fresh_clone_would_contain_the_whole_package():
     missing = sorted(m for m in modules if m not in tracked)
 
     assert not missing, f"importable modules absent from the repository: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# CLAUDE.md drift
+#
+# CLAUDE.md is read automatically at the start of every session, which makes it
+# the highest-leverage file in the repo and the easiest one to let rot. A
+# pointer that names a file which no longer exists, or a command that no longer
+# runs, is worse than no pointer -- it spends the reader's trust before the
+# first real instruction.
+# ---------------------------------------------------------------------------
+
+
+def _claude_md() -> str:
+    path = REPO / "CLAUDE.md"
+    if not path.exists():
+        pytest.fail("CLAUDE.md is missing; it is what every session reads first")
+    return path.read_text(encoding="utf-8")
+
+
+def test_every_path_claude_md_names_exists():
+    """A pointer to a file that moved is a pointer that wastes the reader."""
+    import re
+
+    text = _claude_md()
+    # Backtick-quoted things that look like repo paths, e.g. `tests/conftest.py`
+    # or `nlt/data/source.py`. Bare prose and shell flags are not matched.
+    candidates = set(re.findall(r"`([A-Za-z0-9_./-]+\.(?:py|md|txt))`", text))
+    missing = sorted(c for c in candidates if not (REPO / c).exists())
+    assert not missing, f"CLAUDE.md names paths that do not exist: {missing}"
+
+
+def test_every_make_target_claude_md_promises_is_real():
+    """CLAUDE.md advertises `make check` and friends. They must exist."""
+    import re
+
+    makefile = REPO / "Makefile"
+    assert makefile.exists(), "CLAUDE.md documents make targets but there is no Makefile"
+
+    declared = set(re.findall(r"^([a-z-]+):", makefile.read_text(encoding="utf-8"), re.M))
+    promised = set(re.findall(r"\bmake ([a-z-]+)\b", _claude_md()))
+    missing = sorted(promised - declared)
+    assert not missing, f"CLAUDE.md promises make targets that do not exist: {missing}"
+
+
+def test_claude_md_still_warns_off_legacy():
+    """The single instruction most likely to be lost, and most costly to lose.
+
+    `legacy/` describes an approach this project deliberately abandoned. An
+    agent that reads it learns the wrong design and argues for it convincingly.
+    """
+    text = _claude_md().lower()
+    assert "legacy/" in text, "CLAUDE.md must still say not to read legacy/"
+
+
+def test_ruff_still_excludes_legacy():
+    """The other half of the same instruction, in the place tools read."""
+    import tomllib
+
+    cfg = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    excluded = cfg.get("tool", {}).get("ruff", {}).get("exclude", [])
+    assert "legacy" in excluded, "ruff must keep excluding legacy/, or its output becomes noise"

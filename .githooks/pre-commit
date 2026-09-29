@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs the whole gate, not a staged-files subset: a change that breaks a file it
+# did not touch is exactly the change worth catching. ~35 seconds.
+#
+# Bypass with `git commit --no-verify` when you mean to.
+echo "pre-commit: make check"
+make check || {
+	echo
+	echo "The gate failed. 'make fix' clears the mechanical half."
+	exit 1
+}
