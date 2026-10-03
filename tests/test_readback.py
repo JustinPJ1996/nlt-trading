@@ -70,8 +70,23 @@ def test_is_true_renders() -> None:
 def test_percent_change_renders() -> None:
     spec = _minimal_spec(PercentChange(ref=Ref(name="close"), lookback=3, op="lte", value=-1.0))
     text = describe(spec)
-    assert "falls more than 1%" in text
+    assert "falls 1% or more" in text
     assert "3 days" in text or "3 bars" in text
+
+
+@pytest.mark.parametrize(
+    ("op", "value", "words"),
+    [
+        ("lte", -2.0, "falls 2% or more"),
+        ("lt", -2.0, "falls more than 2%"),
+        ("gte", 2.0, "rises 2% or more"),
+        ("gt", 2.0, "rises more than 2%"),
+    ],
+)
+def test_percent_change_says_whether_the_boundary_counts(op, value, words) -> None:
+    """A fall of exactly 2% triggers "lte -2" but not "lt -2"; the readback must say which."""
+    spec = _minimal_spec(PercentChange(ref=Ref(name="close"), lookback=1, op=op, value=value))
+    assert words in describe(spec)
 
 
 def test_all_renders() -> None:

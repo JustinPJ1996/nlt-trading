@@ -37,8 +37,9 @@ from nlt.engine.basket import BasketResult, run_basket_backtest
 from nlt.engine.loader import load_for_spec
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
+from nlt.translate.llm import translate
 from nlt.translate.readback import describe, format_inr
-from nlt.translate.rules import Question, TranslationResult, parse
+from nlt.translate.rules import Question, TranslationResult
 
 try:  # pragma: no cover -- exercised once nlt.report exists
     from nlt.report.benchmark import Benchmark, Comparison, buy_and_hold, compare
@@ -211,17 +212,18 @@ def describe_spec(spec: StrategySpec) -> str:
 
 
 def translate_text(text: str, answers: dict[str, str] | None = None) -> TranslationResult:
-    """Wraps `nlt.translate.rules.parse` so a bug in the parser cannot crash the page.
+    """Wraps `nlt.translate.llm.translate` so a bug in a reader cannot crash the page.
 
-    `parse` is written to never raise on bad input -- unparseable text comes
+    The rules read the sentence first; the AI reader is only asked when they
+    could not understand it. Both are written to never raise on bad input -- unparseable text comes
     back as `unparsed` fragments and `Question`s -- but this dashboard is the
     only thing standing between that guarantee and a stack trace on a
     non-technical user's screen, so it is wrapped anyway.
     """
     try:
-        return parse(text, answers=answers or {})
-    except Exception:  # pragma: no cover -- defensive; parse() is designed not to raise
-        logger.exception("translate_text: parse() raised on %r", text)
+        return translate(text, answers=answers or {})
+    except Exception:  # pragma: no cover -- defensive; translate() is designed not to raise
+        logger.exception("translate_text: translate() raised on %r", text)
         return TranslationResult(
             spec=None,
             questions=[

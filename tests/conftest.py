@@ -19,6 +19,14 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_network)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_ai(monkeypatch):
+    """No test may reach the AI model: it costs money, needs the network, and
+    would make results depend on whatever the model happens to say today.
+    Tests of the AI path pass a scripted `transport` instead."""
+    monkeypatch.setenv("NLT_LLM_DISABLED", "1")
+
+
 @pytest.fixture(scope="session")
 def synthetic_bars() -> pd.DataFrame:
     """A deterministic OHLCV series with trend, chop and a crash.

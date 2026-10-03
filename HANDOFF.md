@@ -49,10 +49,31 @@ because this will eventually place real orders: a spec can be checked before it
 runs, and look-ahead bias is structurally impossible when the engine controls
 what a condition can see.
 
-**There is no LLM at runtime at all.** Justin declined an API key, so the English
-parser is a deterministic table of phrasing patterns (`nlt/translate/rules.py`).
-It costs nothing, gives identical results every time, and is testable. An LLM
-path can slot in behind the same interface later.
+**The rules read first; an AI model reads only what they could not.** The
+deterministic phrase table (`nlt/translate/rules.py`) costs nothing, gives
+identical results every time, and is testable -- but it builds a recipe for only
+3 of the 70 real sentences. On 2026-09-30 Justin chose to add a second reader via
+OpenRouter (`nlt/translate/llm.py`, model `anthropic/claude-sonnet-5.5`, key in
+`~/.config/nlt/openrouter_key`, never in the repo). The rules of that reader:
+
+- It is asked only when the rules did not *understand* the words. It never
+  overrules a deliberate refusal (options, candle size, VWAP on daily bars,
+  "NIFTY 50" index-or-basket, an ambiguous "it"), and it is not asked when the
+  rules understood everything and just need a stop loss.
+- Instrument, direction and timeframe come from the rules' own extractors; the
+  model may only fill a gap, and a disagreement becomes a question.
+- Every part of the recipe must quote the user's exact words. Code checks each
+  quote is really in the sentence (a fabricated quote discards the whole reply),
+  that every number came from the user -- exit numbers from their own quote, next
+  to "stop"/"target" -- and that no meaningful word was left out.
+- Refusal wording is ours; the model only picks a category. Risk, sizing and
+  schedule defaults are the rules' defaults. The readback is unchanged.
+- No key, no network or a garbage reply: the rules' answer stands. The test
+  suite sets `NLT_LLM_DISABLED` so no test can reach the model.
+
+`scripts/eval_llm.py` runs the 70 live and saves the raw replies to
+`tests/fixtures/llm_replies.json`; `tests/test_llm.py` replays them offline so
+the 0-wrong property is defended on the AI path by every `make check`.
 
 **Refuse rather than guess.** Across all 70 real user sentences: 3 produce a
 spec, 67 are honestly refused, **0 are wrong**. That property is defended in
@@ -100,6 +121,7 @@ Ask before changing any of these; each was a deliberate decision.
 | --- | --- |
 | `nlt/spec/models.py` | The recipe format and every validator |
 | `nlt/translate/rules.py` | English → spec, pattern table, no LLM |
+| `nlt/translate/llm.py` | Second-pass AI reader via OpenRouter, and every check on its answers |
 | `nlt/translate/readback.py` | Spec → plain English, deterministic |
 | `nlt/indicators/` | 43 indicators matching TradingView's Pine formulas |
 | `nlt/engine/backtest.py` | Single-instrument engine |

@@ -169,10 +169,14 @@ def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe:
         ref = _ref_desc(cond.ref, indicators, timeframe)
         bars = _plural(cond.lookback, _bar_word(timeframe))
         magnitude = _num(abs(cond.value))
+        # "lte -2" includes a fall of exactly 2%; "lt -2" does not. The wording
+        # has to say which, or the readback promises a trade the engine skips.
         if cond.op in ("lt", "lte") and cond.value < 0:
-            return f"{ref} falls more than {magnitude}% over {bars}"
+            amount = f"{magnitude}% or more" if cond.op == "lte" else f"more than {magnitude}%"
+            return f"{ref} falls {amount} over {bars}"
         if cond.op in ("gt", "gte") and cond.value > 0:
-            return f"{ref} rises more than {magnitude}% over {bars}"
+            amount = f"{magnitude}% or more" if cond.op == "gte" else f"more than {magnitude}%"
+            return f"{ref} rises {amount} over {bars}"
         return f"{ref}'s change over {bars} {_OP_WORDS[cond.op]} {_num(cond.value)}%"
 
     if isinstance(cond, All):
