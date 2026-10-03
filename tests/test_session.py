@@ -84,7 +84,12 @@ def test_bars_per_session_matches_arithmetic(timeframe, expected):
 
 def test_bars_per_session_unknown_timeframe_raises():
     with pytest.raises(ValueError):
-        bars_per_session(NSE_EQUITY, "3m")
+        bars_per_session(NSE_EQUITY, "7m")
+
+
+def test_three_minute_candles_are_known():
+    """The spec allows "3m" and Kite serves it; the calendar must know it too."""
+    assert bars_per_session(NSE_EQUITY, "3m") == 125
 
 
 # ---------------------------------------------------------------------------

@@ -200,6 +200,8 @@ def run_backtest(
     charge_fn=None,
     slippage_pct: float = 0.02,
     drop_partial_last_bar: bool = True,
+    trade_from: pd.Timestamp | None = None,
+    final_session_in_progress: bool = False,
 ) -> BacktestResult:
     """Run `spec` bar by bar over `bars`.
 
@@ -217,6 +219,18 @@ def run_backtest(
     filtered this out upstream; this is defence in depth specifically because
     the engine is what places orders, so it should not trust that every caller
     remembered the upstream guard.
+
+    `trade_from`, when set, is the first bar allowed to *signal* an entry.
+    Earlier bars still feed every indicator -- a 200-day average needs its 200
+    days -- but cannot open a position. This is how paper trading starts flat
+    at the moment the user pressed start, instead of inheriting a position the
+    history would have been holding.
+
+    `final_session_in_progress` says the last session in `bars` has not ended
+    yet -- true for a paper run mid-day, never for a backtest. Without it, the
+    engine infers "last candle of the day" from the data, sees the newest
+    candle so far, and squares off at 13:35 a position the real day would have
+    held until its stop, its target or the 15:15 square-off.
     """
     warnings: list[str] = []
     if lot_size is None:
@@ -286,6 +300,15 @@ def run_backtest(
     # and refusing to schedule an entry fill across a session boundary (1).
     if is_intraday_tf and len(bars) > 0:
         last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        if final_session_in_progress:
+            # The day is not over, so none of today's candles is its last.
+            # Walk back from the newest candle only as far as today's first.
+            today = session_date(bars.index[-1], session)
+            last_bar_of_session = last_bar_of_session.copy()
+            k = len(bars) - 1
+            while k >= 0 and session_date(bars.index[k], session) == today:
+                last_bar_of_session[k] = False
+                k -= 1
     else:
         last_bar_of_session = np.zeros(len(bars), dtype=bool)
 
@@ -410,6 +433,7 @@ def run_backtest(
             and bool(entry_signal.iloc[i])
             and ts.weekday() in spec.schedule.weekdays
             and (not is_intraday_spec or ts.time() < spec.schedule.no_entry_after)
+            and (trade_from is None or ts >= trade_from)
         )
         # A signal on the last bar of a session has no valid intraday fill: the
         # only bar left to fill it on is tomorrow morning's open, 14+ hours away

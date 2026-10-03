@@ -122,6 +122,8 @@ Ask before changing any of these; each was a deliberate decision.
 | `nlt/spec/models.py` | The recipe format and every validator |
 | `nlt/translate/rules.py` | English → spec, pattern table, no LLM |
 | `nlt/translate/llm.py` | Second-pass AI reader via OpenRouter, and every check on its answers |
+| `nlt/data/kite.py` | Read-only Kite candles via the web-session token; the only door to Zerodha |
+| `nlt/paper/runner.py` | Paper trading: the engine re-run each pass, plus an append-only record |
 | `nlt/translate/readback.py` | Spec → plain English, deterministic |
 | `nlt/indicators/` | 43 indicators matching TradingView's Pine formulas |
 | `nlt/engine/backtest.py` | Single-instrument engine |
@@ -162,15 +164,46 @@ label results as estimates while the paper phase records real chains.
 The charge model already handles options correctly, including the trap that an
 exercised ITM option is charged STT on intrinsic value at the buy side.
 
-### Phase 3 — Paper trading — **NOT STARTED**
+### Phase 3 — Paper trading — **BUILT (prototype)**
 
-Live websocket feed, a runner on a schedule, a chain recorder to build the
-options history we lack, backtest-vs-paper drift reporting. **Needs Kite Connect
-(Rs 2,000/month).**
+**Data: the Kite web-session workaround, not Kite Connect.** On 2026-10-03
+Justin chose, on Balajee's suggestion and after being told the trade-offs, to
+read candles with the `enctoken` from a logged-in Kite web session rather than
+pay for Kite Connect. The trade-offs, so nobody rediscovers them: it goes
+against Zerodha's terms and can break without notice; the token is a key to a
+**real** trading account; it expires daily and must be pasted again. The free
+Kite Connect "Personal" plan does **not** include market data. The paid Connect
+plan is now **Rs 500/month** (not Rs 2,000) and includes live and historical
+data; switching to it means changing `_get` in `nlt/data/kite.py`, nothing else.
 
-The intraday engine work is already done and dormant: session calendar,
-square-off, an invariant that raises if an intraday position ever spans two
-trading days. Waiting on data, not code.
+`nlt/data/kite.py` is the only code that talks to Zerodha. It can only read:
+`_get` sends GET to an allow-list (historical candles, profile) and refuses
+everything else before sending; `tests/test_kite.py` reads the source and fails
+on any POST/PUT/DELETE call or order path. The token lives in
+`~/.config/nlt/kite_enctoken` (mode 600, outside the public repo). The app does
+not tell the user how to extract the token from the browser -- an automated
+safety check blocked writing those instructions; Balajee can show Justin.
+
+**How paper trading works** (`nlt/paper/runner.py`): every pass re-runs the
+*same* backtest engine on closed candles up to now, with `trade_from` set so
+nothing before Start opens a position, and records each entry/exit the first
+time it is seen in `paper_event` -- append-only, enforced by SQLite triggers. If
+revised candles change the engine's answer, a 'drift' row is added; the
+original stands. `scripts/paper_run.py` runs every minute from cron
+(`scripts/install_paper_cron.sh`; the crontab is outside the home directory, so
+re-run that after a devbox rebuild). Intraday backtests now load from Kite too.
+
+The replay test (`tests/test_paper.py`) feeds past candles one at a time and
+requires exactly the backtest's trades. It found a real bug on its first run:
+mid-session the engine took the newest candle for the day's last and squared
+off on every pass. Fixed with `final_session_in_progress`.
+
+There are **two kill switches** (Justin's call): live and paper, independent.
+
+Saving a strategy from its results now records the backtest as a completed run
+-- before, nothing did, so the proving gate could never pass.
+
+**Not built:** the option-chain recorder, and any order placement (Phase 4).
 
 ### Phase 4 — Live — **NOT STARTED**
 
@@ -250,8 +283,9 @@ file tracked, no source path ignored, no unanchored directory pattern.
 
 ## Open items for Justin
 
-1. **Kite Connect, Rs 2,000/month** — gates Phases 2, 3 and 4, plus intraday and
-   the VWAP strategies. Nothing meaningful advances without it.
+1. **Kite Connect, Rs 500/month** — the official replacement for the web-session
+   workaround Phase 3 uses today. Needed before anything is relied on, and for
+   Phase 4 regardless.
 2. **A VPS with a static IP** — needed before any live order, not before then.
 3. **Historical options data** — pay a vendor, or accept modelled estimates and
    let the paper phase accumulate real chains.

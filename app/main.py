@@ -3,12 +3,13 @@
 Run with:
     .venv/bin/streamlit run app/main.py --server.port 8501 --server.address 0.0.0.0
 
-Four pages, chosen from the sidebar, sharing state through `st.session_state`:
+Five pages, chosen from the sidebar, sharing state through `st.session_state`:
 
 1. New strategy   -- describe it in English, check the readback, run a backtest.
 2. Backtest results -- the verdict, the equity curve, the trades, the warnings.
 3. My strategies  -- what has been saved, and whether it has earned trust yet.
-4. Safety         -- the kill switch, data freshness, the audit trail.
+4. Paper trading  -- run a saved strategy forward on live Kite prices, no real orders.
+5. Safety         -- the two kill switches, data freshness, the audit trail.
 
 Every widget here does layout and nothing else. Decisions (parse this text,
 judge this backtest, format this number) live in `app/logic.py` and
@@ -23,6 +24,7 @@ Streamlit script-run context.
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pandas as pd
 import streamlit as st
@@ -35,6 +37,7 @@ from nlt.translate.rules import Question
 PAGE_NEW = "New strategy"
 PAGE_RESULTS = "Backtest results"
 PAGE_MINE = "My strategies"
+PAGE_PAPER = "Paper trading"
 PAGE_SAFETY = "Safety"
 
 
@@ -352,7 +355,13 @@ def page_results() -> None:
     if st.button("Save this strategy", type="primary"):
         store = get_store()
         _, err = logic.safe_call(
-            lambda: logic.save_strategy(store, result.spec),
+            lambda: logic.save_strategy(
+                store,
+                result.spec,
+                result,
+                capital=st.session_state["capital"],
+                cost_model_label=st.session_state["cost_model_label"],
+            ),
             on_error="Could not save this strategy",
         )
         if err:
@@ -399,39 +408,206 @@ def page_my_strategies() -> None:
 # ------------------------------------------------------------------ page 4
 
 
-def page_safety() -> None:
-    st.title("Safety")
-    store = get_store()
+def _kite_section() -> None:
+    st.markdown("### Kite connection")
+    status, line = logic.kite_status()
+    {"connected": st.success, "expired": st.error}.get(status, st.warning)(line)
+    with st.expander(
+        "Replace the Kite token" if status == "connected" else "Paste today's Kite token",
+        expanded=status != "connected",
+    ):
+        st.caption(
+            "The token stops working each morning, so this is a daily step. It is saved on "
+            "this computer only, never shown again, and only ever used to read prices."
+        )
+        token = st.text_input("Kite token", type="password", key="kite_token_input")
+        if st.button("Save token", type="primary", disabled=not token):
+            _, err = logic.safe_call(
+                lambda: logic.save_kite_token(token), on_error="Could not save that token"
+            )
+            if err:
+                st.error(err)
+            else:
+                st.session_state.pop("kite_token_input", None)
+                st.rerun()
 
-    st.markdown("### Kill switch")
-    engaged, err = logic.safe_call(
-        store.kill_switch_engaged, on_error="Could not read kill switch status"
+
+def _start_section(store) -> None:
+    st.markdown("### Start paper trading")
+    strategies, err = logic.safe_call(
+        lambda: logic.list_strategies_view(store), on_error="Could not load your strategies"
     )
     if err:
         st.error(err)
-    elif engaged:
-        st.error("The kill switch is ENGAGED. Nothing live can trade right now.")
-        if st.button("Release kill switch"):
-            _, err2 = logic.safe_call(
-                lambda: store.release_kill_switch("released from dashboard"),
-                on_error="Could not release the kill switch",
+        return
+    running = {r["strategy_id"] for r in store.active_paper_runs()}
+    choices = [s for s in strategies if s["id"] not in running]
+    if not choices:
+        st.info("Save a strategy from its backtest results first, then start it here.")
+        return
+    labels = {f"{s['name']} (v{s['version']})": s for s in choices}
+    picked = labels[st.selectbox("Strategy", list(labels))]
+    st.text(picked["readback"])
+    problem = logic.paper_problem(store.load_spec(picked["id"]))
+    if problem:
+        st.warning(problem)
+        return
+    c1, c2 = st.columns(2)
+    capital = c1.number_input(
+        "Pretend starting money",
+        min_value=1_000.0,
+        value=float(st.session_state["capital"]),
+        step=5_000.0,
+        format="%.0f",
+    )
+    cost_label = c2.selectbox("Trading costs to charge", list(logic.COST_MODEL_LABELS))
+    st.caption(
+        "No real orders are placed. From the moment you press Start, the app follows "
+        "live Kite prices and records every decision as it happens."
+    )
+    if st.button("Start paper trading", type="primary"):
+        _, err = logic.safe_call(
+            lambda: logic.start_paper(
+                store, picked["id"], capital=capital, cost_model_label=cost_label
+            ),
+            on_error="Could not start paper trading",
+        )
+        if err:
+            st.error(err)
+        else:
+            st.rerun()
+
+
+def _run_card(store, run: dict) -> None:
+    spec = store.load_spec(run["strategy_id"])
+    strategy = store.get_strategy(run["strategy_id"])
+    params = json.loads(run["params_json"] or "{}")
+    status = store.paper_status(run["id"]) or {}
+    snap = json.loads(status.get("snapshot_json") or "{}")
+    kind, label = logic.paper_health_label(status.get("health", "waiting"))
+
+    st.markdown(f"#### {strategy['name']} (v{strategy['version']})")
+    getattr(st, kind)(f"{label}. {status.get('message', '')}")
+    st.caption(
+        f"Started {logic.when(params.get('started_at'))} with "
+        f"{logic.format_inr(params.get('capital', 0))}. "
+        f"Last checked {logic.when(status.get('updated_at'))}."
+    )
+    if snap:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Account value", logic.format_inr(snap.get("equity", 0)))
+        m2.metric("Closed trades P&L", logic.format_inr(snap.get("realised_pnl", 0)))
+        m3.metric("Open position P&L", logic.format_inr(snap.get("open_pnl_if_closed_now", 0)))
+        if snap.get("open_positions"):
+            st.write("Open positions (P&L if closed now, after costs):")
+            st.dataframe(
+                pd.DataFrame(snap["open_positions"]), hide_index=True, use_container_width=True
             )
+    with st.expander("What the strategy is"):
+        st.text(strategy["readback"])
+    events = store.paper_events(run["id"])
+    with st.expander(f"Activity log ({len(events)})", expanded=bool(events)):
+        if not events:
+            st.write("Nothing has happened yet.")
+        for e in reversed(events):
+            line = f"**{logic.when(e['observed_at'])}** -- {logic.describe_paper_event(e)}"
+            (st.error if e["kind"] == "drift" else st.write)(line)
+
+    c1, c2 = st.columns(2)
+    if c1.button("Check now", key=f"check_{run['id']}"):
+        _, err = logic.safe_call(
+            lambda: logic.check_paper_now(store, run["id"]), on_error="Could not check now"
+        )
+        if err:
+            st.error(err)
+        else:
+            st.rerun()
+    confirm = c2.checkbox("Stop this paper run", key=f"confirm_stop_{run['id']}")
+    if c2.button("Stop", key=f"stop_{run['id']}", disabled=not confirm):
+        logic.safe_call(lambda: logic.stop_paper(store, run["id"]), on_error="Could not stop")
+        st.rerun()
+    if spec.instrument.timeframe == "1d":
+        st.caption("Daily strategy: it updates once a day, shortly after the 3:30 PM close.")
+    st.markdown("---")
+
+
+def page_paper() -> None:
+    st.title("Paper trading")
+    st.write(
+        "Run a saved strategy forward on live prices, with pretend money. Nothing here "
+        "places a real order."
+    )
+    store = get_store()
+    if store.paper_kill_switch_engaged():
+        st.error("The paper kill switch is ON (see Safety). Every paper strategy is paused.")
+    if not logic.paper_job_installed():
+        st.warning(
+            "The background job is not installed, so paper strategies only update when you "
+            "press 'Check now'."
+        )
+    _kite_section()
+    st.markdown("### Running now")
+    runs = store.active_paper_runs()
+    if not runs:
+        st.info("Nothing is being paper traded yet.")
+    for run in runs:
+        _run_card(store, run)
+    _start_section(store)
+
+
+# ------------------------------------------------------------------ page 5
+
+
+def _kill_switch(*, engaged_fn, engage_fn, release_fn, on_text, off_text, confirm_text, key):
+    engaged, err = logic.safe_call(engaged_fn, on_error="Could not read kill switch status")
+    if err:
+        st.error(err)
+    elif engaged:
+        st.error(on_text)
+        if st.button("Release kill switch", key=f"release_{key}"):
+            _, err2 = logic.safe_call(release_fn, on_error="Could not release the kill switch")
             if err2:
                 st.error(err2)
             else:
                 st.rerun()
     else:
-        st.success("The kill switch is OFF. Trading is not blocked.")
-        confirm = st.checkbox("I understand this will halt every live strategy immediately.")
-        if st.button("Engage kill switch", disabled=not confirm, type="primary"):
-            _, err2 = logic.safe_call(
-                lambda: store.engage_kill_switch("engaged from dashboard"),
-                on_error="Could not engage the kill switch",
-            )
+        st.success(off_text)
+        confirm = st.checkbox(confirm_text, key=f"confirm_{key}")
+        if st.button(
+            "Engage kill switch", disabled=not confirm, type="primary", key=f"engage_{key}"
+        ):
+            _, err2 = logic.safe_call(engage_fn, on_error="Could not engage the kill switch")
             if err2:
                 st.error(err2)
             else:
                 st.rerun()
+
+
+def page_safety() -> None:
+    st.title("Safety")
+    store = get_store()
+
+    st.markdown("### Live trading kill switch")
+    _kill_switch(
+        engaged_fn=store.kill_switch_engaged,
+        engage_fn=lambda: store.engage_kill_switch("engaged from dashboard"),
+        release_fn=lambda: store.release_kill_switch("released from dashboard"),
+        on_text="The live kill switch is ENGAGED. Nothing live can trade right now.",
+        off_text="The live kill switch is OFF. Live trading is not blocked.",
+        confirm_text="I understand this will halt every live strategy immediately.",
+        key="live",
+    )
+
+    st.markdown("### Paper trading kill switch")
+    _kill_switch(
+        engaged_fn=store.paper_kill_switch_engaged,
+        engage_fn=lambda: store.engage_paper_kill_switch("engaged from dashboard"),
+        release_fn=lambda: store.release_paper_kill_switch("released from dashboard"),
+        on_text="The paper kill switch is ENGAGED. Every paper strategy is paused.",
+        off_text="The paper kill switch is OFF. Paper strategies are running.",
+        confirm_text="I understand this pauses every paper strategy (live is not affected).",
+        key="paper",
+    )
 
     st.markdown("### Data freshness")
     for symbol in ("NIFTY", "BANKNIFTY"):
@@ -473,12 +649,15 @@ def main() -> None:
     _apply_pending_navigation()
 
     st.sidebar.title("Trading Strategy Builder")
-    page = st.sidebar.radio("Go to", [PAGE_NEW, PAGE_RESULTS, PAGE_MINE, PAGE_SAFETY], key="page")
+    page = st.sidebar.radio(
+        "Go to", [PAGE_NEW, PAGE_RESULTS, PAGE_MINE, PAGE_PAPER, PAGE_SAFETY], key="page"
+    )
 
     pages = {
         PAGE_NEW: page_new_strategy,
         PAGE_RESULTS: page_results,
         PAGE_MINE: page_my_strategies,
+        PAGE_PAPER: page_paper,
         PAGE_SAFETY: page_safety,
     }
     pages[page]()

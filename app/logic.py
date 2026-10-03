@@ -16,6 +16,7 @@ non-technical user can read, never a raised traceback on their screen.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import traceback
 from collections.abc import Callable
@@ -460,9 +461,33 @@ def safe_call(fn: Callable[[], object], *, on_error: str) -> tuple[object | None
 # ----------------------------------------------------------------- storage
 
 
-def save_strategy(store: Store, spec: StrategySpec) -> int:
+def save_strategy(
+    store: Store,
+    spec: StrategySpec,
+    result: PipelineResult | None = None,
+    *,
+    capital: float | None = None,
+    cost_model_label: str | None = None,
+) -> int:
+    """Saves the strategy and, when given, the backtest that was just shown.
+
+    Recording the backtest as a completed run is what lets the strategy earn
+    "Proven" later: the proving gate wants both a backtest and a paper run.
+    Before this, nothing ever recorded a backtest, so no strategy could pass.
+    """
     readback = describe_spec(spec)
-    return store.save_strategy(spec, readback)
+    strategy_id = store.save_strategy(spec, readback)
+    if result is not None and result.ok:
+        run_id = store.start_run(
+            strategy_id,
+            "backtest",
+            {"capital": capital, "cost_model_label": cost_model_label},
+        )
+        store.save_trades(run_id, result.backtest.trades, spec.instrument.symbol)
+        store.finish_run(run_id, result.backtest.metrics)
+        if store.get_strategy(strategy_id)["state"] == "draft":
+            store.set_state(strategy_id, "backtested")
+    return strategy_id
 
 
 def list_strategies_view(store: Store) -> list[dict]:
@@ -472,3 +497,167 @@ def list_strategies_view(store: Store) -> list[dict]:
 
 def list_runs_view(store: Store, strategy_id: int | None = None) -> list[dict]:
     return store.list_runs(strategy_id=strategy_id)
+
+
+# ------------------------------------------------------------ paper trading
+
+
+def kite_status() -> tuple[str, str]:
+    """("connected" | "expired" | "not_connected" | "unreachable", plain-English line)."""
+    from nlt.data import kite
+
+    if not kite.is_connected():
+        return "not_connected", "Kite is not connected. Paste today's token below."
+    try:
+        user_id = kite.check_connection()
+    except kite.KiteTokenExpired:
+        return "expired", "The saved Kite token has expired. Paste today's token below."
+    except kite.KiteError as exc:
+        return "unreachable", f"Could not reach Kite just now: {exc}"
+    return "connected", f"Connected to Kite as {user_id}."
+
+
+def save_kite_token(token: str) -> None:
+    from nlt.data import kite
+
+    kite.save_token(token)
+
+
+def paper_job_installed() -> bool:
+    """Is the every-minute background job in this machine's crontab?"""
+    import subprocess
+
+    try:
+        out = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "# nlt-paper" in out.stdout
+
+
+def paper_problem(spec: StrategySpec) -> str | None:
+    """Why this strategy cannot be paper traded, in plain English, or None."""
+    if spec.instrument.trade_as == "option":
+        return "Option strategies can't be paper traded yet -- there is no option price feed."
+    if spec.instrument.is_universe and spec.instrument.timeframe != "1d":
+        return "Stock baskets can only run on daily candles for now."
+    return None
+
+
+def start_paper(store: Store, strategy_id: int, *, capital: float, cost_model_label: str) -> int:
+    spec = store.load_spec(strategy_id)
+    problem = paper_problem(spec)
+    if problem:
+        raise ValueError(problem)
+    if any(r["strategy_id"] == strategy_id for r in store.active_paper_runs()):
+        raise ValueError("This strategy is already being paper traded.")
+    started_at = pd.Timestamp.now(tz="Asia/Kolkata")
+    run_id = store.start_run(
+        strategy_id,
+        "paper",
+        {
+            "capital": capital,
+            "cost_model_label": cost_model_label,
+            "started_at": started_at.isoformat(),
+        },
+    )
+    store.set_state(strategy_id, "paper")
+    store.set_paper_status(run_id, "waiting", "Started. Waiting for the next finished candle.")
+    return run_id
+
+
+def check_paper_now(store: Store, run_id: int) -> str:
+    """One pass for one run, right now, regardless of the schedule."""
+    from nlt.data.kite import KiteSource
+    from nlt.paper import runner
+
+    run = store.get_run(run_id)
+    spec = store.load_spec(run["strategy_id"])
+    params = json.loads(run["params_json"] or "{}")
+    model, _ = charge_model_for_spec(spec, params.get("cost_model_label", ""))
+    source = KiteSource()
+    result = runner.step(
+        store,
+        run,
+        fetch=lambda sym, tf, a, b: source.bars(sym, tf, a, b),
+        charge_fn=_adapt_charge_fn(model),
+    )
+    return result.message
+
+
+def stop_paper(store: Store, run_id: int) -> None:
+    """Ends a paper run. A completed paper run is what the proving gate counts."""
+    status = store.paper_status(run_id) or {}
+    events = store.paper_events(run_id)
+    metrics = json.loads(status.get("snapshot_json") or "{}")
+    metrics["drift_events"] = sum(e["kind"] == "drift" for e in events)
+    metrics["stopped_at"] = pd.Timestamp.now(tz="Asia/Kolkata").isoformat()
+    store.finish_run(run_id, metrics, status="complete")
+
+
+_HEALTH_LABELS = {
+    "ok": ("success", "Running"),
+    "waiting": ("info", "Waiting for the next candle"),
+    "paused": ("warning", "Paused"),
+    "token_expired": ("error", "Kite token expired"),
+    "not_connected": ("error", "Kite not connected"),
+    "feed_down": ("error", "Price feed problem"),
+    "error": ("error", "Error"),
+}
+
+
+def paper_health_label(health: str) -> tuple[str, str]:
+    """(streamlit message kind, short label) for a run's health."""
+    return _HEALTH_LABELS.get(health, ("info", health))
+
+
+def when(iso: str | None) -> str:
+    if not iso:
+        return ""
+    return pd.Timestamp(iso).tz_convert("Asia/Kolkata").strftime("%d %b %H:%M")
+
+
+def describe_paper_event(event: dict) -> str:
+    """One line of the activity log, written from the recorded event alone."""
+    detail = json.loads(event.get("detail_json") or "{}")
+    kind = event["kind"]
+    qty = event.get("quantity")
+    qty_text = f"{qty:g} " if qty else ""
+    if kind == "signal":
+        return (
+            f"Signal: the entry rule was met on the {when(event['bar_time'])} candle. "
+            "It fills at the next candle's open."
+        )
+    if kind == "entry":
+        verb = "Bought" if event["direction"] == "long" else "Sold short"
+        return (
+            f"{verb} {qty_text}{event['symbol']} at {format_inr(event['price'])} "
+            f"(the open of the {when(event['bar_time'])} candle)."
+        )
+    if kind == "exit":
+        reason = _EXIT_WORDS.get(detail.get("reason"), detail.get("reason", "exit"))
+        pnl = detail.get("net_pnl")
+        pnl_text = (
+            f" Result: {'+' if pnl >= 0 else '-'}{format_inr(abs(pnl))}." if pnl is not None else ""
+        )
+        verb = "Sold" if event["direction"] == "long" else "Bought back"
+        return (
+            f"{verb} {qty_text}{event['symbol']} at {format_inr(event['price'])} "
+            f"on the {when(event['bar_time'])} candle -- {reason}.{pnl_text}"
+        )
+    if kind == "drift":
+        return (
+            f"Kite's prices changed after this was recorded ({detail.get('event')} "
+            f"{detail.get('key')}): recorded {detail.get('recorded')}, now {detail.get('now')}. "
+            "The original record stands."
+        )
+    return detail.get("note", kind)
+
+
+_EXIT_WORDS = {
+    "stop": "stop loss hit",
+    "trailing_stop": "trailing stop hit",
+    "target": "target reached",
+    "condition": "exit rule met",
+    "max_bars": "time limit reached",
+    "square_off": "end-of-day square-off",
+}

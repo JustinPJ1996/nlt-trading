@@ -94,6 +94,7 @@ def run_basket_backtest(
     capital: float = 100_000.0,
     charge_fn=None,
     slippage_pct: float = 0.02,
+    trade_from: pd.Timestamp | None = None,
 ) -> BasketResult:
     """Run `spec` across every symbol in `bars_by_symbol`, sharing one account.
 
@@ -104,6 +105,9 @@ def run_basket_backtest(
     always deterministic -- the same inputs produce the same trades every
     time, which `test_basket.py` checks directly by running twice and
     comparing trade lists.
+
+    `trade_from` means what it means in `run_backtest`: the first bar allowed
+    to signal an entry, with everything earlier used only to warm indicators up.
     """
 
     # The basket loop does not carry the intraday machinery the single-symbol
@@ -310,7 +314,9 @@ def run_basket_backtest(
             if ts not in track.bars.index:
                 continue
             j = track.bars.index.get_loc(ts)
-            weekday_ok = ts.weekday() in spec.schedule.weekdays
+            weekday_ok = ts.weekday() in spec.schedule.weekdays and (
+                trade_from is None or ts >= trade_from
+            )
             sig = bool(track.entry_signal.iloc[j])
             has_next_bar = j + 1 < len(track.bars)
             if sig and weekday_ok and has_next_bar:

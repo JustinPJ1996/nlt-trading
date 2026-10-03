@@ -312,6 +312,138 @@ class Store:
             )
             self._audit(conn, "kill_switch_released", None, None, {"reason": reason})
 
+    # ---------------------------------------------------- paper kill switch
+
+    def paper_kill_switch_engaged(self) -> bool:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT engaged FROM paper_kill_switch WHERE id = 1").fetchone()
+            return bool(row[0])
+        finally:
+            conn.close()
+
+    def engage_paper_kill_switch(self, reason: str) -> None:
+        """Pauses every paper run. Touches nothing live, and nothing already recorded."""
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE paper_kill_switch SET engaged = 1, engaged_at = ?, reason = ? WHERE id = 1",
+                (now(), reason),
+            )
+            self._audit(conn, "paper_kill_switch_engaged", None, None, {"reason": reason})
+
+    def release_paper_kill_switch(self, reason: str) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                "UPDATE paper_kill_switch SET engaged = 0, engaged_at = NULL, reason = NULL "
+                "WHERE id = 1"
+            )
+            self._audit(conn, "paper_kill_switch_released", None, None, {"reason": reason})
+
+    # --------------------------------------------------------------- paper
+
+    def active_paper_runs(self) -> list[dict]:
+        conn = self._connect()
+        try:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM run WHERE mode = 'paper' AND status = 'running' "
+                    "ORDER BY started_at"
+                )
+            ]
+        finally:
+            conn.close()
+
+    def get_run(self, run_id: int) -> dict | None:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def record_paper_event(
+        self,
+        run_id: int,
+        kind: str,
+        event_key: str,
+        *,
+        observed_at: str | None = None,
+        symbol: str = "",
+        bar_time: str | None = None,
+        direction: str | None = None,
+        quantity: float | None = None,
+        price: float | None = None,
+        detail: dict | None = None,
+    ) -> bool:
+        """Records an event the first time it is seen. Returns False if already recorded."""
+        with self.tx() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO paper_event (run_id, kind, event_key, observed_at,
+                   symbol, bar_time, direction, quantity, price, detail_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_id,
+                    kind,
+                    event_key,
+                    observed_at or now(),
+                    symbol,
+                    bar_time,
+                    direction,
+                    quantity,
+                    price,
+                    json.dumps(detail or {}, default=str),
+                ),
+            )
+            return cur.rowcount == 1
+
+    def paper_events(self, run_id: int) -> list[dict]:
+        conn = self._connect()
+        try:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM paper_event WHERE run_id = ? ORDER BY id", (run_id,)
+                )
+            ]
+        finally:
+            conn.close()
+
+    def set_paper_status(
+        self,
+        run_id: int,
+        health: str,
+        message: str = "",
+        last_bar_time: str | None = None,
+        snapshot: dict | None = None,
+    ) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """INSERT INTO paper_status (run_id, updated_at, health, message,
+                   last_bar_time, snapshot_json) VALUES (?,?,?,?,?,?)
+                   ON CONFLICT(run_id) DO UPDATE SET updated_at = excluded.updated_at,
+                     health = excluded.health, message = excluded.message,
+                     last_bar_time = COALESCE(excluded.last_bar_time, last_bar_time),
+                     snapshot_json = CASE WHEN excluded.snapshot_json = '{}'
+                                          THEN snapshot_json ELSE excluded.snapshot_json END""",
+                (
+                    run_id,
+                    now(),
+                    health,
+                    message,
+                    last_bar_time,
+                    json.dumps(snapshot or {}, default=str),
+                ),
+            )
+
+    def paper_status(self, run_id: int) -> dict | None:
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT * FROM paper_status WHERE run_id = ?", (run_id,)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     # ----------------------------------------------------------- daily pnl
 
     def record_daily_pnl(

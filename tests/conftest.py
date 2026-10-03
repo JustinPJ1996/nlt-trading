@@ -27,6 +27,14 @@ def _no_live_ai(monkeypatch):
     monkeypatch.setenv("NLT_LLM_DISABLED", "1")
 
 
+@pytest.fixture(autouse=True)
+def _no_live_kite(monkeypatch, tmp_path):
+    """No test may use the real Kite token on this machine: it is a key to a
+    real trading account, and test results must not depend on the market.
+    Tests that need a token save a fake one into this temporary path."""
+    monkeypatch.setattr("nlt.data.kite.TOKEN_PATH", tmp_path / "kite_enctoken")
+
+
 @pytest.fixture(scope="session")
 def synthetic_bars() -> pd.DataFrame:
     """A deterministic OHLCV series with trend, chop and a crash.

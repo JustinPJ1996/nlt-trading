@@ -111,3 +111,65 @@ CREATE TABLE IF NOT EXISTS kill_switch (
 );
 
 INSERT OR IGNORE INTO kill_switch (id, engaged) VALUES (1, 0);
+
+-- The paper-trading kill switch. Separate from the live one above on purpose
+-- (Justin's call, 2026-10-03): stopping paper trading must not touch live, and
+-- engaging the live switch must not quietly stop the paper record either.
+CREATE TABLE IF NOT EXISTS paper_kill_switch (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    engaged         INTEGER NOT NULL DEFAULT 0,
+    engaged_at      TEXT,
+    reason          TEXT
+);
+
+INSERT OR IGNORE INTO paper_kill_switch (id, engaged) VALUES (1, 0);
+
+-- What a paper run did, written the moment the runner first saw it happen.
+-- Append-only, and enforced by the triggers below rather than by convention:
+-- a paper record that can be quietly corrected after the fact proves nothing.
+-- If the market data later changes what the engine would have done, that is
+-- written as a new 'drift' row; the original row stands.
+--
+-- `event_key` makes each event idempotent: the runner re-derives every event
+-- on every pass, and only the first sighting is recorded.
+CREATE TABLE IF NOT EXISTS paper_event (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER NOT NULL REFERENCES run(id),
+    kind            TEXT    NOT NULL
+                    CHECK (kind IN ('signal', 'entry', 'exit', 'drift', 'note')),
+    event_key       TEXT    NOT NULL,
+    observed_at     TEXT    NOT NULL,
+    symbol          TEXT    NOT NULL DEFAULT '',
+    bar_time        TEXT,
+    direction       TEXT,
+    quantity        REAL,
+    price           REAL,
+    detail_json     TEXT    NOT NULL DEFAULT '{}',
+    UNIQUE (run_id, kind, event_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_event_run ON paper_event(run_id);
+
+CREATE TRIGGER IF NOT EXISTS paper_event_no_update
+BEFORE UPDATE ON paper_event
+BEGIN
+    SELECT RAISE(ABORT, 'paper_event is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS paper_event_no_delete
+BEFORE DELETE ON paper_event
+BEGIN
+    SELECT RAISE(ABORT, 'paper_event is append-only');
+END;
+
+-- The latest state of each paper run, overwritten on every pass: when it last
+-- updated, whether the feed is healthy, open positions and running P&L. The
+-- history lives in paper_event; this is only "where things stand right now".
+CREATE TABLE IF NOT EXISTS paper_status (
+    run_id          INTEGER PRIMARY KEY REFERENCES run(id),
+    updated_at      TEXT    NOT NULL,
+    health          TEXT    NOT NULL,
+    message         TEXT    NOT NULL DEFAULT '',
+    last_bar_time   TEXT,
+    snapshot_json   TEXT    NOT NULL DEFAULT '{}'
+);

@@ -75,6 +75,9 @@ def load_for_spec(
             "price would produce a confident, wrong answer. This is being built."
         )
 
+    if spec.instrument.timeframe != "1d":
+        return _load_intraday(spec, start, end)
+
     if symbol in INDICES:
         source = YahooSource()
         bars = source.bars(symbol, interval=spec.instrument.timeframe, start=start, end=end)
@@ -118,3 +121,39 @@ def load_for_spec(
         )
 
     return bars_by_symbol, notes
+
+
+def _load_intraday(
+    spec: StrategySpec, start: dt.date | None, end: dt.date | None
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """Intraday candles come from Kite, for one index or one share.
+
+    A basket stays daily-only: `run_basket_backtest` has no square-off, so an
+    intraday basket would hold positions overnight. Refused here too, so the
+    user hears it before a hundred symbols are downloaded for nothing.
+    """
+    from nlt.data import kite
+
+    symbol = spec.instrument.symbol
+    if spec.instrument.is_universe:
+        raise NotImplementedError(
+            f"{symbol} is a basket of stocks, and baskets can only be tested on daily "
+            "candles for now -- the end-of-day square-off is not built for baskets yet."
+        )
+    if not kite.is_connected():
+        raise kite.KiteNotConnected(
+            f"{spec.instrument.timeframe} candles come from Kite, and Kite is not connected. "
+            "Paste today's Kite token on the Paper trading page, then run this again."
+        )
+    source = kite.KiteSource()
+    bars = source.bars(symbol, spec.instrument.timeframe, start=start, end=end)
+    notes = [
+        f"{spec.instrument.timeframe} candles for {symbol} from Kite.",
+        *source.last_notes,
+    ]
+    if spec.instrument.trade_as == "stock":
+        notes.append(
+            "Intraday share prices from Kite are not adjusted for splits or bonuses; "
+            "a split inside the test window would look like a real price move."
+        )
+    return {symbol: bars}, notes
