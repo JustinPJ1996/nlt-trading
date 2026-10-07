@@ -100,7 +100,10 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
             )
         )
 
-    if not comparison.beat_benchmark:
+    # Strictly worse. A tie is not "would have done better" -- and the commonest
+    # tie is 0% against 0%: an account too small for one futures lot, which
+    # could neither trade nor hold.
+    if comparison.excess_return_pct < 0:
         flags.append(
             Flag(
                 severity="critical" if lost_money else "warning",
@@ -402,6 +405,15 @@ def _summary(
     lost_money = "lost_money" in codes
     underperformed = "underperformed_benchmark" in codes
 
+    # First, because every sentence below describes trading that happened.
+    if metrics["total_trades"] == 0:
+        if any(w.startswith("ACCOUNT TOO SMALL") for w in result.warnings):
+            return (
+                "This strategy never took a trade: the account is too small to buy even one "
+                "lot of this contract."
+            )
+        return "This strategy never took a single trade in the backtest period."
+
     if lost_money and underperformed:
         return (
             f"This strategy lost money, and it also did far worse than {comparison.benchmark_name}."
@@ -431,9 +443,6 @@ def _summary(
             "This beat buy-and-hold, but with a drawdown severe enough that most people would "
             "have abandoned it."
         )
-    if metrics["total_trades"] == 0:
-        return "This strategy never took a single trade in the backtest period."
-
     years = (
         (result.equity.index[-1] - result.equity.index[0]).days / 365.25
         if len(result.equity) > 1

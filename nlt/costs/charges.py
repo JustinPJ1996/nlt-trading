@@ -110,6 +110,27 @@ FUTURES_TXN_CHARGE_RATE = 0.0000183
 FUTURES_STAMP_DUTY_RATE = 0.00002
 
 # --------------------------------------------------------------------------
+# MCX commodity FUTURES (non-agricultural: energy and bullion).
+# Source: https://zerodha.com/charges , "Commodity - Futures" section,
+# fetched 2026-10-07.
+# --------------------------------------------------------------------------
+
+# Brokerage: 0.03% of notional or Rs 20 per executed order, whichever is
+# lower, both legs -- the same as NSE futures.
+MCX_FUTURES_BROKERAGE_RATE = 0.0003
+MCX_FUTURES_BROKERAGE_CAP = 20.0
+
+# CTT (commodity transaction tax), the commodity counterpart of STT: 0.01% of
+# notional, sell side only, non-agricultural commodities.
+MCX_FUTURES_CTT_SELL_RATE = 0.0001
+
+# MCX exchange transaction charge on futures: 0.0021% of notional, both legs.
+MCX_FUTURES_TXN_CHARGE_RATE = 0.000021
+
+# Stamp duty on commodity futures: 0.002% of notional, buy side only.
+MCX_FUTURES_STAMP_DUTY_RATE = 0.00002
+
+# --------------------------------------------------------------------------
 # NSE cash equity DELIVERY -- needed for the eventual stock phase, not options
 # trading, but priced the same way.
 # Source: https://zerodha.com/charges , "Equity Delivery" section,
@@ -269,6 +290,41 @@ class NseFuturesCharges:
         stamp_duty = FUTURES_STAMP_DUTY_RATE * turnover if side == "buy" else 0.0
 
         return _build_breakdown(brokerage, stt, transaction_charges, sebi_fees, stamp_duty)
+
+
+@dataclass(frozen=True)
+class McxFuturesCharges:
+    """MCX commodity futures (crude oil, natural gas, gold, silver), one executed order.
+
+    `quantity` is in the units the price is quoted in -- barrels, mmBtu, lots of
+    10 grams -- so `price * quantity` is the contract value. One CRUDEOIL lot is
+    a quantity of 100, not 1; see `nlt.data.futures`.
+    """
+
+    def charges(
+        self,
+        price: float,
+        quantity: int,
+        side: str,
+        *,
+        settled_at_expiry: bool = False,
+    ) -> ChargeBreakdown:
+        _check_side(side)
+        turnover = price * quantity
+
+        brokerage = (
+            min(MCX_FUTURES_BROKERAGE_RATE * turnover, MCX_FUTURES_BROKERAGE_CAP)
+            if turnover > 0
+            else 0.0
+        )
+        ctt = MCX_FUTURES_CTT_SELL_RATE * turnover if side == "sell" else 0.0
+        transaction_charges = MCX_FUTURES_TXN_CHARGE_RATE * turnover
+        sebi_fees = SEBI_TURNOVER_FEE_RATE * turnover
+        stamp_duty = MCX_FUTURES_STAMP_DUTY_RATE * turnover if side == "buy" else 0.0
+
+        # CTT travels in the `stt` field: it is the same kind of tax on the same
+        # leg, and GST is not charged on either.
+        return _build_breakdown(brokerage, ctt, transaction_charges, sebi_fees, stamp_duty)
 
 
 @dataclass(frozen=True)

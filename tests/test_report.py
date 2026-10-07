@@ -596,6 +596,41 @@ def test_zero_trades_produces_sensible_verdict_not_a_crash():
     assert "nan" not in verdict.summary.lower()
 
 
+def _tied_at_nothing(warnings: list[str]):
+    """No trades, and a benchmark that could not trade either: 0% against 0%."""
+    equity = _flat_equity(300, 100_000.0)
+    result = _build_result([], equity, warnings=warnings)
+    comparison = Comparison(
+        strategy_return_pct=0.0,
+        benchmark_return_pct=0.0,
+        excess_return_pct=0.0,
+        beat_benchmark=False,
+        strategy_max_drawdown_pct=0.0,
+        benchmark_max_drawdown_pct=0.0,
+        time_in_market_pct=0.0,
+        benchmark_name="holding Gold futures, closed at each expiry",
+    )
+    return assess(result, comparison)
+
+
+def test_a_strategy_that_never_traded_is_never_said_to_have_made_money():
+    """Found 2026-10-07 on a Gold backtest with Rs 1 lakh: 0% against 0% read
+    "This made money, but did worse than holding Gold futures" -- both halves
+    untrue."""
+    verdict = _tied_at_nothing([])
+    assert verdict.summary == "This strategy never took a single trade in the backtest period."
+
+
+def test_a_tie_is_not_called_doing_worse():
+    verdict = _tied_at_nothing([])
+    assert "underperformed_benchmark" not in {f.code for f in verdict.flags}
+
+
+def test_an_account_too_small_for_one_lot_says_so_in_the_verdict():
+    verdict = _tied_at_nothing(["ACCOUNT TOO SMALL FOR ONE LOT: one lot of Gold ..."])
+    assert "too small to buy even one lot" in verdict.summary
+
+
 # --------------------------------------------------------------------------
 # 8. no jargon in summaries
 # --------------------------------------------------------------------------

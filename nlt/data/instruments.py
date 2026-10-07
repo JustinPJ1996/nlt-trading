@@ -44,6 +44,12 @@ def lot_size(symbol: str, trade_as: str) -> int:
     contract term, and applying one to a stock caps a position at that many
     shares, which is never what anyone means.
     """
+    if trade_as == "future":
+        # Units of the quoted price per lot -- 100 for a 100-barrel crude lot.
+        # No fallback: an unknown contract's size is refused, never assumed.
+        from nlt.data.futures import contract
+
+        return contract(symbol).multiplier
     if trade_as != "option":
         return 1
     return LOT_SIZES.get(symbol.upper().strip(), FALLBACK_LOT_SIZE)
@@ -51,6 +57,15 @@ def lot_size(symbol: str, trade_as: str) -> int:
 
 def lot_size_note(symbol: str, trade_as: str) -> str | None:
     """A plain-English caveat about the lot size used, or None if not applicable."""
+    if trade_as == "future":
+        from nlt.data.futures import contract
+
+        c = contract(symbol)
+        if c.exchange != "NFO":
+            # MCX lots are fixed by the contract specification, and the series
+            # is that one contract's history.
+            return None
+        trade_as = "option"  # NSE index futures share the options lot table
     if trade_as != "option":
         return None
 

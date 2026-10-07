@@ -188,7 +188,11 @@ class Draft(Base):
 
 # ------------------------------------------------------------------ refusals
 
-_SUPPORTED = "NIFTY, BANKNIFTY, single NSE stocks, and the NIFTY 50 / 100 / 500 stock baskets"
+_SUPPORTED = (
+    "NIFTY, BANKNIFTY, single NSE stocks, the NIFTY 50 / 100 / 500 stock baskets, "
+    "NIFTY and BANKNIFTY futures, and MCX futures on crude oil, natural gas, gold and "
+    "silver (and their mini contracts)"
+)
 
 _REFUSALS: dict[str, tuple[str, str]] = {
     "question": (
@@ -222,8 +226,8 @@ _REFUSALS: dict[str, tuple[str, str]] = {
         "confident-looking number for a completely different trade.",
     ),
     "unsupported_instrument": (
-        "That trades something this platform can't test yet (for example futures, "
-        f"commodities, VIX or other markets). What it can test: {_SUPPORTED}.",
+        "That trades something this platform can't test yet (for example stock futures, "
+        f"other commodities, VIX or other markets). What it can test: {_SUPPORTED}.",
         "Substituting a different instrument would test a trade you never described.",
     ),
     "vague": (
@@ -338,7 +342,8 @@ approximated. Leaving out part of the sentence is the worst mistake you can make
 - "fundamental": uses P/E, ROE, EPS, revenue, debt, promoter holding or any fundamental data
 - "event": depends on news, dividends, board meetings, deals, tariffs, announcements
 - "options": trades options (calls, puts, straddles, premiums, strikes)
-- "unsupported_instrument": futures, commodities, VIX, currencies, anything not listed below
+- "unsupported_instrument": stock futures, commodities other than those listed below, VIX,
+  currencies, anything not listed below
 - "vague": no precise entry rule ("buy dips", "sell rallies")
 - "unsupported_rule": needs something not in the indicator list or not expressible in the schema
   (e.g. "first 15-minute high", "gap up", "while price holds X"). Set unsupported_quote to the
@@ -348,7 +353,11 @@ For refusals, fill only kind, refuse_category and (optionally) unsupported_quote
 ## Instruments (field "symbol")
 "NIFTY" (the index), "BANKNIFTY", "NIFTY 50" / "NIFTY 100" / "NIFTY 500" (baskets of stocks,
 only when the sentence says stocks of that index), or a single NSE ticker in capitals such as
-"RELIANCE", "TCS", "HDFCBANK". Never pick an instrument the sentence does not name.
+"RELIANCE", "TCS", "HDFCBANK". Futures: "NIFTY" or "BANKNIFTY" when the sentence says futures,
+and the MCX contracts "CRUDEOIL", "CRUDEOILM" (crude oil mini), "NATURALGAS", "NATGASMINI"
+(natural gas mini), "GOLD", "GOLDM" (gold mini), "SILVER", "SILVERM" (silver mini). Quote the
+words that name the contract, including "futures", as evidence for "instrument". Never pick an
+instrument the sentence does not name.
 
 ## Indicators (the ONLY ones available)
 {vocabulary()}
@@ -638,7 +647,9 @@ def parse_llm(
     _, rules_kwargs, instrument_question = rules._extract_instrument(lowered)
     if instrument_question is not None:
         return TranslationResult(spec=None, questions=[instrument_question], source="rules")
-    if re.search(r"\bfutures?\b|\bfut\b", lowered):
+    # The rules refuse futures on anything they have no contract for; this is
+    # the backstop if a futures word ever got past them without a contract.
+    if rules_kwargs.get("trade_as") != "future" and re.search(r"\bfutures?\b|\bfut\b", lowered):
         return _refusal("unsupported_instrument")
 
     masked, timeframe, timeframe_refusal = rules._extract_timeframe(lowered)
@@ -826,7 +837,7 @@ def parse_llm(
 
     instrument_kwargs = {
         "symbol": symbol,
-        "trade_as": "index" if symbol in INDICES else "stock",
+        "trade_as": rules_kwargs.get("trade_as") or ("index" if symbol in INDICES else "stock"),
     }
     if timeframe:
         instrument_kwargs["timeframe"] = timeframe
@@ -841,7 +852,7 @@ def parse_llm(
     exit_kwargs = ex.model_dump(exclude_none=True)
     exit_kwargs["stop_pct"] = stop_pct
     exit_kwargs = {k: v for k, v in exit_kwargs.items() if v is not None}
-    schedule_kwargs = {"square_off": square_off} if square_off else {}
+    schedule_kwargs = rules._schedule_kwargs(instrument_kwargs, square_off, None)
 
     try:
         spec = StrategySpec(

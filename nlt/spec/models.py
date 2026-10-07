@@ -321,7 +321,10 @@ class Instrument(Base):
 
     symbol: str = "NIFTY"
     timeframe: Literal["1m", "3m", "5m", "15m", "30m", "1h", "1d"] = "1d"
-    trade_as: Literal["index", "option", "stock"] = "index"
+    # "future" trades the nearest-month futures contract of `symbol`: an MCX
+    # commodity (CRUDEOIL, GOLDM, ...) or an NSE index (NIFTY, BANKNIFTY). Any
+    # position is closed when its contract expires -- see `nlt.data.futures`.
+    trade_as: Literal["index", "option", "stock", "future"] = "index"
 
     # How to choose when more symbols signal than there is room to hold. There
     # is no neutral answer, so it is stated rather than left to whatever order
@@ -365,6 +368,29 @@ class Instrument(Base):
             f"{v!r} is not an index ({', '.join(INDICES)}), a known universe, "
             "or a valid NSE ticker symbol"
         )
+
+    @model_validator(mode="after")
+    def _futures_name_a_contract(self):
+        """A future must be a contract we have terms for; a commodity can only be a future.
+
+        The terms -- above all how many units one lot is -- decide every rupee of
+        profit and loss, so an unknown contract is refused rather than given a
+        guessed size. And a commodity name read as a share would be backtested
+        on whatever NSE ticker happened to share its letters.
+        """
+        from nlt.data.futures import FUTURES, is_commodity
+
+        if self.trade_as == "future" and self.symbol not in FUTURES:
+            raise ValueError(
+                f"{self.symbol} futures are not supported; supported: {', '.join(FUTURES)}"
+            )
+        if is_commodity(self.symbol) and self.trade_as != "future":
+            raise ValueError(f"{self.symbol} is an MCX commodity and can only be traded as futures")
+        return self
+
+    @property
+    def is_future(self) -> bool:
+        return self.trade_as == "future"
 
     @property
     def is_universe(self) -> bool:
@@ -423,7 +449,8 @@ class StrategySpec(Base):
     @model_validator(mode="after")
     def _volume_indicators_need_volume(self):
         """Index feeds often report zero volume, which makes these silently useless."""
-        if self.instrument.symbol in ("NIFTY", "BANKNIFTY"):
+        # Futures are traded contracts with real volume; only the index has none.
+        if self.instrument.symbol in INDICES and not self.instrument.is_future:
             offenders = [i.id for i in self.indicators if get_indicator(i.type).needs_volume]
             if offenders:
                 raise ValueError(

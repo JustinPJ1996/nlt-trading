@@ -220,6 +220,18 @@ def _instrument_desc(spec: StrategySpec) -> str:
     if spec.instrument.trade_as == "index":
         return f"{spec.instrument.symbol}, on {tf_word} bars"
 
+    if spec.instrument.is_future:
+        # Say what one lot physically is. "1 lot of GOLD" means nothing until
+        # you know it is a kilogram priced per 10 grams -- and the readback is
+        # where a wrong contract size would be caught by a person.
+        from nlt.data.futures import contract
+
+        c = contract(spec.instrument.symbol)
+        return (
+            f"{c.title} futures ({c.market}), nearest-month contract, on {tf_word} bars. "
+            f"{c.describe_lot}"
+        )
+
     if spec.instrument.trade_as == "stock" and spec.instrument.is_universe:
         # The whole point of this line: a user who typed "nifty 100 stocks"
         # may not have registered that they are about to backtest a hundred
@@ -277,6 +289,8 @@ def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str)
     # plausible is worse than no line.
     if spec.schedule.intraday and timeframe != "1d":
         lines.append(f"Square off at {spec.schedule.square_off.strftime('%H:%M')} if still open")
+    if spec.instrument.is_future:
+        lines.append("Close at the end of the contract's expiry day if still open")
     return lines
 
 
@@ -299,6 +313,14 @@ def _lot_size_for(spec: StrategySpec) -> int:
 
 def _sizing_desc(spec: StrategySpec) -> str:
     s = spec.sizing
+    if s.mode == "fixed_lots" and spec.instrument.is_future:
+        # Futures are ordered in lots, and "quantity 100" of gold would be 100
+        # lots of 10 grams to anyone reading it. Say lots, and what they are.
+        from nlt.data.futures import contract
+
+        c = contract(spec.instrument.symbol)
+        each = " each" if s.lots != 1 else ""
+        return f"{_plural(s.lots, 'lot')} per trade ({c.lot_text}{each})"
     if s.mode == "fixed_lots":
         lot_size = _lot_size_for(spec)
         quantity = s.lots * lot_size
@@ -328,7 +350,9 @@ def _risk_lines(spec: StrategySpec) -> list[str]:
         lines.append(
             f"Never put more than {_num(r.max_position_pct)}% of the account into one position"
         )
-    if r.max_lots is not None:
+    if r.max_lots is not None and spec.instrument.is_future:
+        lines.append(f"Never hold more than {_plural(r.max_lots, 'lot')}")
+    elif r.max_lots is not None:
         lot_size = _lot_size_for(spec)
         max_quantity = r.max_lots * lot_size
         lines.append(

@@ -52,7 +52,11 @@ class Session:
 
 
 NSE_EQUITY = Session("NSE equity & F&O", dt.time(9, 15), dt.time(15, 30), (0, 1, 2, 3, 4))
-MCX = Session("MCX commodities", dt.time(9, 0), dt.time(23, 30), (0, 1, 2, 3, 4))
+# MCX's evening close follows US daylight saving: 23:30 from the second Sunday of
+# March, 23:55 from the first Sunday of November. The later of the two is used,
+# so no winter candle is thrown away as "after hours"; everything that depends
+# on where a session really ended reads it off the candles, not this clock.
+MCX = Session("MCX commodities", dt.time(9, 0), dt.time(23, 55), (0, 1, 2, 3, 4))
 
 
 def _session_minutes(session: Session) -> int:

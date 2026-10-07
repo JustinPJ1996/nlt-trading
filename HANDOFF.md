@@ -123,6 +123,7 @@ Ask before changing any of these; each was a deliberate decision.
 | `nlt/translate/rules.py` | English → spec, pattern table, no LLM |
 | `nlt/translate/llm.py` | Second-pass AI reader via OpenRouter, and every check on its answers |
 | `nlt/data/kite.py` | Read-only Kite candles via the web-session token; the only door to Zerodha for data |
+| `nlt/data/futures.py` | Futures contracts: lot sizes, expiry rules, MCX hours |
 | `nlt/data/kite_login.py` | Logs in to Kite by itself (password + authenticator) to get that token; logs in, nothing else |
 | `nlt/paper/runner.py` | Paper trading: the engine re-run each pass, plus an append-only record |
 | `nlt/translate/readback.py` | Spec → plain English, deterministic |
@@ -229,6 +230,37 @@ Saving a strategy from its results now records the backtest as a completed run
 
 **Not built:** the option-chain recorder, and any order placement (Phase 4).
 
+### Futures: MCX and NSE index — **BUILT (2026-10-07)**
+
+Backtest and paper trade NIFTY/BANKNIFTY futures and eight MCX contracts: Crude
+Oil, Natural Gas, Gold, Silver and their minis. Options on MCX wait with the
+rest of Phase 2. Justin's decisions, each with its trade-off explained to him:
+
+- **At expiry, close; never roll.** A position is closed at the expiry day's
+  close and charged for that exit; the strategy re-enters only on a new signal.
+  A signal on an expiry day's last candle is skipped (it would fill in the next
+  contract on the old contract's levels). The benchmark follows the same rule.
+- **No borrowing.** A futures position is paid for in full, like a share.
+- **20% per position**, the share limit (futures had none; options are 10%).
+  A small account gets an "ACCOUNT TOO SMALL FOR ONE LOT" warning naming the
+  capital that would work: one Gold lot is about Rs 1.5 crore.
+
+Traps, all tested: Kite says lot size 1 for every MCX contract -- it is the order
+unit, not the size (crude is 100 barrels; gold 1 kg priced per 10 g, so x100).
+Expiry dates are computed: Kite keeps no list of expired contracts, and the folk
+rules ("crude expires on the 19th") are wrong -- MCX energy expires one US
+business day before the NYMEX contract, so US holidays move it. The rules are
+held to an answer key (`tests/fixtures/futures_expiry_key.json`): every Kite
+listing on 2026-10-07 and 509 contract switches since 2020 seen in Kite's open
+interest; three Diwali/Gurpurab-week bullion expiries are listed exceptions.
+MCX closes 23:30, or 23:55 in winter; paper trading follows each market's hours.
+Daily history is Kite's continuous series from 2020; **intraday futures history
+is only the live contract's life** (Kite keeps none for expired contracts), and
+after each expiry intraday paper runs never re-judge the old contract.
+
+Also fixed on the way: a strategy with no trades was summarised as "made money,
+but did worse than holding" at 0% vs 0%; a tie is no longer called worse.
+
 ### Phase 4 — Live — **NOT STARTED**
 
 `nlt/risk/` and `nlt/broker/` are empty. Needs: an order router, every order
@@ -262,7 +294,7 @@ corporate events, multi-user, the factual-questions surface Justin chose
 | Stock universes | 8 | Engine ready; parser handles some |
 | Fundamentals | 8 | Phase 5 |
 | Corporate events | 7 | Phase 5 |
-| Futures / MCX | 5 | Not started |
+| Futures / MCX | 5 | Futures built (2026-10-07); all 5 still refused, each for a specific missing rule |
 | Single stocks | 3 | Works |
 | Multi-leg options | 2 | Phase 2 |
 | Robo / portfolio | 3 | Out of scope |
