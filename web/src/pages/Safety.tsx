@@ -5,14 +5,14 @@ import { ErrorLine, Working } from "../components/Callout";
 const SWITCHES = {
   live: {
     title: "Live trading",
-    on: "On. Nothing can trade with real money.",
-    off: "Off. Live trading is not blocked.",
+    on: "Nothing can trade with real money until you turn it off.",
+    off: "Live trading is not blocked.",
     confirm: "I understand this stops every live strategy immediately.",
   },
   paper: {
     title: "Paper trading",
-    on: "On. Every paper strategy is paused.",
-    off: "Off. Paper strategies are running.",
+    on: "Every paper strategy is paused until you turn it off.",
+    off: "Paper strategies are running.",
     confirm: "I understand this pauses every paper strategy. Live trading is not affected.",
   },
 } as const;
@@ -45,34 +45,31 @@ function KillSwitch({
   }
 
   return (
-    <div className="panel">
-      <div className="switch-row">
-        <div>
-          <h3 className="section-title" style={{ marginBottom: 6 }}>
-            {text.title} kill switch
-          </h3>
-          <p className="switch-state">
-            <span className="dot" style={{ background: engaged ? "var(--critical)" : "var(--good)" }} aria-hidden="true" />
-            {engaged ? text.on : text.off}
-          </p>
-        </div>
-        <div className="stack">
-          {engaged ? (
-            <button className="btn secondary" onClick={() => flip("release")} disabled={busy}>
-              Turn off the kill switch
+    <div className="panel switch">
+      <div className="switch-head">
+        <h3 className="switch-title">{text.title} kill switch</h3>
+        <span className={`tag ${engaged ? "critical" : "good"}`}>
+          <span className="dot" aria-hidden="true" />
+          {engaged ? "On" : "Off"}
+        </span>
+      </div>
+      <p className="muted">{engaged ? text.on : text.off}</p>
+      <div className="switch-action">
+        {engaged ? (
+          <button className="btn secondary" onClick={() => flip("release")} disabled={busy}>
+            Turn off the kill switch
+          </button>
+        ) : (
+          <>
+            <label className="check">
+              <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} />
+              <span>{text.confirm}</span>
+            </label>
+            <button className="btn danger" onClick={() => flip("engage")} disabled={!sure || busy}>
+              Turn on the kill switch
             </button>
-          ) : (
-            <>
-              <label className="check">
-                <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} />
-                <span>{text.confirm}</span>
-              </label>
-              <button className="btn danger" onClick={() => flip("engage")} disabled={!sure || busy}>
-                Turn on the kill switch
-              </button>
-            </>
-          )}
-        </div>
+          </>
+        )}
       </div>
       {error && (
         <div style={{ marginTop: 12 }}>
