@@ -122,7 +122,8 @@ Ask before changing any of these; each was a deliberate decision.
 | `nlt/spec/models.py` | The recipe format and every validator |
 | `nlt/translate/rules.py` | English → spec, pattern table, no LLM |
 | `nlt/translate/llm.py` | Second-pass AI reader via OpenRouter, and every check on its answers |
-| `nlt/data/kite.py` | Read-only Kite candles via the web-session token; the only door to Zerodha |
+| `nlt/data/kite.py` | Read-only Kite candles via the web-session token; the only door to Zerodha for data |
+| `nlt/data/kite_login.py` | Logs in to Kite by itself (password + authenticator) to get that token; logs in, nothing else |
 | `nlt/paper/runner.py` | Paper trading: the engine re-run each pass, plus an append-only record |
 | `nlt/translate/readback.py` | Spec → plain English, deterministic |
 | `nlt/indicators/` | 43 indicators matching TradingView's Pine formulas |
@@ -183,6 +184,29 @@ on any POST/PUT/DELETE call or order path. The token lives in
 `~/.config/nlt/kite_enctoken` (mode 600, outside the public repo). The app does
 not tell the user how to extract the token from the browser -- an automated
 safety check blocked writing those instructions; Balajee can show Justin.
+
+**Automatic daily login (2026-10-07).** Justin, after confirming with Balajee
+and being told the trade-offs, chose to stop pasting the token and let the app
+log in by itself, adapted from a script Balajee shared (kept at
+`~/kite_api/kite_api.py`, outside the repo). `nlt/data/kite_login.py` replays
+the website login -- user id + password, then a 6-digit code it computes from
+the authenticator secret -- and saves the `enctoken`. `kite._get` calls it when
+there is no token or Kite rejects the old one, at most once per call. The cost:
+the password and authenticator secret, stored in `~/.config/nlt/kite_login.json`
+(mode 600), are together the full keys to the real account and do not expire.
+
+Because the paper job runs every minute and Zerodha locks accounts after
+repeated failures, logging in never hammers: a rejected password stops all
+attempts until the login is saved again; a rejected code is retried once, 15
+minutes later, then stops; a network failure waits 15 minutes. State lives in
+`~/.config/nlt/kite_login_state.json`. `tests/test_kite_login.py` covers this;
+each rule was checked by breaking it and watching a test fail. The Kite web
+login also posts, so it cannot live in `kite.py`, whose test forbids any POST.
+Pasting a token by hand still works as a fallback.
+
+Live order placement is deliberately **left open**: Justin does not want the
+integration limited to read-only forever, but has not decided to trade through
+it. Nothing places orders today.
 
 **How paper trading works** (`nlt/paper/runner.py`): every pass re-runs the
 *same* backtest engine on closed candles up to now, with `trade_from` set so

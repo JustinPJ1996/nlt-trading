@@ -33,6 +33,9 @@ def _no_live_kite(monkeypatch, tmp_path):
     real trading account, and test results must not depend on the market.
     Tests that need a token save a fake one into this temporary path."""
     monkeypatch.setattr("nlt.data.kite.TOKEN_PATH", tmp_path / "kite_enctoken")
+    # Nor the real saved login: a test must never log in to a real account.
+    monkeypatch.setattr("nlt.data.kite_login.CREDENTIALS_PATH", tmp_path / "kite_login.json")
+    monkeypatch.setattr("nlt.data.kite_login.STATE_PATH", tmp_path / "kite_login_state.json")
 
 
 @pytest.fixture(scope="session")

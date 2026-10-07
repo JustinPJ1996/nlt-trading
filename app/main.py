@@ -412,10 +412,35 @@ def _kite_section() -> None:
     st.markdown("### Kite connection")
     status, line = logic.kite_status()
     {"connected": st.success, "expired": st.error}.get(status, st.warning)(line)
+    has_login = logic.has_kite_login()
     with st.expander(
-        "Replace the Kite token" if status == "connected" else "Paste today's Kite token",
+        "Change your Kite login" if has_login else "Save your Kite login",
         expanded=status != "connected",
     ):
+        st.caption(
+            "Saved on this computer only, readable only by you, and never shown again. The app "
+            "uses it to log in to Kite by itself each morning. If Kite says the password is "
+            "wrong, it stops trying, so that Zerodha does not lock your account."
+        )
+        with st.form("kite_login_form", clear_on_submit=True):
+            user_id = st.text_input("Kite user ID")
+            password = st.text_input("Kite password", type="password")
+            secret = st.text_input(
+                "Authenticator secret (the long key, not the 6-digit code)", type="password"
+            )
+            if st.form_submit_button("Save login", type="primary"):
+                _, err = logic.safe_call(
+                    lambda: logic.save_kite_login(user_id, password, secret),
+                    on_error="Could not save that login",
+                )
+                if err:
+                    st.error(err)
+                else:
+                    st.rerun()
+        if has_login and st.button("Forget my Kite login"):
+            logic.forget_kite_login()
+            st.rerun()
+    with st.expander("Or paste a token by hand"):
         st.caption(
             "The token stops working each morning, so this is a daily step. It is saved on "
             "this computer only, never shown again, and only ever used to read prices."

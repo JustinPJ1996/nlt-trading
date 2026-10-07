@@ -504,16 +504,20 @@ def list_runs_view(store: Store, strategy_id: int | None = None) -> list[dict]:
 
 def kite_status() -> tuple[str, str]:
     """("connected" | "expired" | "not_connected" | "unreachable", plain-English line)."""
-    from nlt.data import kite
+    from nlt.data import kite, kite_login
 
     if not kite.is_connected():
-        return "not_connected", "Kite is not connected. Paste today's token below."
+        return "not_connected", "Kite is not connected. Save your Kite login below."
     try:
         user_id = kite.check_connection()
     except kite.KiteTokenExpired:
-        return "expired", "The saved Kite token has expired. Paste today's token below."
+        return "expired", "The saved Kite token has expired. Save your Kite login below."
+    except kite.KiteLoginFailed as exc:
+        return "expired", f"Could not log in to Kite. {exc}"
     except kite.KiteError as exc:
         return "unreachable", f"Could not reach Kite just now: {exc}"
+    if kite_login.has_credentials():
+        return "connected", f"Connected to Kite as {user_id}. It logs in again by itself."
     return "connected", f"Connected to Kite as {user_id}."
 
 
@@ -521,6 +525,24 @@ def save_kite_token(token: str) -> None:
     from nlt.data import kite
 
     kite.save_token(token)
+
+
+def has_kite_login() -> bool:
+    from nlt.data import kite_login
+
+    return kite_login.has_credentials()
+
+
+def save_kite_login(user_id: str, password: str, authenticator_secret: str) -> None:
+    from nlt.data import kite_login
+
+    kite_login.save_credentials(user_id, password, authenticator_secret)
+
+
+def forget_kite_login() -> None:
+    from nlt.data import kite_login
+
+    kite_login.forget_credentials()
 
 
 def paper_job_installed() -> bool:
@@ -600,6 +622,7 @@ _HEALTH_LABELS = {
     "paused": ("warning", "Paused"),
     "token_expired": ("error", "Kite token expired"),
     "not_connected": ("error", "Kite not connected"),
+    "login_failed": ("error", "Kite login failed"),
     "feed_down": ("error", "Price feed problem"),
     "error": ("error", "Error"),
 }

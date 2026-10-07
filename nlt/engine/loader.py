@@ -143,7 +143,7 @@ def _load_intraday(
     if not kite.is_connected():
         raise kite.KiteNotConnected(
             f"{spec.instrument.timeframe} candles come from Kite, and Kite is not connected. "
-            "Paste today's Kite token on the Paper trading page, then run this again."
+            "Save your Kite login on the Paper trading page, then run this again."
         )
     source = kite.KiteSource()
     bars = source.bars(symbol, spec.instrument.timeframe, start=start, end=end)

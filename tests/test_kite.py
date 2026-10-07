@@ -111,10 +111,10 @@ def test_the_kite_module_contains_no_way_to_send_anything_but_get() -> None:
 
 
 def test_no_other_module_talks_to_zerodha() -> None:
-    """`nlt/data/kite.py` is the only door. Everything else goes through it."""
+    """`nlt/data/kite.py` reads and `nlt/data/kite_login.py` logs in. Nothing else may."""
     offenders = []
     for path in [*REPO.glob("nlt/**/*.py"), *REPO.glob("app/**/*.py"), *REPO.glob("scripts/*.py")]:
-        if path == KITE_SOURCE:
+        if path in (KITE_SOURCE, KITE_SOURCE.with_name("kite_login.py")):
             continue
         text = path.read_text()
         if "kite.zerodha.com" in text or "enctoken" in text.lower().replace("kite_enctoken", ""):

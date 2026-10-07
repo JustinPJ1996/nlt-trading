@@ -296,6 +296,7 @@ def test_the_record_cannot_be_edited_or_deleted(daily, tmp_path):
     [
         (kite.KiteTokenExpired("x"), "token_expired"),
         (kite.KiteNotConnected("x"), "not_connected"),
+        (kite.KiteLoginFailed("x"), "login_failed"),
         (kite.KiteUnavailable("x"), "feed_down"),
     ],
 )

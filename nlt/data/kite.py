@@ -19,6 +19,10 @@ any appears.
 The token lives in `~/.config/nlt/kite_enctoken`, outside the repository (which
 is public), readable only by this user. It is written by `save_token` and never
 printed, logged, or shown on screen again.
+
+If a Kite login has been saved, `nlt/data/kite_login.py` fetches a fresh token
+by itself whenever there is none or Kite rejects the old one. Logging in has to
+POST, so it lives in that module, not here: this one still only reads.
 """
 
 from __future__ import annotations
@@ -85,11 +89,15 @@ class KiteNotConnected(KiteError):
 
 
 class KiteTokenExpired(KiteError):
-    """The saved token no longer works -- the user must paste a fresh one."""
+    """Kite rejected the token, and logging in again did not help or was not possible."""
 
 
 class KiteUnavailable(KiteError):
     """Kite could not be reached, or answered with something unusable."""
+
+
+class KiteLoginFailed(KiteError):
+    """A saved Kite login was tried and did not work. The message says what to do."""
 
 
 # ------------------------------------------------------------------ the token
@@ -117,21 +125,52 @@ def load_token() -> str | None:
     return token or None
 
 
+def _can_log_in() -> bool:
+    from nlt.data import kite_login
+
+    return kite_login.has_credentials()
+
+
+def _log_in() -> str:
+    from nlt.data import kite_login
+
+    kite_login.login()
+    token = load_token()
+    if token is None:
+        raise KiteLoginFailed("Kite login finished but no token was saved")
+    return token
+
+
 def is_connected() -> bool:
-    return load_token() is not None
+    return load_token() is not None or _can_log_in()
 
 
 # ------------------------------------------------------------------ transport
 
 
 def _get(path: str, params: dict | None = None, *, session=None) -> dict:
-    """The only function that talks to Zerodha. GET, allow-listed paths only."""
+    """The only function that talks to Zerodha. GET, allow-listed paths only.
+
+    With a saved Kite login, a missing or rejected token is replaced by logging
+    in -- once per call, so a token Kite keeps rejecting cannot cause a loop.
+    """
     if not any(p.fullmatch(path) for p in _ALLOWED_PATHS):
         raise PermissionError(f"refusing to call Kite path {path!r}: this client only reads prices")
     token = load_token()
+    logged_in = False
     if token is None:
-        raise KiteNotConnected("no Kite token saved")
+        if not _can_log_in():
+            raise KiteNotConnected("no Kite token saved")
+        token, logged_in = _log_in(), True
+    try:
+        return _send(path, params, token, session)
+    except KiteTokenExpired:
+        if logged_in or not _can_log_in():
+            raise
+    return _send(path, params, _log_in(), session)
 
+
+def _send(path: str, params: dict | None, token: str, session) -> dict:
     import requests
 
     http = session or requests

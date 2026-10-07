@@ -175,9 +175,13 @@ def step(
             store.set_paper_status(run_id, "token_expired", msg)
             return StepResult("token_expired", msg)
         except kite.KiteNotConnected:
-            msg = "Kite is not connected. Paste a token to start."
+            msg = "Kite is not connected. Save your Kite login to start."
             store.set_paper_status(run_id, "not_connected", msg)
             return StepResult("not_connected", msg)
+        except kite.KiteLoginFailed as exc:
+            msg = f"Could not log in to Kite. {exc}"
+            store.set_paper_status(run_id, "login_failed", msg)
+            return StepResult("login_failed", msg)
         except kite.KiteError as exc:
             if len(_symbols(spec)) == 1:
                 msg = f"Could not get prices from Kite: {exc}"
