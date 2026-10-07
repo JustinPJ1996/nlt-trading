@@ -26,6 +26,7 @@ import pandas as pd
 
 from nlt.costs.charges import (
     ChargeModel,
+    McxFuturesCharges,
     NseEquityDeliveryCharges,
     NseFuturesCharges,
     NseOptionsCharges,
@@ -107,6 +108,7 @@ EXAMPLE_STRATEGIES = [
 COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
     "Index options (NIFTY/BANKNIFTY weekly)": NseOptionsCharges(),
     "Index futures": NseFuturesCharges(),
+    "MCX commodity futures": McxFuturesCharges(),
     "Equity delivery": NseEquityDeliveryCharges(),
     "No costs (for comparison only)": ZeroCharges(),
 }
@@ -139,6 +141,23 @@ def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, 
 
     if isinstance(chosen, ZeroCharges):
         return chosen, None
+
+    if spec.instrument.is_future:
+        # A futures strategy names its own contract, so its costs are not a
+        # choice either: MCX charges commodity transaction tax at 0.01%, NSE
+        # index futures STT at 0.05%, and options figures fit neither.
+        from nlt.data.futures import is_commodity
+
+        if is_commodity(spec.instrument.symbol):
+            right, name = McxFuturesCharges(), "MCX commodity futures"
+        else:
+            right, name = NseFuturesCharges(), "NSE index futures"
+        if isinstance(chosen, type(right)):
+            return chosen, None
+        return right, (
+            f"Costs: this strategy trades {name}, so those charges were applied "
+            f"instead of '{label}'."
+        )
 
     if spec.instrument.trade_as == "stock" and not isinstance(chosen, NseEquityDeliveryCharges):
         return NseEquityDeliveryCharges(), (
@@ -351,6 +370,23 @@ def _equal_weight_index(bars_by_symbol: dict[str, pd.DataFrame]) -> pd.DataFrame
     ).dropna()
 
 
+def _listed_expiries(spec: StrategySpec) -> list[dt.date]:
+    """Expiries the exchange has published for a futures strategy's live contracts.
+
+    Best effort: without them the computed rule decides every expiry, which is
+    only wrong for a live contract whose expiry a holiday the price data cannot
+    see yet has moved -- see `nlt.data.futures.expiry_dates`.
+    """
+    if not spec.instrument.is_future:
+        return []
+    from nlt.data import kite
+
+    try:
+        return kite.listed_expiries(spec.instrument.symbol)
+    except kite.KiteError:
+        return []
+
+
 def run_pipeline(
     text: str,
     *,
@@ -416,10 +452,29 @@ def run_pipeline(
             bars = next(iter(bars_by_symbol.values()))
             benchmark_name = f"holding {load_spec.instrument.symbol}"
             basket = None
-            backtest = run_backtest(load_spec, bars, capital=capital, charge_fn=cf)
+            listed = _listed_expiries(load_spec)
+            backtest = run_backtest(
+                load_spec, bars, capital=capital, charge_fn=cf, listed_expiries=listed
+            )
             data_notes = data_notes + list(backtest.warnings)
 
-        benchmark = buy_and_hold(bars, capital, charge_fn=cf, name=benchmark_name)
+        if load_spec.instrument.is_future:
+            from nlt.data.futures import contract, expiry_close_mask
+            from nlt.report.benchmark import hold_futures
+
+            c = contract(load_spec.instrument.symbol)
+            benchmark = hold_futures(
+                bars,
+                capital,
+                multiplier=c.multiplier,
+                expiry_close=expiry_close_mask(
+                    c.symbol, bars.index, load_spec.instrument.timeframe, listed
+                ),
+                name=f"holding {c.title} futures, closed at each expiry",
+                charge_fn=cf,
+            )
+        else:
+            benchmark = buy_and_hold(bars, capital, charge_fn=cf, name=benchmark_name)
         comparison = compare(backtest, benchmark, bars)
         verdict = assess(backtest, comparison)
 
@@ -597,11 +652,14 @@ def check_paper_now(store: Store, run_id: int) -> str:
     params = json.loads(run["params_json"] or "{}")
     model, _ = charge_model_for_spec(spec, params.get("cost_model_label", ""))
     source = KiteSource()
+    from nlt.data import kite
+
     result = runner.step(
         store,
         run,
         fetch=lambda sym, tf, a, b: source.bars(sym, tf, a, b),
         charge_fn=_adapt_charge_fn(model),
+        listed_expiries=kite.listed_expiries,
     )
     return result.message
 
@@ -639,12 +697,33 @@ def when(iso: str | None) -> str:
     return pd.Timestamp(iso).tz_convert("Asia/Kolkata").strftime("%d %b %H:%M")
 
 
-def describe_paper_event(event: dict) -> str:
+def quantity_words(spec: StrategySpec | None, quantity: float | None) -> str:
+    """How much was traded, the way the trader would say it.
+
+    The engine counts futures in units of the quoted price -- 100 barrels for one
+    crude lot, 100 lots of 10 grams for one gold lot -- because that is what makes
+    price times quantity the contract value. Nobody orders "100 GOLD" though;
+    Kite's order window and the contract note both say 1 lot.
+    """
+    if not quantity:
+        return ""
+    if spec is not None and spec.instrument.is_future:
+        from nlt.data.futures import contract
+
+        c = contract(spec.instrument.symbol)
+        lots = quantity / c.multiplier
+        each = f", {c.lot_text} each" if lots != 1 else f", {c.lot_text}"
+        return f"{lots:g} lot{'s' if lots != 1 else ''} of {c.title} futures ({each[2:]}) "
+    return f"{quantity:g} "
+
+
+def describe_paper_event(event: dict, spec: StrategySpec | None = None) -> str:
     """One line of the activity log, written from the recorded event alone."""
     detail = json.loads(event.get("detail_json") or "{}")
     kind = event["kind"]
-    qty = event.get("quantity")
-    qty_text = f"{qty:g} " if qty else ""
+    qty_text = quantity_words(spec, event.get("quantity"))
+    if spec is not None and spec.instrument.is_future:
+        event = {**event, "symbol": ""}  # the quantity words already name it
     if kind == "signal":
         return (
             f"Signal: the entry rule was met on the {when(event['bar_time'])} candle. "
@@ -653,7 +732,7 @@ def describe_paper_event(event: dict) -> str:
     if kind == "entry":
         verb = "Bought" if event["direction"] == "long" else "Sold short"
         return (
-            f"{verb} {qty_text}{event['symbol']} at {format_inr(event['price'])} "
+            f"{verb} {qty_text}{event['symbol']}".rstrip() + f" at {format_inr(event['price'])} "
             f"(the open of the {when(event['bar_time'])} candle)."
         )
     if kind == "exit":
@@ -664,7 +743,7 @@ def describe_paper_event(event: dict) -> str:
         )
         verb = "Sold" if event["direction"] == "long" else "Bought back"
         return (
-            f"{verb} {qty_text}{event['symbol']} at {format_inr(event['price'])} "
+            f"{verb} {qty_text}{event['symbol']}".rstrip() + f" at {format_inr(event['price'])} "
             f"on the {when(event['bar_time'])} candle -- {reason}.{pnl_text}"
         )
     if kind == "drift":
@@ -683,4 +762,5 @@ _EXIT_WORDS = {
     "condition": "exit rule met",
     "max_bars": "time limit reached",
     "square_off": "end-of-day square-off",
+    "expiry": "contract expired",
 }

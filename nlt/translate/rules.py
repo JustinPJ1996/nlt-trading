@@ -40,6 +40,7 @@ a code comment where they are made:
 
 from __future__ import annotations
 
+import datetime as dt
 import functools
 import re
 from collections.abc import Callable
@@ -50,6 +51,7 @@ from pydantic import ValidationError
 from nlt.indicators.patterns import PATTERNS
 from nlt.indicators.registry import REGISTRY
 from nlt.spec.models import (
+    INDICES,
     All,
     Any_,
     Compare,
@@ -281,6 +283,69 @@ def _find_stock_ticker(text: str) -> tuple[str, int, int] | None:
     return word.upper(), start, end
 
 
+# ------------------------------------------------------------------- futures
+#
+# An MCX commodity can only be traded as a future, so naming one is enough --
+# "buy crude when..." means Crude Oil futures, and the readback says so in
+# those words. An index needs the word: "NIFTY futures" is the future, bare
+# "NIFTY" stays the index. The mini contracts are matched before their
+# full-size names, because one Gold lot is ten Gold Mini lots and confusing the
+# two would size every trade tenfold.
+
+_FUTURES_WORD = re.compile(r"\b(?:futures?|fut)\b")
+_MCX_WORD = re.compile(r"\bmcx\b")
+_COMMODITIES = (
+    (
+        "CRUDEOILM",
+        re.compile(r"\bcrude\s*oil\s*m(?:ini)?\b|\bcrude\s*mini\b|\bmini\s*crude(?:\s*oil)?\b"),
+    ),
+    ("CRUDEOIL", re.compile(r"\bcrude\s*oil\b|\bcrude\b")),
+    (
+        "NATGASMINI",
+        re.compile(r"\bnat(?:ural)?\s*gas\s*mini\b|\bmini\s*nat(?:ural)?\s*gas\b"),
+    ),
+    ("NATURALGAS", re.compile(r"\bnat(?:ural)?\s*gas\b")),
+    ("GOLDM", re.compile(r"\bgold\s*m(?:ini)?\b|\bmini\s*gold\b")),
+    ("GOLD", re.compile(r"\bgold\b")),
+    ("SILVERM", re.compile(r"\bsilver\s*m(?:ini)?\b|\bmini\s*silver\b")),
+    ("SILVER", re.compile(r"\bsilver\b")),
+)
+# Contracts that exist on MCX but not here. Named so they are refused, never
+# read as the nearest supported name ("silver micro" is not Silver).
+_UNSUPPORTED_COMMODITY = re.compile(
+    r"\b(?:copper|zinc|alumin(?:i)?um|nickel|cotton|kapas|mentha\s*oil|cardamom|"
+    r"steel\s*rebar|bulldex|metldex|leadmini|goldpetal|goldguinea|goldten|silvermic|silver100)\b"
+    r"|\blead\s+(?:mini|futures?)\b|\bgold\s+(?:petal|guinea|ten)\b|\bsilver\s+(?:micro|mic|100)\b"
+)
+
+
+def _supported_futures_text() -> str:
+    from nlt.data.futures import COMMODITIES, contract
+
+    return "NIFTY, BANKNIFTY, and on MCX " + ", ".join(contract(c).title for c in COMMODITIES)
+
+
+def _futures_question(what: str) -> Question:
+    return Question(
+        text=(
+            f"I can't test {what} yet. Futures work on {_supported_futures_text()}. "
+            "Try one of those, e.g. 'buy crude oil futures when RSI crosses below 30, "
+            "target 2%, stop 1%'."
+        ),
+        why=(
+            "Every futures contract has its own lot size and expiry dates. Guessing them "
+            "for a contract this platform does not know would get every profit and loss "
+            "figure wrong."
+        ),
+        suggestion=None,
+        field="instrument.symbol",
+    )
+
+
+def _blank(text: str, pattern: re.Pattern) -> str:
+    return pattern.sub(lambda m: " " * len(m.group()), text)
+
+
 def _extract_instrument(
     text: str,
 ) -> tuple[str, dict | None, Question | None]:
@@ -290,6 +355,11 @@ def _extract_instrument(
     50" with no qualifier, the one case this function refuses to guess at.
     """
     kwargs: dict = {}
+
+    unsupported = _UNSUPPORTED_COMMODITY.search(text)
+    if unsupported:
+        return text, None, _futures_question(f"'{unsupported.group()}'")
+    commodity = next(((sym, pat) for sym, pat in _COMMODITIES if pat.search(text)), None)
 
     if _BANKNIFTY.search(text):
         kwargs["symbol"] = "BANKNIFTY"
@@ -355,6 +425,35 @@ def _extract_instrument(
                 field="instrument.trade_as",
             ),
         )
+
+    futures_word = _FUTURES_WORD.search(text)
+    if commodity is not None:
+        symbol, pattern = commodity
+        if "symbol" in kwargs:
+            return (
+                text,
+                None,
+                Question(
+                    text=(
+                        f"This names both {kwargs['symbol']} and an MCX commodity. Which one "
+                        "should the strategy trade? (Signals on one instrument that trade "
+                        "another aren't supported yet.)"
+                    ),
+                    why="Testing the wrong instrument gives a result that looks just as believable.",
+                    suggestion=None,
+                    field="instrument.symbol",
+                ),
+            )
+        kwargs = {"symbol": symbol, "trade_as": "future"}
+        for p in (pattern, _FUTURES_WORD, _MCX_WORD):
+            text = _blank(text, p)
+        return text, kwargs, None
+
+    if futures_word:
+        if kwargs.get("symbol") in INDICES:
+            kwargs["trade_as"] = "future"
+            return _blank(text, _FUTURES_WORD), kwargs, None
+        return text, None, _futures_question("futures on that")
 
     if "symbol" not in kwargs:
         found = _find_stock_ticker(text)
@@ -1771,6 +1870,33 @@ STOCK_MAX_POSITION_PCT = 20.0
 FNO_MAX_POSITION_PCT = 10.0
 
 
+# MCX trades until 23:30 (23:55 in winter); NSE's 15:00 / 15:15 defaults would
+# square off a commodity position before its busiest hours. Fifteen minutes
+# before the earlier close, as 15:15 is before NSE's.
+_MCX_NO_ENTRY_AFTER = dt.time(23, 0)
+_MCX_SQUARE_OFF = dt.time(23, 15)
+
+
+def _schedule_kwargs(instrument_kwargs: dict, square_off, intraday) -> dict:
+    """Schedule fields for the spec: what the user said, plus the market's defaults."""
+    from nlt.data.futures import is_commodity
+
+    out: dict = {}
+    if square_off:
+        out["square_off"] = square_off
+    if intraday:
+        out["intraday"] = True
+    if instrument_kwargs.get("trade_as") == "future" and is_commodity(
+        instrument_kwargs.get("symbol", "")
+    ):
+        out.setdefault("square_off", _MCX_SQUARE_OFF)
+        cutoff = (
+            dt.datetime.combine(dt.date.today(), out["square_off"]) - dt.timedelta(minutes=15)
+        ).time()
+        out["no_entry_after"] = min(_MCX_NO_ENTRY_AFTER, cutoff)
+    return out
+
+
 def _default_risk(instrument_kwargs: dict) -> RiskLimits:
     """Risk limits, with a basket-appropriate concurrency default."""
     from nlt.data.universe import is_universe
@@ -1782,10 +1908,11 @@ def _default_risk(instrument_kwargs: dict) -> RiskLimits:
     # stock position, and unlike a lot count they scale with the share price.
     lot_cap = 2 if instrument_kwargs.get("trade_as") == "option" else None
 
-    # How much of the account one position may occupy. F&O gets the tighter
-    # limit: an option can lose its whole premium in a session, and a futures
-    # position is leveraged against margin rather than paid for outright, so the
-    # same percentage of capital is a much larger bet than it is in cash equity.
+    # How much of the account one position may occupy. Options get the tighter
+    # limit: an option can lose its whole premium in a session. Futures get the
+    # share limit, Justin's call (2026-10-07): the engine pays for a futures
+    # position in full, with no borrowing against margin, so it is a cash
+    # position like a share and the same rule fits.
     position_pct = (
         FNO_MAX_POSITION_PCT
         if instrument_kwargs.get("trade_as") == "option"
@@ -2004,11 +2131,9 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if max_bars_held:
         exit_kwargs["max_bars_held"] = max_bars_held
 
-    schedule_kwargs: dict = {}
-    if rest_exits.get("_square_off"):
-        schedule_kwargs["square_off"] = rest_exits["_square_off"]
-    if rest_exits.get("_intraday"):
-        schedule_kwargs["intraday"] = True
+    schedule_kwargs = _schedule_kwargs(
+        instrument_kwargs, rest_exits.get("_square_off"), rest_exits.get("_intraday")
+    )
 
     name = _name_from(original)
 

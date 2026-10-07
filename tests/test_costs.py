@@ -13,6 +13,7 @@ import pytest
 from nlt.costs.charges import (
     GST_RATE,
     ChargeBreakdown,
+    McxFuturesCharges,
     NseEquityDeliveryCharges,
     NseFuturesCharges,
     NseOptionsCharges,
@@ -283,3 +284,47 @@ def test_charge_breakdown_is_frozen() -> None:
     b = ChargeBreakdown(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 21.0)
     with pytest.raises(Exception):
         b.total = 100.0  # type: ignore[misc]
+
+
+# --------------------------------------------------------------------------
+# MCX commodity futures: one CRUDEOIL lot (100 barrels) at Rs 8,704 a barrel,
+# turnover Rs 8,70,400. Rates per zerodha.com/charges, fetched 2026-10-07:
+# brokerage 0.03% capped at Rs 20/order, CTT 0.01% sell side, MCX transaction
+# charge 0.0021% both sides, SEBI Rs 10/crore both sides, stamp duty 0.002%
+# buy side, GST 18% on (brokerage + transaction + SEBI).
+# --------------------------------------------------------------------------
+
+
+class TestMcxFuturesCharges:
+    def setup_method(self) -> None:
+        self.model = McxFuturesCharges()
+
+    def test_buy_one_crude_lot(self) -> None:
+        # brokerage min(261.12, 20) = 20; txn 18.2784; sebi 0.8704;
+        # stamp 17.408; gst 0.18 * (20 + 18.2784 + 0.8704) = 7.046784
+        b = self.model.charges(8704, 100, "buy")
+        assert b.brokerage == pytest.approx(20.00, abs=0.011)
+        assert b.stt == 0.0
+        assert b.transaction_charges == pytest.approx(18.28, abs=0.011)
+        assert b.sebi_fees == pytest.approx(0.87, abs=0.011)
+        assert b.stamp_duty == pytest.approx(17.41, abs=0.011)
+        assert b.gst == pytest.approx(7.05, abs=0.011)
+        assert b.total == pytest.approx(63.61, abs=0.011)
+
+    def test_sell_one_crude_lot(self) -> None:
+        # CTT 0.01% of 8,70,400 = 87.04 on the sell side; no stamp duty.
+        s = self.model.charges(8704, 100, "sell")
+        assert s.stt == pytest.approx(87.04, abs=0.011)
+        assert s.stamp_duty == 0.0
+        assert s.total == pytest.approx(20.00 + 87.04 + 18.28 + 0.87 + 7.05, abs=0.011)
+
+    def test_brokerage_is_a_percentage_below_the_cap(self) -> None:
+        # One CRUDEOILM lot (10 barrels) at Rs 5,000: 0.03% of 50,000 = Rs 15.
+        assert self.model.charges(5000, 10, "buy").brokerage == pytest.approx(15.0, abs=0.011)
+
+    def test_commodity_tax_is_far_lower_than_index_futures_stt(self) -> None:
+        # CTT is 0.01%; NSE futures STT is 0.05%. Swapping the models would
+        # overcharge every commodity sell five times over.
+        mcx = self.model.charges(8704, 100, "sell").stt
+        nse = NseFuturesCharges().charges(8704, 100, "sell").stt
+        assert nse == pytest.approx(5 * mcx, rel=1e-3)

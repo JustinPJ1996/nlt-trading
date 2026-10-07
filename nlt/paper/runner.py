@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from nlt.data import kite
+from nlt.data.session import NSE_EQUITY, Session, session_date
 from nlt.engine.backtest import Trade, run_backtest
 from nlt.engine.basket import run_basket_backtest
 from nlt.engine.conditions import evaluate
@@ -44,7 +45,8 @@ from nlt.store.db import Store
 IST = "Asia/Kolkata"
 
 # When a candle is finished, measured from its own timestamp. A daily candle is
-# stamped at midnight and finishes when the market closes at 15:30.
+# stamped at midnight and finishes when its market closes -- 15:30 for NSE,
+# 23:55 for MCX (see `close_offset`).
 _CLOSE_OFFSET = {
     "1m": pd.Timedelta(minutes=1),
     "3m": pd.Timedelta(minutes=3),
@@ -52,7 +54,6 @@ _CLOSE_OFFSET = {
     "15m": pd.Timedelta(minutes=15),
     "30m": pd.Timedelta(minutes=30),
     "1h": pd.Timedelta(minutes=60),
-    "1d": pd.Timedelta(hours=15, minutes=30),
 }
 
 # History fetched before the start, so indicators are warmed up on the first
@@ -62,26 +63,50 @@ _WARMUP = {"1d": dt.timedelta(days=730)}
 _INTRADAY_WARMUP = dt.timedelta(days=30)
 
 Fetch = Callable[[str, str, dt.date, dt.date], pd.DataFrame]
-"""(symbol, timeframe, start date, end date) -> candles. `KiteSource().bars` in real use."""
+"""(symbol, timeframe, start date, end date) -> candles. `KiteSource().bars` in real use.
+
+A futures strategy is fetched under its data key ("CRUDEOIL FUT"), never its
+bare symbol, which for NIFTY would be the index."""
+
+ListedExpiries = Callable[[str], list[dt.date]]
+"""symbol -> expiries the exchange has published. `kite.listed_expiries` in real use."""
 
 
-def close_offset(timeframe: str) -> pd.Timedelta:
+def _session_of(spec: StrategySpec) -> Session:
+    if spec.instrument.is_future:
+        from nlt.data.futures import contract
+
+        return contract(spec.instrument.symbol).session
+    return NSE_EQUITY
+
+
+def _close_time(session: Session) -> pd.Timedelta:
+    return pd.Timedelta(hours=session.close_time.hour, minutes=session.close_time.minute)
+
+
+def close_offset(timeframe: str, session: Session = NSE_EQUITY) -> pd.Timedelta:
+    if timeframe == "1d":
+        return _close_time(session)
     try:
         return _CLOSE_OFFSET[timeframe]
     except KeyError:
         raise ValueError(f"paper trading has no candle length for {timeframe!r}") from None
 
 
-def closed_bars(bars: pd.DataFrame, timeframe: str, now: pd.Timestamp) -> pd.DataFrame:
+def closed_bars(
+    bars: pd.DataFrame, timeframe: str, now: pd.Timestamp, session: Session = NSE_EQUITY
+) -> pd.DataFrame:
     """Only candles that have finished by `now`. A forming candle is never traded on."""
     if bars.empty:
         return bars
-    return bars[bars.index + close_offset(timeframe) <= now]
+    return bars[bars.index + close_offset(timeframe, session) <= now]
 
 
-def trade_from_for(started_at: pd.Timestamp, timeframe: str) -> pd.Timestamp:
+def trade_from_for(
+    started_at: pd.Timestamp, timeframe: str, session: Session = NSE_EQUITY
+) -> pd.Timestamp:
     """The first candle allowed to signal: the first one that finishes after Start."""
-    return started_at - close_offset(timeframe) + pd.Timedelta(microseconds=1)
+    return started_at - close_offset(timeframe, session) + pd.Timedelta(microseconds=1)
 
 
 def _now() -> pd.Timestamp:
@@ -107,13 +132,41 @@ def _symbols(spec: StrategySpec) -> list[str]:
     return [spec.instrument.symbol]
 
 
-def _session_in_progress(bars: pd.DataFrame, now: pd.Timestamp) -> bool:
+def _session_in_progress(
+    bars: pd.DataFrame, now: pd.Timestamp, session: Session = NSE_EQUITY
+) -> bool:
     """Is the newest candle's trading day still going on at `now`?"""
     last_day = bars.index[-1].tz_convert(IST).normalize()
-    return now.tz_convert(IST) < last_day + pd.Timedelta(hours=15, minutes=30)
+    return now.tz_convert(IST) < last_day + _close_time(session)
 
 
-def _run_engine(spec, bars_by_symbol, *, capital, charge_fn, trade_from, now):
+def _current_contract_from(
+    spec: StrategySpec, bars: pd.DataFrame, listed: list[dt.date]
+) -> pd.Timestamp | None:
+    """For intraday futures: the first candle of the contract now being traded.
+
+    Kite has intraday candles only for live contracts, so after each expiry the
+    series fetched is the NEW contract's -- its whole history, including the
+    weeks it was the second month, at prices that were never the ones traded.
+    Re-running the engine on that history could find trades in the past that
+    nobody was ever in. So nothing before the current contract became the
+    nearest month may open a position, and nothing recorded before then is
+    re-judged against prices from a different contract.
+    """
+    if not spec.instrument.is_future or spec.instrument.timeframe == "1d" or bars.empty:
+        return None
+    from nlt.data.futures import contract, expiry_sessions
+
+    session = contract(spec.instrument.symbol).session
+    today = session_date(bars.index[-1], session)
+    past = [d for d in expiry_sessions(spec.instrument.symbol, bars.index, listed) if d < today]
+    if not past:
+        return None
+    after = [ts for ts in bars.index if session_date(ts, session) > max(past)]
+    return after[0] if after else None
+
+
+def _run_engine(spec, bars_by_symbol, *, capital, charge_fn, trade_from, now, listed=()):
     """The same engine a backtest uses. Returns (trades, single-symbol result or None)."""
     if spec.instrument.is_universe:
         result = run_basket_backtest(
@@ -132,7 +185,8 @@ def _run_engine(spec, bars_by_symbol, *, capital, charge_fn, trade_from, now):
         drop_partial_last_bar=False,
         trade_from=trade_from,
         final_session_in_progress=spec.instrument.timeframe != "1d"
-        and _session_in_progress(bars, now),
+        and _session_in_progress(bars, now, _session_of(spec)),
+        listed_expiries=listed,
     )
     return result.trades, result
 
@@ -148,6 +202,7 @@ def step(
     fetch: Fetch,
     charge_fn,
     now: pd.Timestamp | None = None,
+    listed_expiries: ListedExpiries | None = None,
 ) -> StepResult:
     """One pass of one paper run. Safe to repeat: only unseen events are recorded."""
     now = now or _now()
@@ -160,16 +215,29 @@ def step(
 
     spec = store.load_spec(run["strategy_id"])
     timeframe = spec.instrument.timeframe
+    session = _session_of(spec)
     started_at = pd.Timestamp(params["started_at"]).tz_convert(IST)
-    trade_from = trade_from_for(started_at, timeframe)
+    trade_from = trade_from_for(started_at, timeframe, session)
+    listed: list[dt.date] = []
+    if spec.instrument.is_future and listed_expiries is not None:
+        try:
+            listed = list(listed_expiries(spec.instrument.symbol))
+        except kite.KiteError:
+            listed = []
     warmup = _WARMUP.get(timeframe, _INTRADAY_WARMUP)
     fetch_start = (started_at - warmup).date()
 
     bars_by_symbol: dict[str, pd.DataFrame] = {}
     failures: list[str] = []
     for symbol in _symbols(spec):
+        if spec.instrument.is_future:
+            from nlt.data.futures import data_key
+
+            source_key = data_key(symbol)
+        else:
+            source_key = symbol
         try:
-            raw = fetch(symbol, timeframe, fetch_start, now.date())
+            raw = fetch(source_key, timeframe, fetch_start, now.date())
         except kite.KiteTokenExpired:
             msg = "Kite token has expired. Paste today's token to resume."
             store.set_paper_status(run_id, "token_expired", msg)
@@ -189,7 +257,7 @@ def step(
                 return StepResult("feed_down", msg)
             failures.append(symbol)
             continue
-        bars = closed_bars(raw, timeframe, now)
+        bars = closed_bars(raw, timeframe, now, session)
         if not bars.empty:
             bars_by_symbol[symbol] = bars
 
@@ -198,6 +266,12 @@ def step(
         store.set_paper_status(run_id, "waiting", msg)
         return StepResult("waiting", msg)
 
+    contract_from = None
+    if len(bars_by_symbol) == 1:
+        contract_from = _current_contract_from(spec, next(iter(bars_by_symbol.values())), listed)
+    if contract_from is not None:
+        trade_from = max(trade_from, contract_from)
+
     trades, single = _run_engine(
         spec,
         bars_by_symbol,
@@ -205,12 +279,22 @@ def step(
         charge_fn=charge_fn,
         trade_from=trade_from,
         now=now,
+        listed=listed,
     )
     fallback_symbol = spec.instrument.symbol
     observed = _iso(now)
     new: list[str] = []
 
     recorded = {(e["kind"], e["event_key"]): e for e in store.paper_events(run_id)}
+    if contract_from is not None:
+        # Recorded on an earlier contract's prices: final, and not comparable
+        # with the current contract's candles. See `_current_contract_from`.
+        recorded = {
+            k: e
+            for k, e in recorded.items()
+            if e["kind"] not in ("entry", "exit")
+            or pd.Timestamp(e["event_key"].split("|", 1)[1]) >= contract_from
+        }
     derived_entries: set[str] = set()
     derived_exits: set[str] = set()
 
@@ -392,23 +476,27 @@ def is_due(run: dict, status: dict | None, spec: StrategySpec, now: pd.Timestamp
     outside market hours, or for a daily strategy whose latest candle is
     already recorded. Holidays are not known in advance -- on one, a due pass
     simply finds no new candle.
+
+    A daily candle is looked for whenever the market is shut and the last
+    finished day's candle is not yet recorded -- not only in the minutes after
+    the close. MCX closes at 23:55, so "after the close, same day" would leave
+    a five-minute window, and Friday's candle unseen until Monday night.
     """
     now = now.tz_convert(IST)
-    if now.weekday() >= 5:
-        return False
-    open_, close = (
-        now.normalize() + pd.Timedelta("9h15min"),
-        now.normalize() + pd.Timedelta("15h30min"),
-    )
+    session = _session_of(spec)
+    today = now.normalize()
+    open_ = today + pd.Timedelta(hours=session.open_time.hour, minutes=session.open_time.minute)
+    close = today + _close_time(session)
     timeframe = spec.instrument.timeframe
 
     if timeframe == "1d":
-        if now < close:
-            return False
+        if now.weekday() < 5 and open_ <= now < close:
+            return False  # today's candle is still forming
+        finished = today if now.weekday() < 5 and now >= close else _previous_weekday(today)
         last = status.get("last_bar_time") if status else None
-        if last and pd.Timestamp(last).tz_convert(IST).normalize() >= now.normalize():
+        if last and pd.Timestamp(last).tz_convert(IST).normalize() >= finished:
             return False
-        # Re-check at most every 15 minutes until today's candle appears.
+        # Re-check at most every 15 minutes until the candle appears.
         if status and status.get("updated_at"):
             updated = pd.Timestamp(status["updated_at"])
             if updated.tzinfo is None:
@@ -417,4 +505,13 @@ def is_due(run: dict, status: dict | None, spec: StrategySpec, now: pd.Timestamp
                 return False
         return True
 
+    if now.weekday() >= 5:
+        return False
     return open_ < now <= close + pd.Timedelta(minutes=5)
+
+
+def _previous_weekday(day: pd.Timestamp) -> pd.Timestamp:
+    day -= pd.Timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= pd.Timedelta(days=1)
+    return day

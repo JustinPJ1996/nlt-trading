@@ -56,7 +56,9 @@ unaffected:
 
 from __future__ import annotations
 
+import datetime as dt
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -123,7 +125,14 @@ def _session_for_spec(spec: StrategySpec) -> Session:
     there is no commodity symbol in the spec model yet to map onto it. Everything
     below is written against `Session` generically -- once `Instrument.symbol`
     grows an MCX name, this function is the only place that needs to change.
+
+    It has: a futures contract carries its own session, so an MCX strategy runs
+    on MCX's hours (to 23:30, or 23:55 in winter).
     """
+    if spec.instrument.is_future:
+        from nlt.data.futures import contract
+
+        return contract(spec.instrument.symbol).session
     return NSE_EQUITY
 
 
@@ -202,6 +211,7 @@ def run_backtest(
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
     final_session_in_progress: bool = False,
+    listed_expiries: Iterable[dt.date] = (),
 ) -> BacktestResult:
     """Run `spec` bar by bar over `bars`.
 
@@ -231,6 +241,12 @@ def run_backtest(
     engine infers "last candle of the day" from the data, sees the newest
     candle so far, and squares off at 13:35 a position the real day would have
     held until its stop, its target or the 15:15 square-off.
+
+    For futures, every open position is closed at the close of its contract's
+    expiry day, and charged for that exit -- Justin's choice (2026-10-07) over
+    rolling into the next month. `listed_expiries` are the dates the exchange
+    has published for live contracts (Kite's instrument list); they override
+    the computed rule for their month. See `nlt.data.futures`.
     """
     warnings: list[str] = []
     if lot_size is None:
@@ -261,6 +277,9 @@ def run_backtest(
             "bet far too much of itself on a single contract. Treat these "
             "results as theoretical."
         )
+
+    if spec.instrument.is_future and len(bars) > 0:
+        _warn_if_one_lot_is_unaffordable(spec, bars, capital, lot_size, warnings)
 
     is_intraday_tf = spec.instrument.timeframe != "1d"
     session = _session_for_spec(spec)
@@ -312,6 +331,21 @@ def run_backtest(
     else:
         last_bar_of_session = np.zeros(len(bars), dtype=bool)
 
+    # The bar on which a futures contract stops trading: the expiry day's
+    # candle on daily bars, its session's last candle on intraday ones (never
+    # a candle of today's session while it is still going on).
+    expiry_close = np.zeros(len(bars), dtype=bool)
+    if spec.instrument.is_future and len(bars) > 0:
+        from nlt.data.futures import expiry_close_mask
+
+        expiry_close = expiry_close_mask(
+            spec.instrument.symbol,
+            bars.index,
+            spec.instrument.timeframe,
+            listed_expiries,
+            last_bar_of_session,
+        )
+
     if is_intraday_tf and spec.indicators and session_bar_count:
         _warn_on_cross_session_lookback(spec, session_bar_count, warnings)
     elif is_intraday_tf and spec.indicators and session_bar_count is None:
@@ -335,6 +369,8 @@ def run_backtest(
     affordability_capped_count = 0
     affordability_skipped_count = 0
     boundary_entry_skipped_count = 0
+    expiry_entry_skipped_count = 0
+    expiry_exit_count = 0
 
     for i in range(n):
         ts = bars.index[i]
@@ -376,13 +412,23 @@ def run_backtest(
         # --- 2. check exits, in the mandated precedence order --------------
         still_open: list[_OpenPosition] = []
         for pos in open_positions:
-            outcome = _check_exit(pos, bar, ts, spec, is_intraday_tf, bool(last_bar_of_session[i]))
+            outcome = _check_exit(
+                pos,
+                bar,
+                ts,
+                spec,
+                is_intraday_tf,
+                bool(last_bar_of_session[i]),
+                bool(expiry_close[i]),
+            )
             if outcome is None:
                 pos.bars_held += 1
                 still_open.append(pos)
                 continue
 
             reason, raw_price, ambiguous = outcome
+            if reason == "expiry":
+                expiry_exit_count += 1
             if ambiguous:
                 stop_beat_target_count += 1
             exit_side = "sell" if pos.direction == "long" else "buy"
@@ -414,6 +460,12 @@ def run_backtest(
                 )
             )
         open_positions = still_open
+        if open_positions and expiry_close[i]:
+            # Unreachable while `_check_exit` closes every position on this
+            # candle. Checked anyway: a position that outlived its contract would
+            # be valued on the next contract's price, booking the jump between
+            # the two as profit or loss nobody made.
+            raise RuntimeError(f"a futures position was held past its contract's expiry at {ts}")
 
         # --- 3. mark-to-market equity for this bar --------------------------
         unrealized = sum(_gross_pnl(pos, bar.close) for pos in open_positions)
@@ -445,7 +497,14 @@ def run_backtest(
         # strategy an entry it never gets to try; a filled-anyway entry costs
         # the user an unintended overnight position with unbounded gap risk,
         # on an account sized for intraday margin. Counted and surfaced below.
-        if can_enter and is_intraday_spec and bool(last_bar_of_session[i]):
+        # A signal on the last candle of an expiring contract would fill in the
+        # NEXT contract, at a different price level, with its stop and target
+        # measured from the old contract's close (the levels belong to the
+        # signal bar). The gap between two contracts is not a price move, so the
+        # entry is skipped rather than filled on levels from another contract.
+        if can_enter and bool(expiry_close[i]):
+            expiry_entry_skipped_count += 1
+        elif can_enter and is_intraday_spec and bool(last_bar_of_session[i]):
             boundary_entry_skipped_count += 1
         elif can_enter and i + 1 < n:
             pending_entry = True
@@ -535,6 +594,18 @@ def run_backtest(
         else:
             reason = "not enough spare capital to fund even a single lot"
         warnings.append(f"{affordability_skipped_count} entry signal(s) skipped: {reason}")
+    if expiry_exit_count:
+        warnings.append(
+            f"{expiry_exit_count} position(s) closed at the close of their contract's expiry "
+            "day and charged for that exit. A position is never carried into the next month's "
+            "contract; the strategy opens a new one only when its entry rule fires again."
+        )
+    if expiry_entry_skipped_count:
+        warnings.append(
+            f"{expiry_entry_skipped_count} entry signal(s) skipped: they fired on the last candle "
+            "of an expiring contract, so the trade would have been placed in the next contract "
+            "at a different price, with its stop and target measured from the old one"
+        )
     if boundary_entry_skipped_count:
         warnings.append(
             f"{boundary_entry_skipped_count} entry signal(s) skipped: they fired on the last "
@@ -655,6 +726,46 @@ def _warn_on_cross_session_lookback(
             f"{spec.instrument.timeframe} bars -- it will smooth straight across the "
             "overnight/weekend gap as though those bars were consecutive trading minutes"
         )
+
+
+def _warn_if_one_lot_is_unaffordable(
+    spec: StrategySpec, bars: pd.DataFrame, capital: float, lot_size: int, warnings: list[str]
+) -> None:
+    """Say up front when the account cannot hold a single lot, and what would.
+
+    Futures are indivisible and, with no borrowing, paid for in full: one lot of
+    Gold is over a crore. Without this, a small account produces a backtest with
+    no trades and a terse "skipped" count at the bottom -- which reads like a
+    strategy that never signalled rather than an account that could not play.
+    """
+    from nlt.data.futures import contract
+
+    c = contract(spec.instrument.symbol)
+    price = float(bars["close"].iloc[-1])
+    lot_value = price * lot_size
+    pct = spec.risk.max_position_pct
+    budget = capital * (pct / 100.0 if pct is not None else 1.0)
+    if lot_value <= budget:
+        return
+    limit = (
+        f"at most {pct:g}% of the account ({_inr(budget)} of {_inr(capital)}) may go into one "
+        "position"
+        if pct is not None
+        else f"the account holds {_inr(capital)}"
+    )
+    needed = lot_value / (pct / 100.0) if pct is not None else lot_value
+    warnings.append(
+        f"ACCOUNT TOO SMALL FOR ONE LOT: one lot of {c.title} ({c.lot_text}) costs about "
+        f"{_inr(lot_value)} at the latest price, paid in full with no borrowing, and {limit}. "
+        f"No trade can be taken at that size. Test with at least {_inr(needed)}, or a "
+        "smaller contract."
+    )
+
+
+def _inr(value: float) -> str:
+    from nlt.translate.readback import format_inr
+
+    return format_inr(value)
 
 
 def _open_position(
@@ -843,6 +954,7 @@ def _check_exit(
     spec: StrategySpec,
     is_intraday_tf: bool,
     is_last_bar_of_session: bool,
+    is_expiry_close: bool = False,
 ) -> tuple[str, float, bool] | None:
     """Returns (reason, raw fill price before slippage, ambiguous_stop_vs_target) or None.
 
@@ -921,6 +1033,11 @@ def _check_exit(
 
     if spec.exit.max_bars_held is not None and pos.bars_held + 1 >= spec.exit.max_bars_held:
         return "max_bars", bar.close, False
+
+    if is_expiry_close:
+        # Last: every other exit can happen during the day, this one only at
+        # the close. The next candle belongs to a different contract.
+        return "expiry", bar.close, False
 
     return None
 

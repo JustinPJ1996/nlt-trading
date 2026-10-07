@@ -525,9 +525,12 @@ def _run_card(store, run: dict) -> None:
         m3.metric("Open position P&L", logic.format_inr(snap.get("open_pnl_if_closed_now", 0)))
         if snap.get("open_positions"):
             st.write("Open positions (P&L if closed now, after costs):")
-            st.dataframe(
-                pd.DataFrame(snap["open_positions"]), hide_index=True, use_container_width=True
-            )
+            positions = pd.DataFrame(snap["open_positions"])
+            if spec.instrument.is_future and "quantity" in positions:
+                positions["quantity"] = [
+                    logic.quantity_words(spec, q).strip() for q in positions["quantity"]
+                ]
+            st.dataframe(positions, hide_index=True, use_container_width=True)
     with st.expander("What the strategy is"):
         st.text(strategy["readback"])
     events = store.paper_events(run["id"])
@@ -535,7 +538,7 @@ def _run_card(store, run: dict) -> None:
         if not events:
             st.write("Nothing has happened yet.")
         for e in reversed(events):
-            line = f"**{logic.when(e['observed_at'])}** -- {logic.describe_paper_event(e)}"
+            line = f"**{logic.when(e['observed_at'])}** -- {logic.describe_paper_event(e, spec)}"
             (st.error if e["kind"] == "drift" else st.write)(line)
 
     c1, c2 = st.columns(2)

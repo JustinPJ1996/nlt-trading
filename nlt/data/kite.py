@@ -231,6 +231,39 @@ def _instruments(max_age_hours: float = 20.0) -> pd.DataFrame:
     return pd.read_csv(_INSTRUMENTS_CACHE)
 
 
+def futures_contracts(symbol: str, instruments: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Kite's live futures contracts on `symbol`, nearest expiry first."""
+    from nlt.data.futures import contract
+
+    c = contract(symbol)
+    df = _instruments() if instruments is None else instruments
+    rows = df[
+        (df["exchange"] == c.exchange) & (df["instrument_type"] == "FUT") & (df["name"] == c.symbol)
+    ].copy()
+    if rows.empty:
+        raise KiteUnavailable(f"Kite lists no {c.exchange} futures contracts for {c.symbol}")
+    rows["expiry"] = pd.to_datetime(rows["expiry"]).dt.date
+    return rows.sort_values("expiry").reset_index(drop=True)
+
+
+def listed_expiries(symbol: str, instruments: pd.DataFrame | None = None) -> list[dt.date]:
+    """Expiry dates the exchange has published for `symbol`'s live contracts."""
+    return list(futures_contracts(symbol, instruments)["expiry"])
+
+
+def near_month(symbol: str, on: dt.date, instruments: pd.DataFrame | None = None) -> pd.Series:
+    """The contract a near-month trader holds on `on`: the first not yet expired.
+
+    On its expiry day a contract is still the near month -- it trades until the
+    close, and that is when a position in it is closed.
+    """
+    rows = futures_contracts(symbol, instruments)
+    live = rows[rows["expiry"] >= on]
+    if live.empty:
+        raise KiteUnavailable(f"Kite lists no {symbol} futures contract expiring on or after {on}")
+    return live.iloc[0]
+
+
 def instrument_token(symbol: str, instruments: pd.DataFrame | None = None) -> int:
     """NSE instrument token for an index ("NIFTY", "BANKNIFTY") or an NSE share."""
     df = _instruments() if instruments is None else instruments
@@ -285,7 +318,37 @@ class KiteSource:
         kite_interval = KITE_INTERVALS[interval]
         end = end or dt.date.today()
         start = start or end - dt.timedelta(days=_MAX_DAYS_PER_REQUEST[kite_interval])
-        token = instrument_token(symbol)
+        notes: list[str] = []
+        session = NSE_EQUITY
+        extra: dict = {}
+
+        from nlt.data import futures
+
+        future = futures.from_data_key(symbol)
+        if future is None:
+            token = instrument_token(symbol)
+        else:
+            session = futures.contract(future).session
+            current = near_month(future, dt.date.today())
+            token = int(current["instrument_token"])
+            if interval == "1d":
+                # Kite's continuous series: each day's candle from the contract
+                # that was nearest to expiry that day, asked for through today's.
+                # Contracts are joined end to end without adjustment, so the
+                # jump between two contracts is in the data; the engine closes
+                # every position at expiry so that jump is never traded.
+                extra = {"continuous": 1}
+            else:
+                # Kite keeps no intraday candles for expired contracts, so an
+                # intraday futures test can only cover the live contract's life.
+                notes.append(
+                    f"Intraday candles for {future} futures come from the current contract "
+                    f"({current['tradingsymbol']}, expiring {current['expiry']:%d %b %Y}) only. "
+                    "Kite keeps no intraday history for expired contracts, so the test "
+                    "cannot reach further back than this contract has existed. Before the "
+                    "previous contract expired, this one was not yet the nearest month and "
+                    "traded more thinly than the test assumes."
+                )
 
         frames = []
         step = dt.timedelta(days=_MAX_DAYS_PER_REQUEST[kite_interval] - 1)
@@ -300,6 +363,7 @@ class KiteSource:
                     "from": f"{chunk_start} 00:00:00",
                     "to": f"{chunk_end} 23:59:59",
                     "oi": 0,
+                    **extra,
                 },
                 session=self._http,
             )
@@ -308,7 +372,7 @@ class KiteSource:
 
         frames = [f for f in frames if not f.empty]
         if not frames:
-            self.last_notes = [f"Kite returned no {interval} candles for {symbol}"]
+            self.last_notes = [*notes, f"Kite returned no {interval} candles for {symbol}"]
             return normalise(
                 pd.DataFrame(
                     columns=["open", "high", "low", "close", "volume"],
@@ -316,8 +380,8 @@ class KiteSource:
                 )
             )
         df = normalise(pd.concat(frames))
-        self.last_notes = []
+        self.last_notes = notes
         if interval != "1d":
-            df, notes = filter_to_session(df, NSE_EQUITY)
-            self.last_notes.extend(notes)
+            df, dropped = filter_to_session(df, session)
+            self.last_notes.extend(dropped)
         return df

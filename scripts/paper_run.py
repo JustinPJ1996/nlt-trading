@@ -23,6 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.logic import charge_model_for_spec  # noqa: E402
 from nlt.costs.charges import charge_fn  # noqa: E402
+from nlt.data import kite  # noqa: E402
 from nlt.data.kite import KiteSource  # noqa: E402
 from nlt.paper import runner  # noqa: E402
 from nlt.store.db import Store  # noqa: E402
@@ -62,7 +63,14 @@ def _pass(*, force: bool) -> int:
                 continue
             params = json.loads(run["params_json"] or "{}")
             model, _ = charge_model_for_spec(spec, params.get("cost_model_label", ""))
-            result = runner.step(store, run, fetch=fetch, charge_fn=charge_fn(model), now=now)
+            result = runner.step(
+                store,
+                run,
+                fetch=fetch,
+                charge_fn=charge_fn(model),
+                now=now,
+                listed_expiries=kite.listed_expiries,
+            )
             print(
                 f"{now:%Y-%m-%d %H:%M:%S} run {run['id']} {result.health}: {result.message}"
                 + (f" new: {', '.join(result.new_events)}" if result.new_events else "")

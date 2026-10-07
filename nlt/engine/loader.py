@@ -75,6 +75,9 @@ def load_for_spec(
             "price would produce a confident, wrong answer. This is being built."
         )
 
+    if spec.instrument.is_future:
+        return _load_futures(spec, start, end)
+
     if spec.instrument.timeframe != "1d":
         return _load_intraday(spec, start, end)
 
@@ -156,4 +159,34 @@ def _load_intraday(
             "Intraday share prices from Kite are not adjusted for splits or bonuses; "
             "a split inside the test window would look like a real price move."
         )
+    return {symbol: bars}, notes
+
+
+def _load_futures(
+    spec: StrategySpec, start: dt.date | None, end: dt.date | None
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """Futures candles come from Kite, daily or intraday, for one contract.
+
+    Daily candles are Kite's continuous series of the nearest-month contract,
+    from 2020 like every other history here. Intraday candles exist only for
+    the live contract, and `KiteSource` says so in its notes.
+    """
+    from nlt.data import kite
+    from nlt.data.futures import contract, data_key
+    from nlt.data.source import DATA_FLOOR
+
+    symbol = spec.instrument.symbol
+    c = contract(symbol)
+    if not kite.is_connected():
+        raise kite.KiteNotConnected(
+            f"{c.title} futures prices come from Kite, and Kite is not connected. "
+            "Save your Kite login on the Paper trading page, then run this again."
+        )
+    start = max(start or DATA_FLOOR, DATA_FLOOR)
+    source = kite.KiteSource()
+    bars = source.bars(data_key(symbol), spec.instrument.timeframe, start=start, end=end)
+    notes = [
+        f"{c.title} futures ({c.market}), {c.describe_lot}. Prices from Kite.",
+        *source.last_notes,
+    ]
     return {symbol: bars}, notes

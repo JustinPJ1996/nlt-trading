@@ -96,10 +96,80 @@ def buy_and_hold(
     equity_values[-1] -= exit_charges
 
     equity = pd.Series(equity_values, index=bars.index, name="equity")
+    return _benchmark_from_equity(name, equity, capital, bars_per_year)
 
+
+def hold_futures(
+    bars: pd.DataFrame,
+    capital: float,
+    *,
+    multiplier: int,
+    expiry_close: np.ndarray,
+    name: str,
+    charge_fn: Callable[[float, int, str], float] | None = None,
+    bars_per_year: int = 252,
+) -> Benchmark:
+    """Hold the nearest futures contract throughout, the way the strategy would.
+
+    Plain buy-and-hold is wrong for futures twice over. A futures price series
+    joins contracts end to end, so the jump at each expiry from one contract's
+    price to the next's would be booked as profit or loss nobody made. And a
+    position cannot outlive its contract.
+
+    So: buy as many whole lots as the capital pays for in full, close them at the
+    close of each expiry day (charged, as the strategy is), buy again at the next
+    candle's open in the new contract, and carry the cash in between. The gap
+    between the two contracts falls between a sale and a purchase, so it is
+    never counted -- the same rule the engine applies to the strategy itself.
+
+    `expiry_close` marks the candle on which each contract stops trading. An
+    account that cannot pay for one lot holds cash throughout, and the line is
+    flat: that is what holding would really have done with it.
+    """
+    if bars.empty:
+        raise ValueError("hold_futures requires at least one bar")
+    if capital <= 0:
+        raise ValueError(f"capital must be positive, got {capital!r}")
+
+    opens = bars["open"].to_numpy(dtype="float64")
+    closes = bars["close"].to_numpy(dtype="float64")
+    cash = float(capital)
+    quantity = 0
+    want_in = True
+    equity_values = np.empty(len(bars), dtype="float64")
+
+    for i in range(len(bars)):
+        if want_in and quantity == 0:
+            lots = math.floor(cash / (opens[i] * multiplier)) if opens[i] > 0 else 0
+            quantity = lots * multiplier
+            if quantity:
+                cost = charge_fn(opens[i], quantity, "buy") if charge_fn is not None else 0.0
+                cash -= quantity * opens[i] + cost
+            want_in = False
+        if quantity and expiry_close[i]:
+            cost = charge_fn(closes[i], quantity, "sell") if charge_fn is not None else 0.0
+            cash += quantity * closes[i] - cost
+            quantity = 0
+            equity_values[i] = cash
+            want_in = True
+            continue
+        if expiry_close[i]:
+            want_in = True
+        equity_values[i] = cash + quantity * closes[i]
+
+    if quantity and charge_fn is not None:
+        equity_values[-1] -= charge_fn(closes[-1], quantity, "sell")
+
+    equity = pd.Series(equity_values, index=bars.index, name="equity")
+    return _benchmark_from_equity(name, equity, capital, bars_per_year)
+
+
+def _benchmark_from_equity(
+    name: str, equity: pd.Series, capital: float, bars_per_year: int
+) -> Benchmark:
     total_return_pct = float(100.0 * (equity.iloc[-1] - capital) / capital)
 
-    years = (bars.index[-1] - bars.index[0]).days / _DAYS_PER_YEAR
+    years = (equity.index[-1] - equity.index[0]).days / _DAYS_PER_YEAR
     if years > 0 and equity.iloc[-1] > 0:
         cagr_pct = float(100.0 * ((equity.iloc[-1] / capital) ** (1.0 / years) - 1.0))
     else:
