@@ -19,7 +19,7 @@ LOGIN_SOURCE = Path(kite_login.__file__)
 REPO = Path(__file__).resolve().parents[1]
 
 # RFC 6238's own test secret ("12345678901234567890"), in base32.
-RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"  # gitleaks:allow -- public RFC 6238 test value
 NOW = 1_800_000_000.0
 
 

@@ -1,0 +1,3 @@
+# Reviewed false positives. Each line is one finding gitleaks may skip.
+# tests/test_kite_login.py: RFC_SECRET is the public RFC 6238 test value, not a credential.
+0753f50c2b5ae60b2085bc9f2141304e9c77acfa:tests/test_kite_login.py:generic-api-key:22
