@@ -13,10 +13,14 @@ dependencies = [
     "plotly>=5.24",
     "yfinance>=0.2.50",
     "python-dateutil>=2.9",
+    # The web front end's server (app/api.py).
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    "itsdangerous>=2.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.7", "mutmut>=3.8"]
+dev = ["pytest>=8.0", "ruff>=0.7", "mutmut>=3.8", "httpx>=0.27"]
 
 # Reading the historical F&O exports. They are ClickHouse Native format, which
 # no ordinary library opens; `chdb` is an embedded ClickHouse that does. Kept

@@ -73,6 +73,7 @@ __all__ = [
     "Flag",
     "Verdict",
     "answers_from_questions",
+    "backtest_spec",
     "charge_model_for_label",
     "charge_model_for_spec",
     "color_for_flag",
@@ -406,8 +407,36 @@ def run_pipeline(
     translation = translate_text(text, answers)
     if translation.spec is None:
         return PipelineResult(translation=translation)
+    return backtest_spec(
+        translation.spec,
+        capital=capital,
+        cost_model_label=cost_model_label,
+        symbol=symbol,
+        start=start,
+        end=end,
+        translation=translation,
+    )
 
-    spec = translation.spec
+
+def backtest_spec(
+    spec: StrategySpec,
+    *,
+    capital: float = DEFAULT_CAPITAL,
+    cost_model_label: str = next(iter(COST_MODEL_LABELS)),
+    symbol: str | None = None,
+    start: dt.date | None = None,
+    end: dt.date | None = None,
+    translation: TranslationResult | None = None,
+) -> PipelineResult:
+    """The backtest half of `run_pipeline`, for a spec the user has already confirmed.
+
+    Re-reading the sentence to run it is not the same as running what the user
+    approved: the AI reader is not guaranteed to answer identically twice, so
+    the strategy tested could differ from the readback they said yes to. The web
+    front end therefore hands back the confirmed spec and this runs exactly that.
+    """
+    if translation is None:
+        translation = TranslationResult(spec=spec)
     try:
         model, cost_note = charge_model_for_spec(spec, cost_model_label)
         cf = _adapt_charge_fn(model)

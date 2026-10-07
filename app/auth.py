@@ -36,6 +36,12 @@ import streamlit as st
 ENV_VAR = "NLT_DASHBOARD_PASSWORD"
 PASSWORD_FILE = Path.home() / ".nlt-dashboard-password"
 
+# A login ID as well as the password (Justin's choice, 2026-10-07), so a leaked
+# password alone does not open the dashboard. Configured the same way, and
+# just as fail-closed: no login ID set means nobody gets in.
+LOGIN_ID_ENV_VAR = "NLT_DASHBOARD_LOGIN_ID"
+LOGIN_ID_FILE = Path.home() / ".nlt-dashboard-login-id"
+
 _STATE_KEY = "_auth_ok"
 
 
@@ -64,6 +70,36 @@ def configured_password(env: dict[str, str] | None = None, path: Path | None = N
     return raw or None
 
 
+def configured_login_id(env: dict[str, str] | None = None, path: Path | None = None) -> str | None:
+    """The expected login ID, or None if none is configured. Same rules as the password."""
+    env = os.environ if env is None else env
+    raw = (env.get(LOGIN_ID_ENV_VAR) or "").strip()
+    if raw:
+        return raw
+    try:
+        raw = (LOGIN_ID_FILE if path is None else path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return raw or None
+
+
+def login_matches(
+    entered_id: str, entered_password: str, expected_id: str, expected_password: str
+) -> bool:
+    """Both must match. The ID ignores case and spaces at the ends; the password does not.
+
+    Both are always compared, so a wrong ID and a wrong password take the same
+    time and a guesser cannot tell which one was right.
+    """
+    if not expected_id:
+        return False
+    id_ok = hmac.compare_digest(
+        entered_id.strip().lower().encode("utf-8"), expected_id.strip().lower().encode("utf-8")
+    )
+    password_ok = password_matches(entered_password, expected_password)
+    return id_ok and password_ok
+
+
 def password_matches(entered: str, expected: str) -> bool:
     """Constant-time comparison, so a wrong guess leaks nothing by timing."""
     if not expected:
@@ -86,26 +122,29 @@ def require_password() -> None:
         return
 
     expected = configured_password()
+    expected_id = configured_login_id()
 
-    if expected is None:
+    if expected is None or expected_id is None:
         st.error(
-            "This dashboard has no password set, so it will not start.\n\n"
-            f"Set `{ENV_VAR}` or write one to `{PASSWORD_FILE}`, then reload."
+            "This dashboard has no login ID or password set, so it will not start.\n\n"
+            f"Set `{LOGIN_ID_ENV_VAR}` and `{ENV_VAR}`, or write them to "
+            f"`{LOGIN_ID_FILE}` and `{PASSWORD_FILE}`, then reload."
         )
         st.stop()
 
     st.title("Trading Strategy Builder")
-    st.caption("Enter the password to continue.")
+    st.caption("Enter your login ID and password to continue.")
 
     with st.form("login"):
+        entered_id = st.text_input("Login ID")
         entered = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Open dashboard")
 
     if submitted:
-        if password_matches(entered, expected):
+        if login_matches(entered_id, entered, expected_id, expected):
             st.session_state[_STATE_KEY] = True
             st.rerun()
         else:
-            st.error("Wrong password.")
+            st.error("Wrong login ID or password.")
 
     st.stop()

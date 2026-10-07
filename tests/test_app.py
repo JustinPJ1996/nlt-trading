@@ -72,6 +72,21 @@ def test_answering_questions_yields_a_spec() -> None:
     assert second_pass.spec.exit.stop_pct == 1.0
 
 
+@pytest.mark.parametrize("typed, expected", [("1%", 1.0), (" 1.5 % ", 1.5), ("2", 2.0)])
+def test_a_stop_loss_answer_may_carry_a_percent_sign(typed, expected) -> None:
+    """The question's own hint says "1%", so "1%" is what people type back."""
+    answered = logic.translate_text("buy nifty when rsi cracks 30", {"exit.stop_pct": typed})
+    assert answered.spec is not None
+    assert answered.spec.exit.stop_pct == expected
+
+
+@pytest.mark.parametrize("typed", ["one percent", "1%%", "about 1", "%"])
+def test_an_unclear_stop_loss_answer_is_asked_again_not_guessed(typed) -> None:
+    answered = logic.translate_text("buy nifty when rsi cracks 30", {"exit.stop_pct": typed})
+    assert answered.spec is None
+    assert "exit.stop_pct" in {q.field for q in answered.questions}
+
+
 def test_answers_from_questions_drops_empty_values() -> None:
     from nlt.translate.rules import Question
 
