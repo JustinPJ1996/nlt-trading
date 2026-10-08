@@ -7,7 +7,7 @@
 
 PY := .venv/bin/python
 
-.PHONY: check fix lint format test mutation secrets hooks clean-cache help
+.PHONY: check fix lint format test mutation secrets hooks clean-cache help web serve
 
 help:
 	@echo "make check     lint + format check + the full test suite (the gate)"
@@ -16,6 +16,8 @@ help:
 	@echo "make mutation  mutation testing: do the tests FAIL when the code breaks? (slow)"
 	@echo "make secrets   scan the whole git history for leaked credentials"
 	@echo "make hooks     install the git hooks (once per clone)"
+	@echo "make web       build the TypeScript front end (web/ -> web/dist)"
+	@echo "make serve     run the web app on http://127.0.0.1:8502"
 
 check: lint format test
 
@@ -62,3 +64,13 @@ hooks:
 	@chmod +x .githooks/*
 	@echo "Hooks installed: pre-commit runs 'make check', pre-push runs 'make secrets'."
 	@echo "Both are bypassable with --no-verify."
+
+# The TypeScript front end. Install scripts are off, as everywhere on this box:
+# a dependency's install hook is arbitrary code with this home directory in
+# reach. `pnpm build` type-checks before it bundles, so a type error fails it.
+web:
+	@cd web && pnpm install --ignore-scripts --frozen-lockfile && pnpm build
+
+# Serves the built front end and its API from one place, on 127.0.0.1 only.
+serve:
+	@$(PY) -m app.api

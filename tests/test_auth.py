@@ -13,7 +13,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.auth import ENV_VAR, configured_password, password_matches
+from app.auth import (
+    ENV_VAR,
+    LOGIN_ID_ENV_VAR,
+    configured_login_id,
+    configured_password,
+    login_matches,
+    password_matches,
+)
 
 # ------------------------------------------------------------------ reading
 
@@ -111,3 +118,43 @@ def test_non_ascii_passwords_compare_correctly() -> None:
     # is the kind of thing that raises at exactly the wrong moment.
     assert password_matches("paswórd-é", "paswórd-é") is True
     assert password_matches("paswórd-e", "paswórd-é") is False
+
+
+# ------------------------------------------------------------------ login ID
+
+
+def test_reads_the_login_id_from_the_environment_or_the_file(tmp_path: Path) -> None:
+    f = tmp_path / "id"
+    f.write_text("justin\n")
+    assert configured_login_id(env={}, path=f) == "justin"
+    assert configured_login_id(env={LOGIN_ID_ENV_VAR: "abid"}, path=f) == "abid"
+
+
+def test_no_login_id_anywhere_means_not_configured(tmp_path: Path) -> None:
+    assert configured_login_id(env={}, path=tmp_path / "missing") is None
+    (tmp_path / "blank").write_text("  \n")
+    assert configured_login_id(env={}, path=tmp_path / "blank") is None
+
+
+def test_the_right_id_and_password_get_in() -> None:
+    assert login_matches("justin", "s3cret", "justin", "s3cret")
+
+
+def test_the_login_id_ignores_case_and_stray_spaces() -> None:
+    assert login_matches("  Justin ", "s3cret", "justin", "s3cret")
+
+
+def test_the_right_password_with_the_wrong_id_is_refused() -> None:
+    assert not login_matches("abid", "s3cret", "justin", "s3cret")
+
+
+def test_the_right_id_with_the_wrong_password_is_refused() -> None:
+    assert not login_matches("justin", "S3cret", "justin", "s3cret")
+
+
+def test_blank_entries_are_refused() -> None:
+    assert not login_matches("", "", "justin", "s3cret")
+
+
+def test_an_unset_login_id_lets_nobody_in() -> None:
+    assert not login_matches("", "s3cret", "", "s3cret")

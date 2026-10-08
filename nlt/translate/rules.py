@@ -2070,11 +2070,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
 
     has_any_stop = bool(stop_pct or stop_atr_mult or trailing)
     if not has_any_stop:
-        if "exit.stop_pct" in answers:
-            try:
-                stop_pct = float(answers["exit.stop_pct"])
-            except ValueError:
-                stop_pct = None
+        stop_pct = _float_answer(answers, "exit.stop_pct")
         if not stop_pct:
             questions.append(
                 Question(
@@ -2170,9 +2166,18 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
 
 
 def _float_answer(answers: dict[str, str], field_name: str) -> float | None:
+    """A typed answer as a number: "1", "1.5" or "1%" -- and nothing looser.
+
+    The stop-loss question's own hint says "A common starting point is 1%", so
+    "1%" is the answer people type. It used to fail `float()` and the question
+    came straight back with no explanation. Anything else that is not plainly
+    a number still returns None, so the question is asked again rather than
+    an answer being guessed at.
+    """
     if field_name in answers:
+        raw = answers[field_name].strip().removesuffix("%").strip()
         try:
-            return float(answers[field_name])
+            return float(raw)
         except ValueError:
             return None
     return None

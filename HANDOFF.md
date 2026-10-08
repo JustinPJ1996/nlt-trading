@@ -261,6 +261,39 @@ after each expiry intraday paper runs never re-judge the old contract.
 Also fixed on the way: a strategy with no trades was summarised as "made money,
 but did worse than holding" at 0% vs 0%; a tie is no longer called worse.
 
+### Web front end (TypeScript) — **BUILT (2026-10-07), not yet published**
+
+Justin asked for a slick, easy UI in TypeScript over the unchanged Python
+engine. `web/` (Vite + React, strict TypeScript) is layout only; `app/api.py`
+(Starlette) serves it and a JSON API that calls `app/logic.py`. Run with
+`make web` then `make serve` (127.0.0.1:8502). The Streamlit app still works and
+is still the one behind the existing tunnel.
+
+Rules it keeps, each tested in `tests/test_api.py` and each test seen to fail
+when the rule was deliberately broken:
+
+- **Same login** as Streamlit (login ID + password, `app/auth.py`), fail-closed,
+  signed HttpOnly/SameSite=Strict/Secure cookie, 5 wrong tries locks an address
+  out for 15 min, every write must be JSON. Every `/api/` route except login
+  requires a session.
+- **What is tested is what was confirmed.** The old screen re-read the sentence
+  on "Run backtest"; the AI reader can answer differently twice. The API takes
+  the confirmed spec back and runs it via `logic.backtest_spec`.
+- **The readback is the engine's text.** The browser lays it out line by line;
+  only the five known section headings are shown in sentence case. Editing the
+  sentence hides the readback and withdraws the "Yes, that's right".
+- A question's suggested answer is a hint, never pre-filled.
+- `verdict.passed` is shown as "No serious warning signs", never a green
+  "Passed": it only means no critical flag fired.
+- The chart is downsampled to <=1200 points keeping each bucket's worst
+  drawdown, so it agrees with the "biggest drop" figure.
+
+Fixed on the way: answering the stop-loss question with "1%" (what its own hint
+suggests) was silently ignored and the question came back; only "1" worked.
+
+Open: with the default Rs 1,00,000 and NIFTY, the example strategies take no
+trades (a lot exceeds the 20% position cap). Engine rule, so left for Justin.
+
 ### Phase 4 — Live — **NOT STARTED**
 
 `nlt/risk/` and `nlt/broker/` are empty. Needs: an order router, every order

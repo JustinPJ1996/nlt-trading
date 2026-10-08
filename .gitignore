@@ -63,3 +63,8 @@ logs/
 # swallowed `nlt/data/` and broke every push for days.
 /mutants/
 /.mutmut-cache
+
+# The TypeScript front end. Dependencies and the built bundle are regenerated
+# by `make web`; anchored for the same reason as every directory above.
+/web/node_modules/
+/web/dist/
