@@ -66,6 +66,7 @@ def _api_routes(app) -> list[tuple[str, str]]:
     for route in app.routes:
         if isinstance(route, Route) and route.path.startswith("/api/"):
             path = route.path.replace("{sid:int}", "1").replace("{rid:int}", "1")
+            path = path.replace("{oid:int}", "1").replace("{pid:int}", "1")
             path = path.replace("{which}", "paper").replace("{action}", "engage")
             path = path.replace("{rest:path}", "anything")
             for method in route.methods - {"HEAD"}:
@@ -327,3 +328,134 @@ def test_short_charts_are_sent_whole() -> None:
     idx = pd.date_range("2024-01-01", periods=50, freq="D", tz="Asia/Kolkata")
     s = pd.Series(range(100, 150), index=idx, dtype=float)
     assert len(api._chart(s, s)) == 50
+
+
+# ------------------------------------------------------------ one-off orders
+
+ORDER = "If Nifty spot goes below 22000, buy 1 lot Nifty Futures"
+
+
+@pytest.fixture
+def no_prices(monkeypatch):
+    def unavailable(name):
+        raise api.orders_view.runner.kite.KiteNotConnected("no token in tests")
+
+    monkeypatch.setattr(api.orders_view, "kite_daily", unavailable)
+
+
+def _read(authed, text=ORDER, answers=None) -> dict:
+    r = authed.post("/api/orders/read", json={"text": text, "answers": answers or {}})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_order_read_back_is_the_engines_text(authed, no_prices) -> None:
+    from nlt.orders.parse import parse_order
+    from nlt.orders.readback import describe as describe_order
+
+    body = _read(authed)
+    assert body["readback"] == describe_order(parse_order(ORDER).order)
+    assert body["offer_stop"] is True
+    assert any("couldn't check today's price" in n for n in body["notes"])
+
+
+def test_order_read_with_a_price_says_how_far_away_it_is(authed, monkeypatch) -> None:
+    frame = pd.DataFrame(
+        {"open": [21900.0], "high": [21950.0], "low": [21800.0], "close": [21850.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-10-08", tz="Asia/Kolkata")]),
+    )
+    monkeypatch.setattr(api.orders_view, "kite_daily", lambda name: frame)
+    body = _read(authed)
+    assert any("already below 22,000" in w for w in body["warnings"])
+
+
+def test_saving_needs_the_order_that_was_read_back(authed, no_prices) -> None:
+    body = _read(authed)
+    tampered = {**body["order"], "action": {**body["order"]["action"], "lots": 9}}
+    r = authed.post("/api/orders/create", json={"text": ORDER, "order": tampered})
+    assert r.status_code == 400
+    assert "no longer matches" in r.json()["error"]
+    r = authed.post("/api/orders/create", json={"text": ORDER, "order": body["order"]})
+    assert r.status_code == 200
+    page = authed.get("/api/orders").json()
+    (saved,) = page["orders"]
+    assert saved["status"] == "waiting" and saved["can_cancel"] is True
+    assert saved["readback"] == body["readback"]
+
+
+def test_answers_are_part_of_what_is_saved(authed, no_prices) -> None:
+    body = _read(authed, answers={"trade.stop_loss": "1"})
+    assert body["order"]["action"]["stop_pct"] == 1.0
+    r = authed.post("/api/orders/create", json={"text": ORDER, "order": body["order"]})
+    assert r.status_code == 400  # without the answer, the sentence means no stop loss
+    r = authed.post(
+        "/api/orders/create",
+        json={"text": ORDER, "answers": {"trade.stop_loss": "1"}, "order": body["order"]},
+    )
+    assert r.status_code == 200
+
+
+def test_cancel_once_only(authed, no_prices) -> None:
+    body = _read(authed)
+    oid = authed.post("/api/orders/create", json={"text": ORDER, "order": body["order"]}).json()[
+        "order_id"
+    ]
+    assert authed.post(f"/api/orders/{oid}/cancel", json={}).status_code == 200
+    assert authed.post(f"/api/orders/{oid}/cancel", json={}).status_code == 400
+    assert authed.get("/api/orders").json()["orders"][0]["status"] == "cancelled"
+
+
+def test_an_exit_order_needs_open_positions_chosen(authed, no_prices) -> None:
+    text = "If my loss exceeds 50000, exit positions"
+    body = _read(authed, text)
+    assert body["needs_positions"] is True and body["positions"] == []
+    for positions in ([], [7], None):
+        r = authed.post(
+            "/api/orders/create",
+            json={"text": text, "order": body["order"], "positions": positions},
+        )
+        assert r.status_code == 400
+    assert authed.post("/api/orders/positions/7/close", json={}).status_code == 400
+
+
+def test_positions_flow_from_fill_to_exit_order_to_close_now(authed, no_prices) -> None:
+    from nlt.orders import runner
+    from nlt.orders.engine import Contract
+
+    store = authed.app.state.store
+    body = _read(authed)
+    authed.post("/api/orders/create", json={"text": ORDER, "order": body["order"]})
+    created = pd.Timestamp(store.one_off_orders()[0]["created_at"]).tz_convert("Asia/Kolkata")
+    start = created.ceil("min")
+    idx = pd.date_range(start, periods=30, freq="1min")
+    index = pd.DataFrame({"open": 21900.0, "high": 21900.0, "low": 21900.0, "close": 21900.0}, idx)
+    fut = pd.DataFrame({"open": 22000.0, "high": 22000.0, "low": 22000.0, "close": 22000.0}, idx)
+    oct_ = Contract("NIFTY", "NIFTY26OCTFUT", (start + pd.Timedelta(days=20)).date(), 1)
+    feed = runner.Feed(
+        index_minutes=lambda s, a, b: index,
+        contract_minutes=lambda c, a, b: fut,
+        daily=lambda n, a, b: index,
+        contracts=lambda s: [oct_],
+    )
+    runner.step(store, feed, now=start + pd.Timedelta(minutes=10), charges=lambda s: lambda *a: 0.0)
+
+    page = authed.get("/api/orders").json()
+    (pos,) = page["positions"]
+    assert pos["what"] == "Bought 1 lot of NIFTY26OCTFUT"
+    assert pos["pnl_text"].startswith("-")  # slippage: bought a little above 22,000
+    assert page["orders"][0]["status"] == "open"
+
+    text = "If my loss exceeds 50000, exit positions"
+    reading = _read(authed, text)
+    assert [p["id"] for p in reading["positions"]] == [pos["id"]]
+    r = authed.post(
+        "/api/orders/create",
+        json={"text": text, "order": reading["order"], "positions": [pos["id"]]},
+    )
+    assert r.status_code == 200
+    saved = authed.get("/api/orders").json()["orders"][0]
+    assert any(pos["name"] in line for line in saved["readback"])
+
+    assert authed.post(f"/api/orders/positions/{pos['id']}/close", json={}).status_code == 200
+    again = authed.post(f"/api/orders/positions/{pos['id']}/close", json={})
+    assert again.status_code == 400 and "already under way" in again.json()["error"]

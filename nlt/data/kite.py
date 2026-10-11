@@ -350,6 +350,39 @@ class KiteSource:
                     "traded more thinly than the test assumes."
                 )
 
+        df = self._fetch(token, interval, start, end, extra)
+        if df.empty:
+            self.last_notes = [*notes, f"Kite returned no {interval} candles for {symbol}"]
+            return df
+        self.last_notes = notes
+        if interval != "1d":
+            df, dropped = filter_to_session(df, session)
+            self.last_notes.extend(dropped)
+        return df
+
+    def contract_bars(
+        self, token: int, interval: str, start: dt.date, end: dt.date, session=NSE_EQUITY
+    ) -> pd.DataFrame:
+        """Candles for one exact contract, by Kite's instrument token.
+
+        `bars("NIFTY FUT")` always means the nearest month as of today. A paper
+        position is in one particular contract, and has to be followed in that
+        contract's prices until it is closed, even once a newer one is nearest.
+        """
+        if interval not in KITE_INTERVALS:
+            raise ValueError(
+                f"Kite has no {interval!r} candles; supported: {sorted(KITE_INTERVALS)}"
+            )
+        df = self._fetch(int(token), interval, start, end, {})
+        if df.empty or interval == "1d":
+            return df
+        df, _ = filter_to_session(df, session)
+        return df
+
+    def _fetch(
+        self, token: int, interval: str, start: dt.date, end: dt.date, extra: dict
+    ) -> pd.DataFrame:
+        kite_interval = KITE_INTERVALS[interval]
         frames = []
         step = dt.timedelta(days=_MAX_DAYS_PER_REQUEST[kite_interval] - 1)
         chunk_start = start
@@ -372,16 +405,10 @@ class KiteSource:
 
         frames = [f for f in frames if not f.empty]
         if not frames:
-            self.last_notes = [*notes, f"Kite returned no {interval} candles for {symbol}"]
             return normalise(
                 pd.DataFrame(
                     columns=["open", "high", "low", "close", "volume"],
                     index=pd.DatetimeIndex([], tz="Asia/Kolkata"),
                 )
             )
-        df = normalise(pd.concat(frames))
-        self.last_notes = notes
-        if interval != "1d":
-            df, dropped = filter_to_session(df, session)
-            self.last_notes.extend(dropped)
-        return df
+        return normalise(pd.concat(frames))

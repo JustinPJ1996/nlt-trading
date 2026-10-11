@@ -126,6 +126,8 @@ Ask before changing any of these; each was a deliberate decision.
 | `nlt/data/futures.py` | Futures contracts: lot sizes, expiry rules, MCX hours |
 | `nlt/data/kite_login.py` | Logs in to Kite by itself (password + authenticator) to get that token; logs in, nothing else |
 | `nlt/paper/runner.py` | Paper trading: the engine re-run each pass, plus an append-only record |
+| `nlt/orders/` | One-off conditional orders (ATO-style), paper only: reader, readback, engine, checker |
+| `app/orders_view.py` | The one-off orders page, server side |
 | `nlt/translate/readback.py` | Spec → plain English, deterministic |
 | `nlt/indicators/` | 43 indicators matching TradingView's Pine formulas |
 | `nlt/engine/backtest.py` | Single-instrument engine |
@@ -293,6 +295,69 @@ suggests) was silently ignored and the question came back; only "1" worked.
 
 Open: with the default Rs 1,00,000 and NIFTY, the example strategies take no
 trades (a lot exceeds the 20% position cap). Engine rule, so left for Justin.
+
+### One-off conditional orders (ATO-style) — **BUILT (2026-10-08), paper only**
+
+Justin asked for "simple strategies" that work like Zerodha's Alert Trigger
+Orders: *when this happens, do that, once.* His three examples, and what they
+read as:
+
+| Sentence | Result |
+| --- | --- |
+| If Nifty spot goes below 22000, buy 1 lot Nifty Futures | Order; readback warns there is no stop loss and offers to add one |
+| Buy 1 lot Futures if Nifty has been going down for 4 consecutive weeks (4 consecutive red candles) | Order: 4 red weekly candles. Without the brackets, "going down" is a question: red candles, or lower closes? |
+| If P&L has gone below Rs. 50000, exit positions | Question first: a loss of 50,000, or profit falling under 50,000? Then a list of open paper positions to tick |
+
+**What real ATO can and cannot do** (researched 2026-10-08): one live value
+(LTP, close, change %, OI, volume...) against a number or another instrument;
+up to 20 orders fire once, then the alert disables itself. No indicators, no
+candle patterns, no P&L condition (Zerodha staff say a P&L exit is coming "by
+year end" 2026), no MCX/commodity ATO, 200 ATOs max, margin checked only when
+it fires. Examples 2 and 3 are impossible as real ATOs; only example 1 is.
+
+**Justin's decisions**, each given to him as a trade-off:
+
+- **Paper only.** Nothing is sent to Zerodha. Real ATOs would mean the app
+  placing orders, which is still undecided (see Phase 4).
+- **No stop loss is allowed on a one-off order, but said out loud**: the
+  readback says so, and the screen offers to add one. Strategies still always
+  need one.
+- **P&L exits look only at the app's own paper positions** (those opened by
+  one-off orders), never the real Zerodha account.
+
+**Rules**, the strategy engine's where they apply (`nlt/orders/engine.py`):
+closed 1-minute candles only; a candle that began before the order was saved
+never counts; fill at the next candle's open plus 0.02% slippage; stop first
+when one candle hits both; a gap through the stop fills at the open; futures
+closed at the expiry-day close, never rolled. Choices made for one-off orders,
+written in the engine's docstring:
+
+- Stops/targets are measured from the **fill price**, not a signal close --
+  "1% stop" on a one-off order means 1% from what you paid.
+- A new position never opens in a contract on its expiry day; it goes to the
+  next month.
+- "Below" means strictly below (Zerodha's `<`).
+- P&L is **before charges**, like Kite's positions screen, over the chosen
+  positions still open.
+- A minute is judged one minute after it ends, and a daily/weekly candle an
+  hour after the close, so a late-arriving candle is never skipped. The fill
+  price is the same either way.
+- A weekly run counts only weeks ending after the order is saved; if the run
+  is already there, the screen warns that the next week must do the same.
+- While the paper kill switch is on, minutes are **skipped**, not caught up on
+  later at stale prices.
+
+The sentence is re-read on save and must give the identical order, so what is
+stored beside a sentence is always what it means. `one_off_event` is
+append-only (SQLite triggers), like `paper_event`. The checker runs inside
+`scripts/paper_run.py` every minute.
+
+**Fixed on the way:** the paper cron line ran 08:30-16:29 IST only, so MCX
+evenings (to 23:55) were never checked, for strategies either. It is now
+08:30-00:29. **Re-run `scripts/install_paper_cron.sh`** to apply it.
+
+`tests/test_one_off_orders.py`: each rule above was broken on purpose and a
+test was seen to fail. None of the 70 user sentences becomes an order.
 
 ### Phase 4 — Live — **NOT STARTED**
 

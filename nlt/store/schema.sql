@@ -173,3 +173,61 @@ CREATE TABLE IF NOT EXISTS paper_status (
     last_bar_time   TEXT,
     snapshot_json   TEXT    NOT NULL DEFAULT '{}'
 );
+
+-- One-off conditional orders ("when this happens, do that, once") -- paper only.
+-- The recipe is `nlt.orders.models.ConditionalOrder`. Once saved, an order's
+-- recipe never changes; it can only be cancelled, and only before it triggers.
+CREATE TABLE IF NOT EXISTS one_off_order (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    sentence        TEXT    NOT NULL,
+    order_json      TEXT    NOT NULL,
+    readback        TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL,
+    cancelled_at    TEXT
+);
+
+-- What happened to each one-off order, written the first time it was seen.
+-- Append-only for the same reason as paper_event: a paper record that can be
+-- quietly corrected proves nothing.
+CREATE TABLE IF NOT EXISTS one_off_event (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id        INTEGER NOT NULL REFERENCES one_off_order(id),
+    kind            TEXT    NOT NULL
+                    CHECK (kind IN ('triggered', 'filled', 'exited', 'finished', 'note')),
+    event_key       TEXT    NOT NULL,
+    observed_at     TEXT    NOT NULL,
+    symbol          TEXT    NOT NULL DEFAULT '',
+    bar_time        TEXT,
+    side            TEXT,
+    quantity        REAL,
+    price           REAL,
+    detail_json     TEXT    NOT NULL DEFAULT '{}',
+    UNIQUE (order_id, kind, event_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_one_off_event_order ON one_off_event(order_id);
+
+CREATE TRIGGER IF NOT EXISTS one_off_event_no_update
+BEFORE UPDATE ON one_off_event
+BEGIN
+    SELECT RAISE(ABORT, 'one_off_event is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS one_off_event_no_delete
+BEFORE DELETE ON one_off_event
+BEGIN
+    SELECT RAISE(ABORT, 'one_off_event is append-only');
+END;
+
+-- Where the one-off order checker has got to: the last finished 1-minute
+-- candle it has judged, and whether the price feed is healthy.
+CREATE TABLE IF NOT EXISTS one_off_book (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor          TEXT,
+    updated_at      TEXT,
+    health          TEXT    NOT NULL DEFAULT 'waiting',
+    message         TEXT    NOT NULL DEFAULT '',
+    prices_json     TEXT    NOT NULL DEFAULT '{}'
+);
+
+INSERT OR IGNORE INTO one_off_book (id) VALUES (1);
