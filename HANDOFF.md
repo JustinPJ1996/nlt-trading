@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,168 tests passing (2026-10-12, Phase 1b first batch)
+- **State:** 1,275 tests passing (2026-10-12, Phase 1b both batches)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -156,7 +156,7 @@ exit at +2%"* returns a question, because it has no stop loss — deliberate, an
 better than the original criterion. And a good deal of Phase 2/3 groundwork
 landed early: stocks, universes, baskets, the session-aware intraday engine.
 
-### Phase 1b — Reading and reporting, from the competitor review — **first batch DONE (2026-10-12)**
+### Phase 1b — Reading and reporting, from the competitor review — **DONE (2026-10-12)**
 
 On 2026-10-11/12 FinStocks, Tradara and Tradl were reviewed (Tradl logged in:
 its AI was given our sentences, and its 26 backtest + 17 screen suggested
@@ -203,28 +203,63 @@ not were tightened.
   after losing Rs 2,000" / "Never risk more than Rs 5,000 on one trade" --
   **no engine ever enforced them**. They come back, enforced, with D2.
 
-Noticed, not fixed (cheap, for next time): the results notes still leak engine
-words -- "schedule time-of-day rules (no_entry_after/square_off) skipped" on
-every daily run, and "end_of_data" as an exit reason; the cost dropdown defaults
-to *options* charges even for an index strategy; strategy names are built from
-the first words ("On Infy Hourly Bars Buy When").
+The first batch's leftovers were fixed in the second: plain-English engine
+notes throughout, index futures as the default charges, strategy names made from
+the strategy ("Buy INFY · Bollinger Bands").
 
-**Second batch:**
+**Second batch -- built 2026-10-12**, branch `phase-1b-second-batch`. Every rule
+was broken on purpose and a test seen to fail; several tests that missed a break
+were tightened, and two no-op code paths found that way were removed.
 
-- **A4 Editable form before running** -- stop, target, chart, period as boxes,
-  then "Run backtest" (Tradl, FinStocks). The readback must still match it.
-- **C2 The report lists its own weak spots** -- e.g. today's lot sizes, only
-  companies that exist today, fills assumed adverse (Tradara, Tradl).
-- **C3 Plain list of assumptions**, plus "same strategy + same data = same
-  result" (Tradl).
-- **C4 Download trades as CSV** (Tradl).
-- **C5 Indicator warm-up** -- check we don't trade before indicators have enough
-  history, and say so in the report (Tradl does). Check first; may exist.
-- **B4 Ready-made strategy library** -- cards with return, win rate, worst drop,
-  trade count; tap, edit, it becomes yours (FinStocks, Tradl).
-- **A5 Forgive typos** ("stcoks", "oversld") (Tradara).
-- **A6 More conditions** -- Supertrend, Stochastic, Donchian, high of the first
-  15 minutes, a daily average on an intraday chart (Tradl's prompts need these).
+- **C5 Warm-up** (Justin: load extra history). Three times the longest lookback
+  is loaded before the start date (never before 2020); nothing may trade before
+  the start; results, the before-charges run and the benchmark are cut back to
+  it. The report says how much warmed up, or the real first possible trade day.
+  `nlt/engine/warmup.py`. A daily average's length counts in days.
+- **C2/C3 "How this was tested"** -- what it assumed, and its weak spots, generated
+  from the spec and run (`nlt/report/method.py`); the slippage figure is read from
+  the engine. "Same strategy, same prices, same result" is tested by running
+  twice. Survivor / lot-size / margin notes moved into the weak spots, said once,
+  dated from the test's first day.
+- **C4 CSV** of every trade, behind the login.
+- **A4 Change the numbers before testing** -- stop (or trailing stop), target,
+  candle size. `/api/adjust` re-applies every box to the strategy as first read
+  and redraws the readback from the result; a changed box withdraws the
+  confirmation. A stop can be moved, never removed; VWAP cannot go daily; a
+  basket stays daily. A box's number is labelled "You said".
+- **A5 Typos** (Justin: words only, shown; never guess names). Fixed only into
+  the reader's own vocabulary, by one edit (two for long words), when exactly one
+  word is that close -- never a real English word (SCOWL list vendored as
+  `nlt/translate/english_words.txt.gz`, licence beside it), never a name of
+  anything tradable, never a word in capitals, never into a 3-letter
+  abbreviation. Each guard exists because a test caught a meaning change: "bank
+  4% profit" -> "band", "goldm" -> "gold", "ROCE" -> "roc". A misspelt name after
+  buy/sell asks "Did you mean RELIANCE?" with one button. None of the 70 or 43
+  is altered.
+- **A6 More conditions.** Two new indicators built around their look-ahead
+  traps: the **opening range** (no value until its minutes end; refused on daily
+  candles and when the minutes are not whole candles) and a **daily average on
+  an intraday chart** (the *previous* day's close against its average -- the
+  readback says "previous day" out loud). The rules reader also reads %K/%D,
+  "highest high / lowest low of the last N days", the opening range and the daily
+  average. Tradl's 43 on the AI path: **7 complete strategies run** (was 6); 0
+  wrong on the 43 and the 70. The opening-range breakout (#24) is still refused:
+  its stop is a price level (the range low), which ExitRules cannot hold.
+- **B4 Library** (Justin: recomputed daily). Six cards, each a real run at the
+  default account, tested to yesterday, holding return beside it and a "Serious
+  warning signs" tag when the report has one. Cache in `data/library.json`.
+- Also: the results line names the charges really applied (it said "index
+  futures" for a share strategy); daily CSV rows carry no made-up 00:00.
+
+Open after the second batch, for Justin:
+- **Every library card currently shows "Serious warning signs"** -- mostly too few
+  trades over 3-5 years. Honest, but it is what a newcomer sees first; longer
+  test periods or more active strategies would change it.
+- A **stop at a price level** ("stop at the low of the opening range") would let
+  Tradl's opening-range breakout run.
+- Wording still clunky in places: "MACD(12, 26, 9) macd crosses above ... signal
+  line"; the rules reader does not read "50-day SMA" on daily charts ("50 sma"
+  and "50 dma" work).
 
 **Where we are already ahead -- keep it that way.** Tradl's own backtest of
 "Buy RELIANCE at RSI 30, 5% stop, 10% target" bought **1 share** of a Rs 1,00,000
