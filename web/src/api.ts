@@ -127,6 +127,9 @@ export type Result = {
     last: string;
   };
   metrics: { label: string; strategy: string; benchmark: string }[];
+  // The same strategy run again with charges switched off. Null when no
+  // charges were paid, so there is nothing to compare.
+  before_after_charges: { label: string; before: string; after: string }[] | null;
   all_metrics: Record<string, number | null>;
   chart: ChartPoint[];
   trades: Trade[];

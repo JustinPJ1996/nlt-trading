@@ -525,3 +525,92 @@ def test_questions_carry_their_buttons_and_nothing_is_picked(authed) -> None:
     assert [c["label"] for c in stop["choices"]] == ["0.5%", "1%", "2%"]
     assert stop["answerable"] is True
     assert body["answers"] == {}
+
+
+# ------------------------------------------------------- before and after charges
+
+
+def _pinned_run(spec, cost_model="Index futures"):
+    return logic.backtest_spec(
+        spec,
+        capital=2_500_000,
+        cost_model_label=cost_model,
+        start=pd.Timestamp(WINDOW["start"]).date(),
+        end=pd.Timestamp(WINDOW["end"]).date(),
+    )
+
+
+def test_before_charges_is_a_second_run_with_no_charges() -> None:
+    from nlt.spec.models import Sizing
+
+    # A fixed size, so both runs buy exactly the same quantities and the gap
+    # between them is the charges and nothing else.
+    spec = logic.translate_text(RSI).spec
+    spec = spec.model_copy(update={"sizing": Sizing(mode="fixed_lots", lots=10)})
+    result = _pinned_run(spec)
+    after, before = result.backtest, result.before_charges
+    assert [t.quantity for t in before.trades] == [t.quantity for t in after.trades]
+    assert sum(t.charges for t in before.trades) == 0
+    charges = after.metrics["total_charges"]
+    assert charges > 0
+    gap = before.equity.iloc[-1] - after.equity.iloc[-1]
+    assert gap == pytest.approx(charges)
+
+
+def test_before_charges_never_looks_worse_than_after() -> None:
+    result = _pinned_run(logic.translate_text(SMA).spec)
+    assert (
+        result.before_charges.metrics["total_return_pct"]
+        >= result.backtest.metrics["total_return_pct"]
+    )
+
+
+def test_the_report_shows_before_and_after_charges(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": _spec_json(RSI), "capital": 2500000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    rows = {r["label"]: r for r in body["before_after_charges"]}
+    assert set(rows) == {
+        "Total return",
+        "Biggest drop from a peak",
+        "Trades that made money",
+        "Number of trades",
+        "Charges paid",
+    }
+    assert rows["Charges paid"]["before"] == "Rs 0"
+    assert rows["Charges paid"]["after"] != "Rs 0"
+    assert rows["Total return"]["after"] == body["metrics"][0]["strategy"]
+    direct = _pinned_run(StrategySpec.model_validate(_spec_json(RSI)))
+    assert rows["Total return"]["before"] == logic.format_signed_pct(
+        direct.before_charges.metrics["total_return_pct"]
+    )
+    assert rows["Total return"]["before"] != rows["Total return"]["after"]
+
+
+def test_no_charges_means_nothing_to_compare(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={
+            "spec": _spec_json(RSI),
+            "capital": 2500000,
+            "cost_model": "No costs (for comparison only)",
+            **WINDOW,
+        },
+    ).json()
+    assert body["before_after_charges"] is None
+
+
+def test_a_basket_is_also_run_again_with_no_charges() -> None:
+    spec = logic.translate_text(
+        "Buy NIFTY 100 stocks when ema8 crosses above ema21, target 3%, stop loss 1.5%"
+    ).spec
+    result = logic.backtest_spec(
+        spec,
+        capital=2_500_000,
+        start=pd.Timestamp("2024-01-01").date(),
+        end=pd.Timestamp("2024-06-30").date(),
+    )
+    assert result.error is None, result.error
+    assert result.backtest.metrics["total_charges"] > 0
+    assert sum(t.charges for t in result.before_charges.trades) == 0

@@ -325,6 +325,34 @@ async def translate(request: Request) -> Response:
     )
 
 
+def _before_after(after: dict, before_run) -> list[dict] | None:
+    """The same strategy with and without charges, side by side.
+
+    None when there is nothing to compare: no second run, or no charges paid.
+    """
+    if before_run is None or not (after.get("total_charges") or 0):
+        return None
+    before = before_run.metrics
+    rows = [
+        ("Total return", "total_return_pct", logic.format_signed_pct),
+        ("Biggest drop from a peak", "max_drawdown_pct", logic.format_pct),
+        ("Trades that made money", "win_rate_pct", logic.format_pct),
+        ("Number of trades", "total_trades", lambda v: str(int(v or 0))),
+    ]
+    out = [
+        {"label": label, "before": fmt(before.get(key)), "after": fmt(after.get(key))}
+        for label, key, fmt in rows
+    ]
+    out.append(
+        {
+            "label": "Charges paid",
+            "before": format_inr(0),
+            "after": format_inr(after.get("total_charges") or 0),
+        }
+    )
+    return out
+
+
 def _parse_spec(raw) -> StrategySpec:
     try:
         return StrategySpec.model_validate(raw)
@@ -445,6 +473,7 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
                 "benchmark": "",
             },
         ],
+        "before_after_charges": _before_after(m, result.before_charges),
         "all_metrics": {
             k: (None if v is None or (isinstance(v, float) and pd.isna(v)) else v)
             for k, v in m.items()

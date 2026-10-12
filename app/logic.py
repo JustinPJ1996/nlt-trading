@@ -341,6 +341,9 @@ class PipelineResult:
     # trades so every downstream consumer (charts, verdict, tables) works on one
     # shape regardless of whether one symbol or a hundred were traded.
     basket: BasketResult | None = None
+    # The same run again with charges switched off, for the before/after
+    # comparison. Exact: a second run, not charges added back to one number.
+    before_charges: BacktestResult | None = None
     data_notes: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -499,9 +502,16 @@ def backtest_spec(
                 error="There is no price history for that symbol and date range to test against.",
             )
 
+        no_charges = _adapt_charge_fn(ZeroCharges())
         if len(bars_by_symbol) > 1:
             basket = run_basket_backtest(load_spec, bars_by_symbol, capital=capital, charge_fn=cf)
             backtest = _as_backtest_result(basket, load_spec)
+            before_charges = _as_backtest_result(
+                run_basket_backtest(
+                    load_spec, bars_by_symbol, capital=capital, charge_fn=no_charges
+                ),
+                load_spec,
+            )
             # The benchmark for a basket is an equal-weight buy-and-hold of the
             # same names, which is the honest comparison: "would picking your
             # moments have beaten simply owning all of them?"
@@ -515,6 +525,9 @@ def backtest_spec(
             listed = _listed_expiries(load_spec)
             backtest = run_backtest(
                 load_spec, bars, capital=capital, charge_fn=cf, listed_expiries=listed
+            )
+            before_charges = run_backtest(
+                load_spec, bars, capital=capital, charge_fn=no_charges, listed_expiries=listed
             )
             data_notes = data_notes + list(backtest.warnings)
 
@@ -547,6 +560,7 @@ def backtest_spec(
             comparison=comparison,
             verdict=verdict,
             basket=basket,
+            before_charges=before_charges,
             data_notes=data_notes,
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad; this is the UI's last line of defence
