@@ -122,6 +122,11 @@ def hold_futures(
     between the two contracts falls between a sale and a purchase, so it is
     never counted -- the same rule the engine applies to the strategy itself.
 
+    The benchmark pays for its lots in full even though the strategy holds them
+    on margin: it answers "what did the market itself do with this money?",
+    and holding as many lots as the margin allows would be a leveraged bet
+    standing in for the market.
+
     `expiry_close` marks the candle on which each contract stops trading. An
     account that cannot pay for one lot holds cash throughout, and the line is
     flat: that is what holding would really have done with it.

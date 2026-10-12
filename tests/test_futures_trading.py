@@ -145,8 +145,8 @@ def test_an_account_too_small_for_one_lot_is_told_so_and_what_would_do():
     assert result.trades == []
     warning = next(w for w in result.warnings if w.startswith("ACCOUNT TOO SMALL"))
     assert "Crude Oil (100 barrels)" in warning
-    assert "Rs 8,70,000" in warning  # one lot
-    assert "Rs 43,50,000" in warning  # five times that, under the 20% limit
+    assert "Rs 2,71,875" in warning  # one lot's margin: 31.25% of Rs 8,70,000
+    assert "Rs 13,59,375" in warning  # five times that, under the 20% limit
 
 
 def test_an_evening_mcx_position_is_held_until_the_evening_square_off():
@@ -585,3 +585,86 @@ def test_the_index_is_still_the_index(kite_with_futures):
     end = dt.date.today()
     kite.KiteSource(http).bars("NIFTY", "1d", end - dt.timedelta(days=10), end)
     assert "/historical/256265/day" in http.calls[0][0]
+
+
+# ------------------------------------------------- held on the exchange's margin
+
+
+def test_a_lot_counts_its_margin_against_the_position_limit():
+    """Rs 15 lakh, 20% limit = Rs 3 lakh. A crude lot is Rs 8.7 lakh of oil but
+    ties up Rs 2.72 lakh of margin, so one lot is taken. Paid in full it was not."""
+    bars = _daily("2026-10-01", "2026-10-08", 8_700.0)
+    spec = _spec(stop_pct=1.0, target_pct=50.0).model_copy(
+        update={"risk": RiskLimits(max_position_pct=20)}
+    )
+    result = run_backtest(spec, bars, capital=1_500_000, charge_fn=_zero)
+    assert [t.quantity for t in result.trades] == [100]
+    assert not any(w.startswith("ACCOUNT TOO SMALL") for w in result.warnings)
+
+
+def test_profit_and_loss_are_on_the_whole_lot_not_the_margin():
+    prices = [8_700.0] * 3 + [8_787.0] * 4  # +1% after the fill
+    bars = _daily("2026-10-01", "2026-10-09", lambda idx: np.array(prices[: len(idx)]))
+    result = run_backtest(
+        _spec(stop_pct=5.0, target_pct=0.5), bars, capital=1_500_000, charge_fn=_zero
+    )
+    trade = result.trades[0]
+    assert trade.quantity == 100
+    assert trade.gross_pnl == pytest.approx(100 * (trade.exit_price - trade.entry_price))
+    assert trade.gross_pnl > 8_000  # a Rs 87 move on 100 barrels, not on the margin
+
+
+def test_open_positions_tie_up_their_margin_not_their_value():
+    """Two concurrent lots on Rs 6 lakh: each ties up Rs 2.72 lakh of margin, so
+    both fit. Counting full value, the second would be refused."""
+    bars = _daily("2026-10-01", "2026-10-08", 8_700.0)
+    spec = _spec(stop_pct=50.0, target_pct=50.0).model_copy(
+        update={"risk": RiskLimits(max_position_pct=None, max_concurrent_positions=3)}
+    )
+    result = run_backtest(spec, bars, capital=600_000, charge_fn=_zero)
+    assert len(result.trades) == 2
+
+
+def test_the_report_says_what_margin_was_assumed_and_what_a_move_means():
+    bars = _daily("2026-10-01", "2026-10-08", 8_700.0)
+    result = run_backtest(_spec(stop_pct=1.0), bars, capital=1_500_000, charge_fn=_zero)
+    note = next(w for w in result.warnings if w.startswith("FUTURES ON MARGIN"))
+    assert "Rs 2,71,875" in note
+    assert "31.25%" in note and "12 Oct 2026" in note
+    assert "a 1% move in the price is about 3% of the margin" in note
+    assert not any(w.startswith("STOP WIDER") for w in result.warnings)
+
+
+def test_a_stop_wider_than_the_margin_is_flagged():
+    bars = _daily("2026-10-01", "2026-10-08", 8_700.0)
+    result = run_backtest(_spec(stop_pct=35.0), bars, capital=1_500_000, charge_fn=_zero)
+    assert any(w.startswith("STOP WIDER THAN THE MARGIN") for w in result.warnings)
+
+
+def test_every_contract_has_a_margin_from_the_dated_table():
+    from nlt.data.futures import FUTURES, MARGIN_AS_OF, contract
+
+    assert MARGIN_AS_OF == dt.date(2026, 10, 12)
+    for symbol in FUTURES:
+        assert 5 <= contract(symbol).margin_pct <= 40, symbol
+    assert contract("NIFTY").margin_pct == 11.32
+
+
+def test_the_readback_says_the_futures_limit_is_on_margin():
+    spec = _spec(stop_pct=1.0).model_copy(update={"risk": RiskLimits(max_position_pct=20)})
+    text = describe(spec)
+    assert "Never set aside more than 20% of the account as margin for one position" in text
+    assert "into one position" not in text
+
+
+def test_the_futures_benchmark_still_pays_in_full():
+    """The benchmark is what the market did, not a leveraged bet: one crude lot is
+    Rs 8.7 lakh, so Rs 15 lakh holds one lot, not five."""
+    bars = _daily("2026-10-01", "2026-10-08", 8_700.0)
+    mask = np.zeros(len(bars), dtype=bool)
+    b = hold_futures(bars, 1_500_000, multiplier=100, expiry_close=mask, name="Crude")
+    assert b.equity.iloc[-1] == pytest.approx(1_500_000)
+    moved = bars.copy()
+    moved.loc[moved.index[-1], "close"] = 8_787.0
+    b = hold_futures(moved, 1_500_000, multiplier=100, expiry_close=mask, name="Crude")
+    assert b.equity.iloc[-1] - 1_500_000 == pytest.approx(100 * 87.0)

@@ -2048,9 +2048,9 @@ def _default_risk(instrument_kwargs: dict) -> RiskLimits:
 
     # How much of the account one position may occupy. Options get the tighter
     # limit: an option can lose its whole premium in a session. Futures get the
-    # share limit, Justin's call (2026-10-07): the engine pays for a futures
-    # position in full, with no borrowing against margin, so it is a cash
-    # position like a share and the same rule fits.
+    # share limit, Justin's call (2026-10-07), measured against the lot's
+    # exchange margin rather than its value (his call, 2026-10-12: margin is
+    # set by the exchange and is not borrowing).
     position_pct = (
         FNO_MAX_POSITION_PCT
         if instrument_kwargs.get("trade_as") == "option"

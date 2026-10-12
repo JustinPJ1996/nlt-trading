@@ -95,7 +95,9 @@ __all__ = [
 
 # --------------------------------------------------------------------- misc
 
-DEFAULT_CAPITAL = 100_000.0
+# Justin's call (2026-10-12). At Rs 1,00,000 the 20% limit is Rs 20,000, less
+# than one unit of NIFTY, so the index examples could take no trades at all.
+DEFAULT_CAPITAL = 2_500_000.0
 
 # Every example is verified (in tests/test_app.py) to parse into a spec with
 # no follow-up questions -- a "try this" button that itself needs clarifying

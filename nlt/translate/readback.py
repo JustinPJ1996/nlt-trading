@@ -366,7 +366,14 @@ def _risk_lines(spec: StrategySpec) -> list[str]:
     # fixed count cannot bound risk across a market priced from Rs 50 to
     # Rs 20,000 a share -- the rupee limits above do that instead, and stating
     # a cap that is not enforced would be the readback lying again.
-    if r.max_position_pct is not None:
+    if r.max_position_pct is not None and spec.instrument.is_future:
+        # A futures lot ties up its exchange margin, not its value (see
+        # `nlt.engine.backtest._margin_rate`); say what the limit measures.
+        lines.append(
+            f"Never set aside more than {_num(r.max_position_pct)}% of the account "
+            "as margin for one position"
+        )
+    elif r.max_position_pct is not None:
         lines.append(
             f"Never put more than {_num(r.max_position_pct)}% of the account into one position"
         )

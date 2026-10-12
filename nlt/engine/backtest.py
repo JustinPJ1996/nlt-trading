@@ -116,6 +116,21 @@ def _default_lot_size(spec: StrategySpec) -> int:
     return exchange_lot_size(spec.instrument.symbol, spec.instrument.trade_as)
 
 
+def _margin_rate(spec: StrategySpec) -> float:
+    """The share of a position's value it ties up: the exchange margin for futures.
+
+    Justin's call (2026-10-12): futures are held on the margin the exchange sets,
+    which is not borrowing, so a NIFTY lot ties up about 11% of its value, not
+    all of it. Everything else is paid for in full. Profit and loss are always on
+    the full value -- only what counts against the account's limits changes.
+    """
+    if spec.instrument.is_future:
+        from nlt.data.futures import contract
+
+        return contract(spec.instrument.symbol).margin_rate
+    return 1.0
+
+
 def _session_for_spec(spec: StrategySpec) -> Session:
     """The trading-hours calendar `spec.instrument` runs on.
 
@@ -279,6 +294,7 @@ def run_backtest(
         )
 
     if spec.instrument.is_future and len(bars) > 0:
+        _warn_about_margin(spec, bars, capital, lot_size, warnings)
         _warn_if_one_lot_is_unaffordable(spec, bars, capital, lot_size, warnings)
 
     is_intraday_tf = spec.instrument.timeframe != "1d"
@@ -355,6 +371,7 @@ def run_backtest(
         )
 
     max_concurrent = spec.risk.max_concurrent_positions
+    margin_rate = _margin_rate(spec)
     entry_reason = _describe(spec.entry)
 
     n = len(bars)
@@ -385,7 +402,7 @@ def run_backtest(
                 # capital: without netting it out, two concurrent positions
                 # could each be sized as if the whole account were free,
                 # re-creating the leverage bug on max_concurrent_positions > 1.
-                committed = sum(p.entry_price * p.quantity for p in open_positions)
+                committed = margin_rate * sum(p.entry_price * p.quantity for p in open_positions)
                 capital_spare = capital_total - committed
                 pos, used_fallback, capped = _open_position(
                     spec,
@@ -586,9 +603,10 @@ def run_backtest(
         # being told there is "not enough capital" would be baffling.
         pct = spec.risk.max_position_pct
         if pct is not None:
+            cost = "lot's margin is" if spec.instrument.is_future else "lot costs"
             reason = (
                 f"one position may not exceed {pct:g}% of the account, and a single "
-                "lot costs more than that. Either raise that limit or trade a "
+                f"{cost} more than that. Either raise that limit or trade a "
                 "cheaper contract"
             )
         else:
@@ -728,24 +746,56 @@ def _warn_on_cross_session_lookback(
         )
 
 
+def _warn_about_margin(
+    spec: StrategySpec, bars: pd.DataFrame, capital: float, lot_size: int, warnings: list[str]
+) -> None:
+    """Say what margin means for this result, and when a stop can outrun it.
+
+    A futures position ties up only its margin but gains and loses on its full
+    value, so every 1% the market moves is several percent of the money set
+    aside. The user is told the figure we used and how old it is, and is warned
+    if the stop is wide enough to lose more than the whole margin.
+    """
+    from nlt.data.futures import MARGIN_AS_OF, MARGIN_SOURCE, contract
+
+    c = contract(spec.instrument.symbol)
+    price = float(bars["close"].iloc[-1])
+    margin = price * lot_size * c.margin_rate
+    per_move = 1.0 / c.margin_rate
+    warnings.append(
+        f"FUTURES ON MARGIN: one lot of {c.title} ties up about {_inr(margin)} of margin "
+        f"({c.margin_pct:g}% of the lot's value, {MARGIN_SOURCE} on "
+        f"{MARGIN_AS_OF:%d %b %Y}; that figure is used for every year tested). Profit and "
+        f"loss are on the whole lot, so a 1% move in the price is about {per_move:.0f}% of "
+        "the margin set aside."
+    )
+    stop = spec.exit.stop_pct
+    if stop is not None and stop >= c.margin_pct:
+        warnings.append(
+            f"STOP WIDER THAN THE MARGIN: a {stop:g}% stop on {c.title} can lose more than "
+            f"the whole {c.margin_pct:g}% margin before it is hit. The broker would ask for "
+            "more money, or close the position, before then."
+        )
+
+
 def _warn_if_one_lot_is_unaffordable(
     spec: StrategySpec, bars: pd.DataFrame, capital: float, lot_size: int, warnings: list[str]
 ) -> None:
     """Say up front when the account cannot hold a single lot, and what would.
 
-    Futures are indivisible and, with no borrowing, paid for in full: one lot of
-    Gold is over a crore. Without this, a small account produces a backtest with
-    no trades and a terse "skipped" count at the bottom -- which reads like a
+    Futures are indivisible; one lot ties up its exchange margin (Gold: about
+    Rs 14 lakh). Without this, a small account produces a backtest with no
+    trades and a terse "skipped" count at the bottom -- which reads like a
     strategy that never signalled rather than an account that could not play.
     """
     from nlt.data.futures import contract
 
     c = contract(spec.instrument.symbol)
     price = float(bars["close"].iloc[-1])
-    lot_value = price * lot_size
+    lot_margin = price * lot_size * c.margin_rate
     pct = spec.risk.max_position_pct
     budget = capital * (pct / 100.0 if pct is not None else 1.0)
-    if lot_value <= budget:
+    if lot_margin <= budget:
         return
     limit = (
         f"at most {pct:g}% of the account ({_inr(budget)} of {_inr(capital)}) may go into one "
@@ -753,12 +803,11 @@ def _warn_if_one_lot_is_unaffordable(
         if pct is not None
         else f"the account holds {_inr(capital)}"
     )
-    needed = lot_value / (pct / 100.0) if pct is not None else lot_value
+    needed = lot_margin / (pct / 100.0) if pct is not None else lot_margin
     warnings.append(
-        f"ACCOUNT TOO SMALL FOR ONE LOT: one lot of {c.title} ({c.lot_text}) costs about "
-        f"{_inr(lot_value)} at the latest price, paid in full with no borrowing, and {limit}. "
-        f"No trade can be taken at that size. Test with at least {_inr(needed)}, or a "
-        "smaller contract."
+        f"ACCOUNT TOO SMALL FOR ONE LOT: one lot of {c.title} ({c.lot_text}) needs about "
+        f"{_inr(lot_margin)} of margin at the latest price, and {limit}. No trade can be "
+        f"taken at that size. Test with at least {_inr(needed)}, or a smaller contract."
     )
 
 
@@ -822,7 +871,8 @@ def _open_position(
 
     # --- affordability: never open a position the account cannot fund ------
     capped = False
-    affordable_lots = math.floor(capital_spare / entry_price / lot_size) if entry_price > 0 else 0
+    lot_cost = entry_price * lot_size * _margin_rate(spec)
+    affordable_lots = math.floor(capital_spare / lot_cost) if lot_cost > 0 else 0
     affordable_quantity = max(affordable_lots, 0) * lot_size
     if quantity > affordable_quantity:
         quantity = affordable_quantity
@@ -932,7 +982,7 @@ def _size_position(
     pct = spec.risk.max_position_pct
     if pct is not None and entry_price > 0:
         budget = pct / 100.0 * capital_now
-        affordable_lots = math.floor(budget / (entry_price * lot_size))
+        affordable_lots = math.floor(budget / (entry_price * lot_size * _margin_rate(spec)))
         quantity = min(quantity, max(affordable_lots, 0) * lot_size)
 
     # No lot cap is the normal case for stocks; capital and max_loss_per_trade

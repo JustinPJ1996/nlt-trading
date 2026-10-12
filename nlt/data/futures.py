@@ -67,6 +67,15 @@ class FuturesContract:
     expiry_rule: str  # key into _EXPIRY_RULES
     months: tuple[int, ...]  # calendar months with a contract
     session: Session
+    # Exchange margin (SPAN + exposure, NRML) as a percent of one lot's value:
+    # what a position ties up, Justin's call (2026-10-12) -- margin is set by
+    # the exchange and is not borrowing. Today's figure, used for every year,
+    # like the lot sizes; see MARGIN_AS_OF.
+    margin_pct: float
+
+    @property
+    def margin_rate(self) -> float:
+        return self.margin_pct / 100.0
 
     @property
     def market(self) -> str:
@@ -79,6 +88,14 @@ class FuturesContract:
 
 
 _EVERY_MONTH = tuple(range(1, 13))
+
+# Where the margin percentages below come from. Zerodha's public margin
+# calculator (NRML, nearest contract), read on this date; each was checked
+# against its own price and lot (NIFTY: 65 x 22,612.60 x 11.32% = Rs 1.66 lakh,
+# the figure shown). Margins move with volatility -- crude's 31% is high by its
+# own history -- so the report states this date beside every futures result.
+MARGIN_AS_OF = dt.date(2026, 10, 12)
+MARGIN_SOURCE = "Zerodha's margin calculator"
 
 FUTURES: dict[str, FuturesContract] = {
     c.symbol: c
@@ -93,6 +110,7 @@ FUTURES: dict[str, FuturesContract] = {
             "nymex_wti",
             _EVERY_MONTH,
             MCX,
+            31.25,
         ),
         FuturesContract(
             "CRUDEOILM",
@@ -104,6 +122,7 @@ FUTURES: dict[str, FuturesContract] = {
             "nymex_wti",
             _EVERY_MONTH,
             MCX,
+            31.25,
         ),
         FuturesContract(
             "NATURALGAS",
@@ -115,6 +134,7 @@ FUTURES: dict[str, FuturesContract] = {
             "nymex_henry_hub",
             _EVERY_MONTH,
             MCX,
+            16.62,
         ),
         FuturesContract(
             "NATGASMINI",
@@ -126,6 +146,7 @@ FUTURES: dict[str, FuturesContract] = {
             "nymex_henry_hub",
             _EVERY_MONTH,
             MCX,
+            16.62,
         ),
         FuturesContract(
             "GOLD",
@@ -137,6 +158,7 @@ FUTURES: dict[str, FuturesContract] = {
             "fifth",
             (2, 4, 6, 8, 10, 12),
             MCX,
+            9.25,
         ),
         FuturesContract(
             "GOLDM",
@@ -148,6 +170,7 @@ FUTURES: dict[str, FuturesContract] = {
             "fifth",
             _EVERY_MONTH,
             MCX,
+            9.25,
         ),
         FuturesContract(
             "SILVER",
@@ -159,6 +182,7 @@ FUTURES: dict[str, FuturesContract] = {
             "fifth",
             (3, 5, 7, 9, 12),
             MCX,
+            12.75,
         ),
         FuturesContract(
             "SILVERM",
@@ -170,6 +194,7 @@ FUTURES: dict[str, FuturesContract] = {
             "last_day",
             (2, 4, 6, 8, 11),
             MCX,
+            12.75,
         ),
         # NSE index futures. The lot is the exchange's current one, from the
         # same table options use -- see `nlt.data.instruments` for why today's
@@ -184,6 +209,7 @@ FUTURES: dict[str, FuturesContract] = {
             "nse_index",
             _EVERY_MONTH,
             NSE_EQUITY,
+            11.32,
         ),
         FuturesContract(
             "BANKNIFTY",
@@ -195,6 +221,7 @@ FUTURES: dict[str, FuturesContract] = {
             "nse_index",
             _EVERY_MONTH,
             NSE_EQUITY,
+            11.32,
         ),
     )
 }
@@ -238,6 +265,7 @@ def contract(symbol: str) -> FuturesContract:
             c.expiry_rule,
             c.months,
             c.session,
+            c.margin_pct,
         )
     return c
 

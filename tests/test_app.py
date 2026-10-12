@@ -407,3 +407,10 @@ def test_symbol_override_is_honoured_not_silently_ignored() -> None:
     assert result.error is not None, (
         "an unknown symbol override must fail loudly, not fall back to NIFTY"
     )
+
+
+def test_the_default_account_is_25_lakh():
+    """Justin's call (2026-10-12): at Rs 1 lakh no NIFTY example could trade."""
+    from app import logic
+
+    assert logic.DEFAULT_CAPITAL == 2_500_000
