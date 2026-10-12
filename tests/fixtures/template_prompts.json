@@ -1,0 +1,359 @@
+[
+  {
+    "n": 1,
+    "name": "Gap Up Today",
+    "text": "Nifty 500 stocks that opened at least 3% above the previous close today",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 2,
+    "name": "Midcap Momentum",
+    "text": "Nifty Midcap 150 stocks with 3 month return above 20% and price above the 50 day moving average",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 3,
+    "name": "FII Favourites",
+    "text": "Stocks where FII holding went up for 3 quarters in a row and market cap is above ₹10,000 Cr",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 4,
+    "name": "Consistent Profit Growers",
+    "text": "Stocks with net profit growth above 10% in each of the last 5 financial years and ROE above 15%",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 5,
+    "name": "Debt Free Compounders",
+    "text": "Debt free stocks with 5 year sales growth above 15%, 5 year profit growth above 15% and ROCE above 20%",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 6,
+    "name": "Low PEG Growth",
+    "text": "Stocks with PEG ratio below 1, 3 year EPS growth above 20% and market cap above ₹1,000 Cr",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 7,
+    "name": "Undervalued Tech",
+    "text": "IT sector stocks with market cap above ₹5,000 Cr, P/E below the sector median, ROE above 15% and debt to equity below 0.5",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 8,
+    "name": "52 Week High",
+    "text": "Nifty 500 stocks with LTP within 5% of their 52-week high and today's volume at least 1.5 times the 20-day average volume",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 9,
+    "name": "Bollinger Squeeze",
+    "text": "Stocks where Bollinger Band width is at its lowest level in the last 6 months",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 10,
+    "name": "Cash Rich Small Caps",
+    "text": "Small cap stocks where cash and investments are above 30% of market cap and debt to equity is below 0.2",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 11,
+    "name": "Quality at Low",
+    "text": "Nifty 200 stocks trading within 5% of their 52 week low with ROE above 12% and price above EMA 20",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 12,
+    "name": "Pharma Growth",
+    "text": "Pharma stocks with 3 year sales growth above 12%, operating margin above 18% and P/E below 35",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 13,
+    "name": "High Dividend Yield",
+    "text": "Stocks with dividend yield above 3% and market cap above ₹2,000 Cr",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 14,
+    "name": "MACD Bullish Cross",
+    "text": "Nifty 500 stocks where MACD crossed above the signal line today and price is above the 200 day moving average",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 15,
+    "name": "Golden Crossovers",
+    "text": "Stocks where the 50 day moving average crossed above the 200 day moving average in the last 5 trading days",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 16,
+    "name": "Above All EMA",
+    "text": "Nifty 500 stocks trading above the 20, 50, 100 and 200 day EMA",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 17,
+    "name": "Promoter Buying",
+    "text": "Stocks where promoter holding increased by at least 1% in the latest quarter and promoter pledge is below 5%",
+    "klass": "screen",
+    "needs": "screen mode (F1); a list of stocks, not a strategy"
+  },
+  {
+    "n": 18,
+    "name": "Hourly Momentum",
+    "text": "On BAJFINANCE hourly bars, buy when RSI crosses above 60 and the close is above the 20-hour EMA. Exit when the close falls below the 20-hour EMA. Hold overnight. Backtest the last 2 years.",
+    "klass": "no-stop",
+    "needs": "no stop loss given -- must ask, never invent one"
+  },
+  {
+    "n": 19,
+    "name": "9:20 Short Straddle",
+    "text": "Sell the NIFTY weekly ATM straddle at 09:20 with a 25% stop on each leg. Square off at 15:15. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 20,
+    "name": "Bull Put Spread",
+    "text": "At 09:30, sell the NIFTY weekly put 200 points below spot and buy the put 400 points below. Exit at 50% of the credit received or at 15:15. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 21,
+    "name": "Gated by Nifty Trend",
+    "text": "On TITAN hourly bars, buy when RSI crosses above 55 and exit when RSI falls below 45. Only take entries while NIFTY 50 is above its 200-day SMA. Stop 2%, hold overnight. Backtest the last 3 years.",
+    "klass": "strategy",
+    "needs": "a NIFTY 200-day SMA trend filter on a stock (cross-instrument)",
+    "expect": {
+      "symbol": "TITAN",
+      "timeframe": "1h",
+      "stop_pct": 2.0,
+      "target_pct": null,
+      "intraday": false
+    }
+  },
+  {
+    "n": 22,
+    "name": "Stochastic Oversold Turn",
+    "text": "On BHARTIARTL 15-minute bars, buy when Stochastic %K crosses above %D below the 20 level. Exit when %K goes above 80. Stop 0.8%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "strategy",
+    "needs": "Stochastic %K/%D (A6)",
+    "expect": {
+      "symbol": "BHARTIARTL",
+      "timeframe": "15m",
+      "stop_pct": 0.8,
+      "target_pct": null,
+      "intraday": true
+    }
+  },
+  {
+    "n": 23,
+    "name": "Bollinger Band Bounce",
+    "text": "On INFY hourly bars, buy when the close crosses back above the lower Bollinger Band. Exit when the close touches the middle band. Stop 2%, hold overnight. Backtest the last 2 years.",
+    "klass": "strategy",
+    "needs": "hourly bars, 'hold overnight', 'backtest the last N years' (A3)",
+    "expect": {
+      "symbol": "INFY",
+      "timeframe": "1h",
+      "stop_pct": 2.0,
+      "target_pct": null,
+      "intraday": false
+    }
+  },
+  {
+    "n": 24,
+    "name": "Opening Range Breakout",
+    "text": "On HDFCBANK 5-minute bars, buy when the close breaks above the high of the first 15 minutes. Stop at the low of the opening range, target 1.2%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "unsupported-stop",
+    "needs": "a stop at the opening range low -- not a percent; first-15-minute high (A6)"
+  },
+  {
+    "n": 25,
+    "name": "Supertrend Swing",
+    "text": "On TCS daily bars, buy when Supertrend turns bullish and exit when it turns bearish. Backtest the last 5 years.",
+    "klass": "no-stop",
+    "needs": "no stop loss given -- must ask, never invent one"
+  },
+  {
+    "n": 26,
+    "name": "Gap Down Put Buy",
+    "text": "On NIFTY 5-minute bars, when the day opens more than 0.5% below the previous close, buy the weekly ATM put at 09:30 if price is still below the open. Stop 30%, target 60%. Square off at 15:15. Backtest the last 6 months.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 27,
+    "name": "Donchian Breakout Swing",
+    "text": "On MARUTI daily bars, buy when the close is above the highest high of the last 20 days. Exit when the close falls below the lowest low of the last 10 days. Backtest the last 5 years.",
+    "klass": "no-stop",
+    "needs": "no stop loss given -- must ask, never invent one"
+  },
+  {
+    "n": 28,
+    "name": "Weekly Put Sell to Expiry",
+    "text": "Every Monday at 09:30, sell the NIFTY weekly put 300 points below spot and hold it to expiry. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 29,
+    "name": "MACD with Daily Trend",
+    "text": "On AXISBANK 15-minute bars, buy when MACD crosses above its signal line and the daily close is above the 50-day SMA. Stop 1%, target 2%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "strategy",
+    "needs": "a daily SMA on an intraday chart (A6)",
+    "expect": {
+      "symbol": "AXISBANK",
+      "timeframe": "15m",
+      "stop_pct": 1.0,
+      "target_pct": 2.0,
+      "intraday": true
+    }
+  },
+  {
+    "n": 30,
+    "name": "VWAP Reclaim",
+    "text": "On SBIN 5-minute bars, buy when the close crosses above VWAP and RSI is above 50. Exit when the close falls back below VWAP. Stop 0.6%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "strategy",
+    "needs": "'falls back below' wording; test period wording (A3)",
+    "expect": {
+      "symbol": "SBIN",
+      "timeframe": "5m",
+      "stop_pct": 0.6,
+      "target_pct": null,
+      "intraday": true
+    }
+  },
+  {
+    "n": 31,
+    "name": "Previous Day Low Put Buy",
+    "text": "On BANKNIFTY 15-minute bars, buy the monthly ATM put when a candle closes below the previous day's low. Stop 30%, target 50% on the premium. Square off at 15:15. Backtest the last 6 months.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 32,
+    "name": "Golden Cross",
+    "text": "On ASIANPAINT daily bars, buy when the 50-day SMA crosses above the 200-day SMA and sell when it crosses back below. Backtest the last 5 years.",
+    "klass": "no-stop",
+    "needs": "no stop loss given -- must ask, never invent one"
+  },
+  {
+    "n": 33,
+    "name": "Straddle with Re-entry",
+    "text": "Sell the NIFTY weekly ATM straddle at 09:20 with a 25% stop on each leg, and re-enter a leg once if it gets stopped out. Square off at 15:15. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 34,
+    "name": "Iron Condor",
+    "text": "At 09:30, sell a NIFTY weekly iron condor with short strikes 200 points out and wings 100 points beyond them. Exit at 50% of the credit received or at 15:15. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 35,
+    "name": "Iron Butterfly",
+    "text": "At 09:20, sell the NIFTY weekly ATM call and put and buy wings 200 points on either side. Take profit at 40% of the net credit. Square off at 15:15. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 36,
+    "name": "Opening Range Call Buy",
+    "text": "On NIFTY 5-minute bars, buy the weekly ATM call when a candle closes above the high of the first 15 minutes. Stop 30%, target 60% on the premium. Square off at 15:15. Backtest the last 6 months.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 37,
+    "name": "High IV Straddle",
+    "text": "Sell the NIFTY weekly ATM straddle at 09:20 only on days when IV percentile is above 70. Stop at 30% of the premium collected. Square off at 15:15. Backtest the last 1 year.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 38,
+    "name": "Bollinger Breakout",
+    "text": "On ADANIPORTS 15-minute bars, buy when the close breaks above the upper Bollinger Band. Stop 1%, target 2%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "strategy",
+    "needs": "'breaks above' wording; test period wording (A3)",
+    "expect": {
+      "symbol": "ADANIPORTS",
+      "timeframe": "15m",
+      "stop_pct": 1.0,
+      "target_pct": 2.0,
+      "intraday": true
+    }
+  },
+  {
+    "n": 39,
+    "name": "RSI Dip Buy",
+    "text": "On HINDUNILVR 15-minute bars, buy when RSI crosses above 30 and the close is above the 200-bar EMA. Stop 0.7%, target 1.4%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "strategy",
+    "needs": "'200-bar EMA' wording; test period wording (A3)",
+    "expect": {
+      "symbol": "HINDUNILVR",
+      "timeframe": "15m",
+      "stop_pct": 0.7,
+      "target_pct": 1.4,
+      "intraday": true
+    }
+  },
+  {
+    "n": 40,
+    "name": "Sensex Straddle",
+    "text": "Sell the SENSEX weekly ATM straddle at 09:20 with a 30% stop on each leg. Square off at 15:15. Backtest the last 6 months.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 41,
+    "name": "RSI Momentum Call",
+    "text": "On BANKNIFTY 15-minute bars, buy the monthly ATM call when RSI crosses above 60. Stop 30%, target 50% on the premium. Square off at 15:15. Backtest the last 6 months.",
+    "klass": "options",
+    "needs": "options (Phase 2)"
+  },
+  {
+    "n": 42,
+    "name": "EMA Crossover with VWAP",
+    "text": "On ICICIBANK 15-minute bars, buy when the 9 EMA crosses above the 21 EMA while the close is above VWAP. Stop 0.8%, target 1.6%, square off at 15:15. Backtest the last 1 year.",
+    "klass": "strategy",
+    "needs": "'while' joining conditions; test period wording (A3)",
+    "expect": {
+      "symbol": "ICICIBANK",
+      "timeframe": "15m",
+      "stop_pct": 0.8,
+      "target_pct": 1.6,
+      "intraday": true
+    }
+  },
+  {
+    "n": 43,
+    "name": "RSI Pullback in Uptrend",
+    "text": "On RELIANCE hourly bars, buy when RSI is between 45 and 60 and the close is above the 200-hour simple moving average. Exit when RSI goes above 70 or the close falls below the 200-hour average. Hold overnight. Backtest the last 2 years.",
+    "klass": "no-stop",
+    "needs": "no stop loss given -- must ask, never invent one"
+  }
+]
