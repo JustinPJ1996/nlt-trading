@@ -72,13 +72,53 @@ from nlt.spec.models import (
 
 
 @dataclass
+class Choice:
+    """One tap-to-answer button: what it says, and the answer it sends."""
+
+    label: str
+    value: str
+
+
+@dataclass
 class Question:
-    """Something we need the user to answer before we can trade their money on it."""
+    """Something we need the user to answer before we can trade their money on it.
+
+    `choices` are buttons; nothing is ever pre-selected. `answerable` says the
+    reader will take a typed answer for `field`. A question with neither can
+    only be answered by changing the description, and the screen says so
+    instead of showing a box whose answer would be ignored.
+    """
 
     text: str
     why: str
     suggestion: str | None
     field: str
+    choices: list[Choice] = field(default_factory=list)
+    answerable: bool = False
+
+
+@dataclass(frozen=True)
+class BacktestPeriod:
+    """A test period in the user's own terms: the last N units, or one calendar year.
+
+    Relative, not dated: the screen turns it into dates on the day it runs, so
+    the reader gives the same answer every day.
+    """
+
+    words: str
+    last: int | None = None
+    unit: str | None = None  # "days" | "weeks" | "months" | "years"
+    year: int | None = None
+
+
+# Tap-to-answer buttons. Common round numbers, offered side by side; none is
+# chosen for the user, and "type your own" stays beside them.
+STOP_CHOICES = [Choice("0.5%", "0.5"), Choice("1%", "1"), Choice("2%", "2")]
+TARGET_CHOICES = [Choice("+2%", "2"), Choice("+3%", "3"), Choice("+5%", "5")]
+OVERNIGHT_CHOICES = [
+    Choice("Hold overnight", "overnight"),
+    Choice("Square off the same day", "square_off"),
+]
 
 
 @dataclass
@@ -88,6 +128,12 @@ class TranslationResult:
     notes: list[str] = field(default_factory=list)
     unparsed: list[str] = field(default_factory=list)
     source: str = "rules"
+    # Where each part of the recipe came from, for the readback's labels:
+    # part name -> readback.SAID / WORKED_OUT / DEFAULT. Only set with a spec.
+    sources: dict[str, str] = field(default_factory=dict)
+    # The test period the user asked for ("backtest the last 2 years"), kept
+    # off the spec on purpose -- it belongs to a run, not to the strategy.
+    period: BacktestPeriod | None = None
 
 
 @dataclass
@@ -1499,7 +1545,9 @@ _ANTECEDENT_FAMILIES: list[tuple[str, str, re.Pattern[str]]] = [
 ]
 
 
-def _find_antecedent(entry_text: str) -> tuple[str | None, str | None]:
+def _find_antecedent(
+    entry_text: str,
+) -> tuple[str | None, str | None, list[tuple[str, str]]]:
     """Returns (substitution token, ambiguity description).
 
     Exactly one of the two is set: a substitution token (e.g. "rsi14", to
@@ -1515,16 +1563,17 @@ def _find_antecedent(entry_text: str) -> tuple[str | None, str | None]:
             labels_seen.append(label)
             length = m.group("len")
             tokens.append(f"{token_prefix}{length}" if length else token_prefix)
+    candidates = list(zip(labels_seen, tokens, strict=True))
     if len(labels_seen) > 1:
-        return None, " and ".join(labels_seen)
+        return None, " or the ".join(labels_seen), candidates
     if len(labels_seen) == 1:
-        return tokens[0], None
-    return None, None
+        return tokens[0], None, candidates
+    return None, None, candidates
 
 
 def _extract_exit_condition(
-    text: str, direction: str
-) -> tuple[str, Condition | None, list[dict], list[str], str | None]:
+    text: str, direction: str, chosen: str | None = None
+) -> tuple[str, Condition | None, list[dict], list[str], Question | None]:
     """The second (or later) 'when ...' clause in the text is an exit condition.
 
     Returns (text, condition, indicators, notes, ambiguous_antecedent). The last
@@ -1544,16 +1593,27 @@ def _extract_exit_condition(
 
     if re.search(r"\bit\b", clause_text):
         entry_text = text[: whens[1].start()]
-        token, ambiguous = _find_antecedent(entry_text)
+        token, ambiguous, candidates = _find_antecedent(entry_text)
+        if ambiguous and chosen in {t for _label, t in candidates}:
+            token, ambiguous = chosen, None
         if ambiguous:
             return (
                 text,
                 None,
                 [],
                 [],
-                (
-                    f"'it' in \"...{clause_text.strip()}\" could mean either the {ambiguous} "
-                    "mentioned in the entry -- say which one, e.g. 'sell when RSI crosses 70'."
+                Question(
+                    text=(
+                        f"'it' in \"...{clause_text.strip()}\" could mean either the "
+                        f"{ambiguous} mentioned in the entry. Which one?"
+                    ),
+                    why=(
+                        "Guessing which indicator 'it' refers to could exit the trade on a "
+                        "condition you never actually described."
+                    ),
+                    suggestion=None,
+                    field="exit.condition",
+                    choices=[Choice(label, t) for label, t in candidates],
                 ),
             )
         if token:
@@ -1588,11 +1648,12 @@ _MINUTE_TIMEFRAME = re.compile(
     r"(?P<n>\d{1,3})\s*-?\s*min(?:ute)?s?\s*(?:candles?|chart|bars?|timeframe)"
 )
 _HOUR_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*hours?\s*(?:candles?|chart|bars?|timeframe)")
+_HOURLY_TIMEFRAME = re.compile(r"\bhourly\b(?:\s*(?:candles?|charts?|bars?|timeframe))?")
 _DAY_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*days?\s*timeframe")
-_DAILY_TIMEFRAME = re.compile(r"\bdaily\b")
+_DAILY_TIMEFRAME = re.compile(r"\bdaily\b(?:\s*(?:candles?|charts?|bars?|timeframe))?")
 _INTRADAY_TIMEFRAME = re.compile(r"\bintraday\b")
 
-_SUPPORTED_MINUTES = {"1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m"}
+_SUPPORTED_MINUTES = {"1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m", "60": "1h"}
 
 
 def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
@@ -1631,6 +1692,11 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
                     "Only 1-hour candles are available above minute bars."
                 ),
             )
+        return text, "1h", None
+
+    m = _HOURLY_TIMEFRAME.search(text)
+    if m:
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
         return text, "1h", None
 
     m = _DAY_TIMEFRAME.search(text)
@@ -1679,32 +1745,95 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
 # is recognised, stripped so it stops blocking, and named in a note so nothing
 # the user typed is silently dropped on the floor.
 
+_PERIOD_UNIT = r"(?P<unit>days?|weeks?|months?|years?)"
 _BACKTEST_WINDOW_PATTERNS = [
     re.compile(
-        r"backtest\s*(?:this\s*)?for\s*(?:the\s*)?last\s*\d+\s*"
-        r"(?:days?|weeks?|months?|years?)\b"
+        r"backtest\s*(?:it\s*|this\s*)?(?:for\s*|on\s*|over\s*)?(?:the\s*)?(?:last|past)\s*"
+        r"(?P<n>\d+)\s*" + _PERIOD_UNIT + r"\b"
     ),
-    re.compile(r"backtest\s*(?:for|on)\s*\d{4}\b"),
-    re.compile(r"\bfor\s*(?:the\s*)?last\s*\d+\s*(?:days?|weeks?|months?|years?)\b"),
-    re.compile(r"\bfull\s*year\s*\d{4}\b"),
+    re.compile(r"backtest\s*(?:it\s*|this\s*)?(?:for|on|in)\s*(?P<year>\d{4})\b"),
+    re.compile(r"\bfor\s*(?:the\s*)?last\s*(?P<n>\d+)\s*" + _PERIOD_UNIT + r"\b"),
+    re.compile(r"\bfull\s*year\s*(?P<year>\d{4})\b"),
+    # "For last year" could mean the last calendar year or the last twelve
+    # months; it is understood but sets no dates.
     re.compile(r"\bfor\s*last\s*year\b"),
 ]
 
 
-def _extract_backtest_window(text: str) -> tuple[str, str | None]:
+def _extract_backtest_window(text: str) -> tuple[str, str | None, BacktestPeriod | None]:
+    """Returns (text, note or None, the period or None).
+
+    Exactly one clear period ("the last 2 years", "2024") comes back as a
+    `BacktestPeriod` for the run screen to turn into dates. Anything else that
+    was recognised is only named in a note, so it is not silently dropped.
+    """
     found: list[str] = []
+    periods: list[BacktestPeriod] = []
     for pat in _BACKTEST_WINDOW_PATTERNS:
         m = pat.search(text)
         if m:
-            found.append(text[m.start() : m.end()].strip())
+            words = text[m.start() : m.end()].strip()
+            found.append(words)
+            groups = m.groupdict()
+            if groups.get("n"):
+                unit = groups["unit"] if groups["unit"].endswith("s") else groups["unit"] + "s"
+                periods.append(BacktestPeriod(words=words, last=int(groups["n"]), unit=unit))
+            elif groups.get("year"):
+                periods.append(BacktestPeriod(words=words, year=int(groups["year"])))
             text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
     if not found:
-        return text, None
-    return text, (
-        "The description mentioned a backtest date range (" + "; ".join(found) + ") -- "
-        "this platform has no field for that on the strategy itself, so it was left out; "
-        "set the backtest window separately when you actually run it."
+        return text, None, None
+    if len(found) == 1 and len(periods) == 1 and periods[0].last != 0:
+        return text, None, periods[0]
+    return (
+        text,
+        (
+            "The description mentioned a backtest date range (" + "; ".join(found) + ") -- "
+            "it was not clear enough to set the dates from, so set the test period "
+            "yourself when you run it."
+        ),
+        None,
     )
+
+
+# ---------------------------------------------------------------- holding overnight
+#
+# On intraday bars a strategy squares off before the close unless told
+# otherwise. "Hold overnight" is the user telling us otherwise. It is only a
+# fact about the schedule: on daily bars every position is held overnight
+# anyway, and the words are simply understood.
+
+_OVERNIGHT_PATTERN = re.compile(
+    r"\b(?:hold|holding|carry|keep)\s*(?:it\s*|them\s*|the\s*position\s*|positions?\s*|"
+    r"trades?\s*)?(?:overnight|forward)\b"
+)
+
+
+def _extract_overnight(text: str) -> tuple[str, bool]:
+    text, m = _consume(text, _OVERNIGHT_PATTERN)
+    return text, m is not None
+
+
+def _overnight_conflict_question() -> Question:
+    return Question(
+        text=(
+            "You asked to hold overnight and also to square off the same day. "
+            "Which one should it do?"
+        ),
+        why=(
+            "Holding overnight and squaring off before the close are opposite rules; "
+            "picking one for you could test a strategy you never described."
+        ),
+        suggestion=None,
+        field="schedule.intraday",
+        choices=OVERNIGHT_CHOICES,
+    )
+
+
+def overnight_answer(answers: dict[str, str]) -> str | None:
+    """The user's pick on the overnight-or-square-off question, if they made one."""
+    value = answers.get("schedule.intraday", "").strip()
+    return value if value in {c.value for c in OVERNIGHT_CHOICES} else None
 
 
 # ----------------------------------------------------------------------- sizing
@@ -1746,6 +1875,11 @@ def _extract_sizing(text: str, instrument_kwargs: dict | None = None) -> tuple[s
         return text, Sizing(mode="fixed_value", value=float(m.group("v")))
 
     return text, _default_sizing(instrument_kwargs or {})
+
+
+def _sizing_said(text: str) -> bool:
+    """Whether `_extract_sizing` would read a size the user stated."""
+    return any(p.search(text) for p in (_RISK_PCT_PATTERN, _LOTS_PATTERN, _VALUE_PATTERN))
 
 
 # --------------------------------------------------------------------- unparsed
@@ -1877,7 +2011,9 @@ _MCX_NO_ENTRY_AFTER = dt.time(23, 0)
 _MCX_SQUARE_OFF = dt.time(23, 15)
 
 
-def _schedule_kwargs(instrument_kwargs: dict, square_off, intraday) -> dict:
+def _schedule_kwargs(
+    instrument_kwargs: dict, square_off, intraday, *, overnight: bool = False
+) -> dict:
     """Schedule fields for the spec: what the user said, plus the market's defaults."""
     from nlt.data.futures import is_commodity
 
@@ -1886,6 +2022,8 @@ def _schedule_kwargs(instrument_kwargs: dict, square_off, intraday) -> dict:
         out["square_off"] = square_off
     if intraday:
         out["intraday"] = True
+    if overnight:
+        out["intraday"] = False
     if instrument_kwargs.get("trade_as") == "future" and is_commodity(
         instrument_kwargs.get("symbol", "")
     ):
@@ -1910,9 +2048,9 @@ def _default_risk(instrument_kwargs: dict) -> RiskLimits:
 
     # How much of the account one position may occupy. Options get the tighter
     # limit: an option can lose its whole premium in a session. Futures get the
-    # share limit, Justin's call (2026-10-07): the engine pays for a futures
-    # position in full, with no borrowing against margin, so it is a cash
-    # position like a share and the same rule fits.
+    # share limit, Justin's call (2026-10-07), measured against the lot's
+    # exchange margin rather than its value (his call, 2026-10-12: margin is
+    # set by the exchange and is not borrowing).
     position_pct = (
         FNO_MAX_POSITION_PCT
         if instrument_kwargs.get("trade_as") == "option"
@@ -1956,6 +2094,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     text = re.sub(r"\bclose_price\b", "close", text)
 
     text, instrument_kwargs, instrument_question = _extract_instrument(text)
+    symbol_said = bool(instrument_kwargs and "symbol" in instrument_kwargs)
     if instrument_question is not None:
         return TranslationResult(
             spec=None, questions=[instrument_question], notes=notes, source="rules"
@@ -1997,33 +2136,28 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if timeframe:
         instrument_kwargs["timeframe"] = timeframe
 
-    text, backtest_note = _extract_backtest_window(text)
+    text, backtest_note, period = _extract_backtest_window(text)
     if backtest_note:
         notes.append(backtest_note)
+    text, overnight = _extract_overnight(text)
+    if overnight and rest_exits.get("_intraday"):
+        picked = overnight_answer(answers)
+        if picked is None:
+            return TranslationResult(
+                spec=None, questions=[_overnight_conflict_question()], notes=notes, source="rules"
+            )
+        if picked == "square_off":
+            overnight = False  # "overnight" needs nothing: holding overnight wins below
 
     text, percent_exits = _extract_percent_exits(text)
     text, exit_condition, exit_cond_inds, exit_cond_notes, exit_ambiguous = _extract_exit_condition(
-        text, direction
+        text, direction, answers.get("exit.condition")
     )
     if exit_ambiguous:
-        return TranslationResult(
-            spec=None,
-            questions=[
-                Question(
-                    text=exit_ambiguous,
-                    why=(
-                        "Guessing which indicator 'it' refers to could exit the trade on a "
-                        "condition you never actually described."
-                    ),
-                    suggestion=None,
-                    field="exit.condition",
-                )
-            ],
-            notes=notes,
-            source="rules",
-        )
+        return TranslationResult(spec=None, questions=[exit_ambiguous], notes=notes, source="rules")
     notes.extend(exit_cond_notes)
 
+    sizing_said = _sizing_said(text)
     text, sizing = _extract_sizing(text, instrument_kwargs)
 
     entry_condition, entry_inds, entry_notes, entry_leftover, entry_refusal = _parse_condition_text(
@@ -2063,7 +2197,11 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         return TranslationResult(spec=None, questions=[vwap_question], notes=notes, source="rules")
 
     stop_pct = percent_exits.get("stop_pct") or _float_answer(answers, "exit.stop_pct")
-    target_pct = percent_exits.get("target_pct") or _float_answer(answers, "exit.target_pct")
+    target_pct = (
+        percent_exits.get("target_pct")
+        or _float_answer(answers, "exit.target_pct")
+        or _float_answer(answers, "exit.rule")
+    )
     stop_atr_mult = rest_exits.get("stop_atr_mult")
     trailing = rest_exits.get("trailing_stop_pct")
     max_bars_held = rest_exits.get("max_bars_held")
@@ -2081,6 +2219,8 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
                     ),
                     suggestion="A common starting point is 1%.",
                     field="exit.stop_pct",
+                    choices=STOP_CHOICES,
+                    answerable=True,
                 )
             )
 
@@ -2091,9 +2231,14 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         questions.append(
             Question(
                 text="How should this strategy get out of a trade?",
-                why="Without an exit, a position would be held forever.",
+                why=(
+                    "Without an exit, a position would be held forever. A stop loss alone is "
+                    "enough; a profit target here is optional."
+                ),
                 suggestion="A target and a stop loss, e.g. +2% / -1%.",
                 field="exit.rule",
+                choices=TARGET_CHOICES,
+                answerable=True,
             )
         )
 
@@ -2128,7 +2273,10 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         exit_kwargs["max_bars_held"] = max_bars_held
 
     schedule_kwargs = _schedule_kwargs(
-        instrument_kwargs, rest_exits.get("_square_off"), rest_exits.get("_intraday")
+        instrument_kwargs,
+        rest_exits.get("_square_off"),
+        rest_exits.get("_intraday"),
+        overnight=overnight,
     )
 
     name = _name_from(original)
@@ -2160,9 +2308,65 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules"
         )
 
-    return TranslationResult(
-        spec=spec, questions=[], notes=notes, unparsed=unparsed, source="rules"
+    sources = recipe_sources(
+        spec,
+        symbol_said=symbol_said,
+        timeframe_said=bool(timeframe),
+        sizing_said=sizing_said,
+        schedule_said=bool(
+            rest_exits.get("_square_off") or rest_exits.get("_intraday") or overnight
+        ),
     )
+    return TranslationResult(
+        spec=spec,
+        questions=[],
+        notes=notes,
+        unparsed=unparsed,
+        source="rules",
+        period=period,
+        sources=sources,
+    )
+
+
+def recipe_sources(
+    spec: StrategySpec,
+    *,
+    symbol_said: bool,
+    timeframe_said: bool,
+    sizing_said: bool,
+    schedule_said: bool,
+) -> dict[str, str]:
+    """Where each readback part came from, for both readers.
+
+    Entry and exit rules are always the user's: neither reader invents one
+    (a stop given as an answer to our question is still theirs). Everything
+    else is theirs only when the reader saw them say it.
+    """
+    from nlt.data.futures import is_commodity
+    from nlt.translate.readback import DEFAULT, SAID, WORKED_OUT
+
+    out = {"entry": SAID}
+    e = spec.exit
+    for part, value in [
+        ("exit.target", e.target_pct),
+        ("exit.stop", e.stop_pct),
+        ("exit.trailing_stop", e.trailing_stop_pct),
+        ("exit.atr_stop", e.stop_atr_mult),
+        ("exit.condition", e.condition),
+        ("exit.max_bars_held", e.max_bars_held),
+    ]:
+        if value is not None:
+            out[part] = SAID
+    out["instrument"] = SAID if symbol_said else DEFAULT
+    out["timeframe"] = SAID if timeframe_said else DEFAULT
+    out["sizing"] = SAID if sizing_said else DEFAULT
+    if schedule_said:
+        out["schedule"] = SAID
+    elif spec.instrument.is_future and is_commodity(spec.instrument.symbol):
+        out["schedule"] = WORKED_OUT  # from the market's own closing time
+    else:
+        out["schedule"] = DEFAULT
+    return out
 
 
 def _float_answer(answers: dict[str, str], field_name: str) -> float | None:

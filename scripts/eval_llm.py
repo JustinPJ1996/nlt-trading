@@ -5,6 +5,7 @@ Needs an OpenRouter key (see `nlt/translate/llm.py`). Costs roughly Rs 1-2 per
 sentence the rules could not read -- about 65 of the 70.
 
     .venv/bin/python scripts/eval_llm.py
+    .venv/bin/python scripts/eval_llm.py --templates   # Tradl's 43 prompts instead
 
 Every raw model reply is saved to `tests/fixtures/llm_replies.json`, keyed by
 sentence. The test suite replays those replies through the same checks, so
@@ -26,7 +27,16 @@ from nlt.translate.readback import describe
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures"
-NEVER_A_STRATEGY = {"question", "robo", "fundamental", "event"}
+NEVER_A_STRATEGY = {
+    "question",
+    "robo",
+    "fundamental",
+    "event",  # the 70
+    "screen",
+    "options",
+    "no-stop",
+    "unsupported-stop",  # Tradl's templates
+}
 
 
 def main() -> int:
@@ -34,7 +44,9 @@ def main() -> int:
         print(f"No OpenRouter key. Put it in {llm.KEY_PATH} (one line, nothing else).")
         return 1
 
-    cases = json.loads((FIXTURES / "user_strategies.json").read_text())
+    templates = "--templates" in sys.argv[1:]
+    source = "template_prompts.json" if templates else "user_strategies.json"
+    cases = json.loads((FIXTURES / source).read_text())
     replies: dict[str, str] = {}
 
     def recording(system: str, user: str) -> str:
@@ -57,7 +69,7 @@ def main() -> int:
         print("\n" + "\n".join("       " + line for line in describe(result.spec).splitlines()))
         print()
 
-    out = FIXTURES / "llm_replies.json"
+    out = FIXTURES / ("llm_template_replies.json" if templates else "llm_replies.json")
     out.write_text(
         json.dumps({"model": llm.model_name(), "replies": replies}, indent=2, sort_keys=True) + "\n"
     )

@@ -499,3 +499,45 @@ def test_every_ai_recipe_among_the_70_states_a_stop_the_user_gave() -> None:
     for case, result in _replayed_results():
         if result.spec is not None:
             assert result.spec.exit.has_stop, case["text"]
+
+
+# ------------------------------------------- bar size, overnight, test period
+
+
+def test_ai_path_hold_overnight_on_hourly_bars() -> None:
+    text = SENTENCE + ", on hourly bars, hold overnight. Backtest the last 2 years."
+    result = llm.parse_llm(text, transport=Scripted(GOOD))
+    assert result.spec is not None, result.questions
+    assert result.spec.instrument.timeframe == "1h"
+    assert result.spec.schedule.intraday is False
+    assert (result.period.last, result.period.unit) == (2, "years")
+
+
+def test_ai_path_hold_overnight_and_a_square_off_is_a_question() -> None:
+    text = SENTENCE + ", on hourly bars, hold overnight, square off at 15:15"
+    reply = _variant(
+        square_off="15:15",
+        evidence=[*GOOD["evidence"], {"field": "square_off", "quote": "square off at 15:15"}],
+    )
+    result = llm.parse_llm(text, transport=Scripted(reply))
+    assert result.spec is None
+    assert _fields(result) == {"schedule.intraday"}
+
+
+def test_ai_path_stop_question_has_buttons() -> None:
+    reply = _variant(exit={"target_pct": 4}, evidence=GOOD["evidence"][:4])
+    result = llm.parse_llm(SENTENCE.replace(", SL 2%", ""), transport=Scripted(reply))
+    assert result.questions[0].field == "exit.stop_pct"
+    assert [c.value for c in result.questions[0].choices] == ["0.5", "1", "2"]
+
+
+@pytest.mark.parametrize(("pick", "intraday"), [("overnight", False), ("square_off", True)])
+def test_ai_path_overnight_question_takes_a_button(pick, intraday) -> None:
+    text = SENTENCE + ", on hourly bars, hold overnight, square off at 15:15"
+    reply = _variant(
+        square_off="15:15",
+        evidence=[*GOOD["evidence"], {"field": "square_off", "quote": "square off at 15:15"}],
+    )
+    result = llm.parse_llm(text, answers={"schedule.intraday": pick}, transport=Scripted(reply))
+    assert result.spec is not None, result.questions
+    assert result.spec.schedule.intraday is intraday

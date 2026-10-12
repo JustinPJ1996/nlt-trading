@@ -459,3 +459,158 @@ def test_positions_flow_from_fill_to_exit_order_to_close_now(authed, no_prices) 
     assert authed.post(f"/api/orders/positions/{pos['id']}/close", json={}).status_code == 200
     again = authed.post(f"/api/orders/positions/{pos['id']}/close", json={})
     assert again.status_code == 400 and "already under way" in again.json()["error"]
+
+
+# ------------------------------------------------------------- the test period
+
+
+def test_a_test_period_in_the_sentence_comes_back_as_dates(authed) -> None:
+    body = authed.post("/api/translate", json={"text": RSI + ", backtest the last 2 years"}).json()
+    assert body["understood"] is not None
+    period = body["period"]
+    assert period["words"] == "backtest the last 2 years"
+    start, end = pd.Timestamp(period["start"]), pd.Timestamp(period["end"])
+    assert end.date() == pd.Timestamp.today().date()
+    assert end - pd.DateOffset(years=2) == start
+
+
+def test_no_test_period_leaves_the_dates_alone(authed) -> None:
+    assert authed.post("/api/translate", json={"text": RSI}).json()["period"] is None
+
+
+def test_period_dates_never_start_before_trusted_history() -> None:
+    import datetime as dt
+
+    from nlt.data.source import DATA_FLOOR
+    from nlt.translate.rules import BacktestPeriod
+
+    today = dt.date(2026, 10, 12)
+    out = logic.period_dates(
+        BacktestPeriod(words="the last 10 years", last=10, unit="years"), today
+    )
+    assert out["start"] == DATA_FLOOR.isoformat()
+    assert out["note"] and "starts on" in out["note"]
+    year = logic.period_dates(BacktestPeriod(words="2024", year=2024), today)
+    assert (year["start"], year["end"], year["note"]) == ("2024-01-01", "2024-12-31", None)
+    this_year = logic.period_dates(BacktestPeriod(words="2026", year=2026), today)
+    assert this_year["end"] == "2026-10-12"
+    assert logic.period_dates(BacktestPeriod(words="2027", year=2027), today) is None
+    months = logic.period_dates(BacktestPeriod(words="6 months", last=6, unit="months"), today)
+    assert months["start"] == "2026-04-12"
+
+
+# ------------------------------------------------------------ readback labels
+
+
+def test_translate_labels_every_readback_line(authed) -> None:
+    body = authed.post("/api/translate", json={"text": RSI}).json()["understood"]
+    body_lines = [r for r in body["readback"].splitlines() if r.startswith("  ")]
+    assert len(body["readback_labels"]) == len(body_lines)
+    assert set(body["readback_labels"]) <= {"said", "worked_out", "default"}
+
+
+def test_a_saved_strategy_has_no_guessed_labels(authed) -> None:
+    from nlt.translate.readback import describe_lines
+
+    spec = logic.translate_text(RSI).spec
+    assert api._spec_payload(spec)["readback_labels"] is None
+    assert [label for *_x, label in describe_lines(spec, None)] == [None] * len(
+        describe_lines(spec, None)
+    )
+
+
+def test_questions_carry_their_buttons_and_nothing_is_picked(authed) -> None:
+    body = authed.post("/api/translate", json={"text": "buy nifty when rsi cracks 30"}).json()
+    stop = next(q for q in body["questions"] if q["field"] == "exit.stop_pct")
+    assert [c["label"] for c in stop["choices"]] == ["0.5%", "1%", "2%"]
+    assert stop["answerable"] is True
+    assert body["answers"] == {}
+
+
+# ------------------------------------------------------- before and after charges
+
+
+def _pinned_run(spec, cost_model="Index futures"):
+    return logic.backtest_spec(
+        spec,
+        capital=2_500_000,
+        cost_model_label=cost_model,
+        start=pd.Timestamp(WINDOW["start"]).date(),
+        end=pd.Timestamp(WINDOW["end"]).date(),
+    )
+
+
+def test_before_charges_is_a_second_run_with_no_charges() -> None:
+    from nlt.spec.models import Sizing
+
+    # A fixed size, so both runs buy exactly the same quantities and the gap
+    # between them is the charges and nothing else.
+    spec = logic.translate_text(RSI).spec
+    spec = spec.model_copy(update={"sizing": Sizing(mode="fixed_lots", lots=10)})
+    result = _pinned_run(spec)
+    after, before = result.backtest, result.before_charges
+    assert [t.quantity for t in before.trades] == [t.quantity for t in after.trades]
+    assert sum(t.charges for t in before.trades) == 0
+    charges = after.metrics["total_charges"]
+    assert charges > 0
+    gap = before.equity.iloc[-1] - after.equity.iloc[-1]
+    assert gap == pytest.approx(charges)
+
+
+def test_before_charges_never_looks_worse_than_after() -> None:
+    result = _pinned_run(logic.translate_text(SMA).spec)
+    assert (
+        result.before_charges.metrics["total_return_pct"]
+        >= result.backtest.metrics["total_return_pct"]
+    )
+
+
+def test_the_report_shows_before_and_after_charges(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": _spec_json(RSI), "capital": 2500000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    rows = {r["label"]: r for r in body["before_after_charges"]}
+    assert set(rows) == {
+        "Total return",
+        "Biggest drop from a peak",
+        "Trades that made money",
+        "Number of trades",
+        "Charges paid",
+    }
+    assert rows["Charges paid"]["before"] == "Rs 0"
+    assert rows["Charges paid"]["after"] != "Rs 0"
+    assert rows["Total return"]["after"] == body["metrics"][0]["strategy"]
+    direct = _pinned_run(StrategySpec.model_validate(_spec_json(RSI)))
+    assert rows["Total return"]["before"] == logic.format_signed_pct(
+        direct.before_charges.metrics["total_return_pct"]
+    )
+    assert rows["Total return"]["before"] != rows["Total return"]["after"]
+
+
+def test_no_charges_means_nothing_to_compare(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={
+            "spec": _spec_json(RSI),
+            "capital": 2500000,
+            "cost_model": "No costs (for comparison only)",
+            **WINDOW,
+        },
+    ).json()
+    assert body["before_after_charges"] is None
+
+
+def test_a_basket_is_also_run_again_with_no_charges() -> None:
+    spec = logic.translate_text(
+        "Buy NIFTY 100 stocks when ema8 crosses above ema21, target 3%, stop loss 1.5%"
+    ).spec
+    result = logic.backtest_spec(
+        spec,
+        capital=2_500_000,
+        start=pd.Timestamp("2024-01-01").date(),
+        end=pd.Timestamp("2024-06-30").date(),
+    )
+    assert result.error is None, result.error
+    assert result.backtest.metrics["total_charges"] > 0
+    assert sum(t.charges for t in result.before_charges.trades) == 0

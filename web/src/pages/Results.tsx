@@ -150,6 +150,44 @@ export function Results({
               </tbody>
             </table>
           </div>
+
+          {result.before_after_charges && (
+            <>
+              <h2 className="section-title" id="charges" style={{ marginTop: 28 }}>
+                Before and after charges
+              </h2>
+              <p className="hint" style={{ marginBottom: 10 }}>
+                The same strategy tested twice: once with no charges at all, once with brokerage,
+                taxes and fees deducted. The gap is what trading costs took.
+              </p>
+              <div className="table-wrap">
+                <table aria-labelledby="charges">
+                  <thead>
+                    <tr>
+                      <th scope="col">
+                        <span className="visually-hidden">Measure</span>
+                      </th>
+                      <th scope="col" className="num">
+                        Before charges
+                      </th>
+                      <th scope="col" className="num">
+                        After charges
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.before_after_charges.map((row) => (
+                      <tr key={row.label}>
+                        <th scope="row">{row.label}</th>
+                        <td className="num">{row.before}</td>
+                        <td className="num">{row.after}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </section>
 
         <section aria-labelledby="tested">

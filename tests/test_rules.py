@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from nlt.spec.models import StrategySpec
+from nlt.translate.readback import describe
 from nlt.translate.rules import CONDITION_PATTERNS, _known_tickers, parse
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "strategies.json").read_text())
@@ -1084,14 +1085,87 @@ def test_inline_period_still_honours_crossing_vs_state(text: str, expected_op: s
 
 
 @pytest.mark.parametrize(
-    "phrase",
-    ["backtest this for the last 3 months", "backtest for 2024", "full year 2024"],
+    ("phrase", "last", "unit", "year"),
+    [
+        ("backtest this for the last 3 months", 3, "months", None),
+        ("backtest the last 2 years", 2, "years", None),
+        ("backtest the past 1 year", 1, "years", None),
+        ("backtest over the last 6 months", 6, "months", None),
+        ("backtest for 2024", None, None, 2024),
+        ("full year 2024", None, None, 2024),
+    ],
 )
-def test_trailing_backtest_window_does_not_block_parsing(phrase: str) -> None:
+def test_a_test_period_is_read_and_kept_off_the_spec(phrase, last, unit, year) -> None:
+    """Tradl's prompts all end "Backtest the last N years"; it used to block them."""
     result = parse(f"buy itc when rsi cracks 30, stop 1%, target 2%. {phrase}.")
     assert result.spec is not None, result.questions
-    assert any("backtest" in n.lower() for n in result.notes)
     assert result.unparsed == []
+    assert (result.period.last, result.period.unit, result.period.year) == (last, unit, year)
+    without = parse("buy itc when rsi cracks 30, stop 1%, target 2%.").spec
+    keep = {"name", "description"}
+    assert result.spec.model_dump(exclude=keep) == without.model_dump(exclude=keep)
+
+
+def test_a_vague_test_period_sets_no_dates_but_is_named() -> None:
+    result = parse("buy itc when rsi cracks 30, stop 1%, target 2%, for last year")
+    assert result.spec is not None
+    assert result.period is None
+    assert any("for last year" in n for n in result.notes)
+
+
+def test_a_lookback_inside_a_rule_is_not_a_test_period() -> None:
+    """ "The highest high of the last 20 days" is part of the entry, not the dates."""
+    result = parse("buy itc when close is above the highest high of the last 20 days, stop 1%")
+    assert result.period is None
+
+
+# ------------------------------------------------------- bar size and overnight
+
+_BASE = "buy RELIANCE when rsi crosses below 30 on {}, target 2%, stop loss 1%"
+
+
+@pytest.mark.parametrize(
+    ("words", "timeframe"),
+    [
+        ("hourly bars", "1h"),
+        ("hourly candles", "1h"),
+        ("hourly chart", "1h"),
+        ("60 minute candles", "1h"),
+        ("1 hour candles", "1h"),
+        ("15-minute bars", "15m"),
+        ("daily bars", "1d"),
+    ],
+)
+def test_bar_size_wording(words, timeframe) -> None:
+    result = parse(_BASE.format(words))
+    assert result.spec is not None, result.questions
+    assert result.spec.instrument.timeframe == timeframe
+
+
+def test_an_hour_long_average_is_not_a_bar_size() -> None:
+    result = parse("buy RELIANCE when close is above 20-hour ema, target 2%, stop loss 1%")
+    assert result.spec is None or result.spec.instrument.timeframe == "1d"
+
+
+def test_hold_overnight_turns_off_the_square_off_and_says_so() -> None:
+    result = parse(_BASE.format("15 minute candles") + ", hold overnight")
+    assert result.spec is not None, result.questions
+    assert result.spec.schedule.intraday is False
+    text = describe(result.spec)
+    assert "Hold overnight" in text
+    assert "Square off" not in text
+
+
+def test_without_hold_overnight_minute_bars_still_square_off() -> None:
+    result = parse(_BASE.format("15 minute candles"))
+    assert result.spec.schedule.intraday is True
+    assert "Square off at 15:15" in describe(result.spec)
+
+
+def test_hold_overnight_and_square_off_together_is_a_question() -> None:
+    result = parse(_BASE.format("15 minute candles") + ", hold overnight, square off at 15:15")
+    assert result.spec is None
+    assert [q.field for q in result.questions] == ["schedule.intraday"]
 
 
 # --------------------------------------------------------------- determinism
@@ -1111,3 +1185,70 @@ def test_deterministic_output_for_anaphoric_exit() -> None:
     b = parse(text)
     assert a.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
+
+
+# ------------------------------------------------------------ tap-to-answer
+
+_NO_STOP = "buy nifty when rsi cracks 30, target 2%"
+_IT = "buy nifty when rsi crosses below 30 and adx > 25, sell when it crosses above 70, stop 1%"
+_BOTH = _BASE.format("15 minute candles") + ", hold overnight, square off at 15:15"
+
+
+def test_the_stop_question_offers_buttons_and_takes_typing() -> None:
+    q = parse(_NO_STOP).questions[0]
+    assert q.field == "exit.stop_pct"
+    assert [c.value for c in q.choices] == ["0.5", "1", "2"]
+    assert q.answerable
+
+
+@pytest.mark.parametrize("value", ["0.5", "1", "2"])
+def test_every_stop_button_is_understood(value) -> None:
+    result = parse(_NO_STOP, answers={"exit.stop_pct": value})
+    assert result.spec.exit.stop_pct == float(value)
+
+
+def test_a_target_can_be_picked_alongside_the_stop() -> None:
+    questions = parse("buy nifty when rsi cracks 30").questions
+    target = next(q for q in questions if q.field == "exit.rule")
+    assert [c.value for c in target.choices] == ["2", "3", "5"]
+    result = parse("buy nifty when rsi cracks 30", answers={"exit.stop_pct": "1", "exit.rule": "3"})
+    assert (result.spec.exit.stop_pct, result.spec.exit.target_pct) == (1.0, 3.0)
+
+
+def test_a_target_alone_never_stands_in_for_the_stop() -> None:
+    result = parse("buy nifty when rsi cracks 30", answers={"exit.rule": "3"})
+    assert result.spec is None
+    assert "exit.stop_pct" in [q.field for q in result.questions]
+
+
+def test_overnight_or_square_off_is_answered_by_a_button() -> None:
+    q = parse(_BOTH).questions[0]
+    assert [c.value for c in q.choices] == ["overnight", "square_off"]
+    assert not q.answerable
+    held = parse(_BOTH, answers={"schedule.intraday": "overnight"}).spec
+    assert held.schedule.intraday is False
+    closed = parse(_BOTH, answers={"schedule.intraday": "square_off"}).spec
+    assert closed.schedule.intraday is True
+    assert "Square off at 15:15" in describe(closed)
+
+
+def test_an_unknown_answer_to_a_button_question_asks_again() -> None:
+    result = parse(_BOTH, answers={"schedule.intraday": "yes"})
+    assert result.spec is None
+    assert [q.field for q in result.questions] == ["schedule.intraday"]
+
+
+def test_which_indicator_it_means_is_a_button_per_indicator() -> None:
+    q = parse(_IT).questions[0]
+    assert q.field == "exit.condition"
+    assert [(c.label, c.value) for c in q.choices] == [("RSI", "rsi"), ("ADX", "adx")]
+    picked = parse(_IT, answers={"exit.condition": "adx"}).spec
+    assert picked.exit.condition.left.name.startswith("adx")
+    # CCI is a family we could read, but the sentence never named it.
+    assert parse(_IT, answers={"exit.condition": "cci"}).spec is None
+
+
+def test_a_question_only_a_new_description_can_answer_says_so() -> None:
+    q = parse("buy nifty, stop 1%").questions[0]
+    assert q.field == "entry.condition"
+    assert not q.answerable and q.choices == []

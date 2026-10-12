@@ -124,6 +124,7 @@ export function App() {
                   notes: [],
                   read_by_ai: false,
                   answers: {},
+                  period: null,
                 },
                 fromSaved: true,
               });

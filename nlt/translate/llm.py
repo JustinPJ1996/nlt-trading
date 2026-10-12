@@ -276,6 +276,8 @@ def _stop_question(notes: list[str]) -> TranslationResult:
                 ),
                 suggestion="A common starting point is 1%.",
                 field="exit.stop_pct",
+                choices=rules.STOP_CHOICES,
+                answerable=True,
             )
         ],
         notes=notes,
@@ -660,7 +662,8 @@ def parse_llm(
             "different strategy than the one described.",
             "instrument.timeframe",
         )
-    masked, backtest_note = rules._extract_backtest_window(masked)
+    masked, backtest_note, period = rules._extract_backtest_window(masked)
+    masked, overnight = rules._extract_overnight(masked)
 
     if transport is None:
         if not is_configured():
@@ -816,6 +819,18 @@ def parse_llm(
         if not any(s in q for q in by_field.get("square_off", []) for s in spellings):
             stray.append(draft.square_off)
 
+    if overnight and square_off is not None:
+        picked = rules.overnight_answer(answers)
+        if picked is None:
+            return TranslationResult(
+                spec=None,
+                questions=[rules._overnight_conflict_question()],
+                notes=notes,
+                source="llm",
+            )
+        if picked == "square_off":
+            overnight = False  # "overnight" needs nothing: holding overnight wins below
+
     if stray:
         logger.warning("parse_llm: numbers not in the sentence %r: %r", original, stray)
         return _question(
@@ -852,7 +867,9 @@ def parse_llm(
     exit_kwargs = ex.model_dump(exclude_none=True)
     exit_kwargs["stop_pct"] = stop_pct
     exit_kwargs = {k: v for k, v in exit_kwargs.items() if v is not None}
-    schedule_kwargs = rules._schedule_kwargs(instrument_kwargs, square_off, None)
+    schedule_kwargs = rules._schedule_kwargs(
+        instrument_kwargs, square_off, None, overnight=overnight
+    )
 
     try:
         spec = StrategySpec(
@@ -876,4 +893,13 @@ def parse_llm(
             notes=notes,
         )
 
-    return TranslationResult(spec=spec, questions=[], notes=notes, source="llm")
+    sources = rules.recipe_sources(
+        spec,
+        symbol_said=bool(rules_kwargs.get("symbol") or by_field.get("instrument")),
+        timeframe_said=bool(timeframe),
+        sizing_said=draft.sizing is not None,
+        schedule_said=square_off is not None or overnight,
+    )
+    return TranslationResult(
+        spec=spec, questions=[], notes=notes, source="llm", period=period, sources=sources
+    )

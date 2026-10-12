@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 701 tests passing, 23 commits, everything pushed
+- **State:** 1,168 tests passing (2026-10-12, Phase 1b first batch)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -108,7 +108,9 @@ Ask before changing any of these; each was a deliberate decision.
 | Stops and targets measured from the **signal bar's close** | Justin's call: the levels belong to the setup. Both from one number |
 | Stop assumed first when a bar could hit both | OHLC cannot show intrabar order; take the pessimistic branch |
 | A gap past the stop fills **at the open** | Stops do not protect you through a gap; gaps past the target modelled too, so the fix is not one-sided |
-| Positions capped at **20%** of capital (stocks), **10%** (F&O) | Risk-based sizing with a tight stop otherwise puts 91% of the account in one trade |
+| Positions capped at **20%** of capital (stocks, futures), **10%** (options) | Risk-based sizing with a tight stop otherwise puts 91% of the account in one trade |
+| Futures count their **exchange margin**, not their value, against that cap | Justin's call (2026-10-12): margin is set by the exchange, not borrowing. P&L stays on the whole lot. Margin %s are Zerodha's on 12 Oct 2026 (`nlt/data/futures.py`, `MARGIN_AS_OF`), used for every year and stated in the report |
+| Default account **Rs 25,00,000** | Justin's call (2026-10-12). At Rs 1 lakh the 20% cap is less than one unit of NIFTY |
 | Non-options default to risking **1%** of capital per trade | "1 lot" of a stock is one share — Rs 640 on a Rs 1,00,000 account tests nothing |
 | Lot sizes are **today's**, from one table | NIFTY 65, BANKNIFTY 30 (NSE circular 28-Nov-2025). Stated in the output because it makes old years unfaithful |
 | Options under Rs 10,00,000 capital → **critical** flag | A 65-unit lot is indivisible; a small account cannot size proportionately |
@@ -154,7 +156,7 @@ exit at +2%"* returns a question, because it has no stop loss — deliberate, an
 better than the original criterion. And a good deal of Phase 2/3 groundwork
 landed early: stocks, universes, baskets, the session-aware intraday engine.
 
-### Phase 1b — Reading and reporting, from the competitor review — **NEXT**
+### Phase 1b — Reading and reporting, from the competitor review — **first batch DONE (2026-10-12)**
 
 On 2026-10-11/12 FinStocks, Tradara and Tradl were reviewed (Tradl logged in:
 its AI was given our sentences, and its 26 backtest + 17 screen suggested
@@ -162,26 +164,50 @@ prompts were run through our reader). Justin agreed the order below. Item codes
 (A1, C3...) are the wish-list numbers he prioritised by; raw notes are in
 `~/tradl-review/`, outside the repo.
 
-The headline finding: **0 of Tradl's 26 backtest prompts run on our reader, and
-0 come back wrong.** 11 are options (correctly refused), but 10 are complete
-strategies with stops that fail only on ordinary wording -- "Backtest the last
-1 year", "hourly bars", "hold overnight". That is the cheapest big gain available.
+**First batch -- built 2026-10-12**, branch `phase-1b-first-batch`. Every rule
+below was broken on purpose and a test was seen to fail; three tests that did
+not were tightened.
 
-**First batch** (small, visible at once):
+- **B3** Tradl's 43 prompts are `tests/fixtures/template_prompts.json`, apart
+  from the 70. Each complete strategy carries the facts a human read off it
+  (symbol, bar size, stop, target, square-off): a plausible read with any of
+  them different counts as wrong. AI replies recorded in
+  `llm_template_replies.json` (`scripts/eval_llm.py --templates`).
+  **Result: 6 of Tradl's complete strategies now run on the AI path (was 0),
+  each readback checked by hand; the 5 without a stop reach the stop question;
+  0 wrong on the 43 and the 70.** The rules path alone still reads none of the
+  43 (they need "On X bars, buy when...").
+- **A3** "Backtest the last 2 years / past 6 months / for 2024" becomes a test
+  period beside the spec (never on it); the screen fills its date boxes, never
+  before the 2020 history floor. "hourly", "60 minute", "daily bars" read.
+  "Hold overnight" turns off the same-day square-off, and the readback now says
+  "Hold overnight" on minute/hourly bars; with a square-off too, it is a question.
+- **A1** Each readback line is labelled **You said / We worked out / Default**.
+  "You said" only when the reader saw it (or the user answered our question)
+  *and* every number on the line was typed -- "RSI(14)" from "rsi" is "we
+  worked out". Unknown is "Default", never "You said"; a saved strategy shows
+  no labels. To make this possible the bar size is now its own readback line
+  ("Daily candles") and a futures contract's lot facts are their own line.
+  Surfaced on the way: a sentence naming no instrument silently means NIFTY --
+  now visibly "Default".
+- **A2** Question buttons, nothing pre-selected: stop 0.5/1/2% (both readers),
+  an optional target, overnight vs square-off, and which indicator "it" means.
+  Questions only a new description can answer no longer show a text box whose
+  answer was silently ignored (that was every question except the stop).
+- **B1/B2** A "What to include" guide (stop loss marked required) and five new
+  examples, each tested to read cleanly and take trades at Rs 25 lakh.
+- **C1** Every backtest is run a second time with no charges; the report shows
+  both side by side. With a fixed size the gap equals the charges to the rupee.
+- Also (Justin's call): futures on margin and the Rs 25 lakh default (see the
+  engine rules), and the readback no longer states "Stop trading for the day
+  after losing Rs 2,000" / "Never risk more than Rs 5,000 on one trade" --
+  **no engine ever enforced them**. They come back, enforced, with D2.
 
-- **A1 Said / Derived / Assumed labels** on each readback line -- the user's
-  words, our reasoning, or a default they can change (Tradara). Still generated
-  mechanically, never by a model.
-- **A2 Tap-to-answer questions** -- buttons plus "type your own" (Tradara, Tradl).
-- **A3 Read common wording** -- test period ("the last 2 years"), bar size
-  ("hourly", "15-minute bars"), "hold overnight". Re-run the 26 afterwards.
-- **B1 Prompt guide** -- fill-in card: what to trade, when to buy, **stop loss
-  (required, its own line)**, when to exit, chart and period (modelled on Tradl's).
-- **B2 Suggested prompts** -- only ones confirmed to run on our engine.
-- **B3 Template test list** -- Tradl's 43 prompts as a **second** fixture, kept
-  apart from the 70 real sentences (those prove honesty with real users; the
-  templates measure coverage of well-written prompts). Same 0-wrong rule.
-- **C1 Before vs after costs** side by side in the report (Tradara).
+Noticed, not fixed (cheap, for next time): the results notes still leak engine
+words -- "schedule time-of-day rules (no_entry_after/square_off) skipped" on
+every daily run, and "end_of_data" as an exit reason; the cost dropdown defaults
+to *options* charges even for an index strategy; strategy names are built from
+the first words ("On Infy Hourly Bars Buy When").
 
 **Second batch:**
 
@@ -311,7 +337,13 @@ rest of Phase 2. Justin's decisions, each with its trade-off explained to him:
   close and charged for that exit; the strategy re-enters only on a new signal.
   A signal on an expiry day's last candle is skipped (it would fill in the next
   contract on the old contract's levels). The benchmark follows the same rule.
-- **No borrowing.** A futures position is paid for in full, like a share.
+- **Held on margin** (changed 2026-10-12; was "paid in full, no borrowing").
+  A lot ties up its exchange margin -- NIFTY 11.32%, crude 31.25%, gold
+  9.25% -- in the 20% cap, in spare capital and in "account too small". P&L is
+  on the full lot. Every futures result says what margin was assumed and what a
+  1% move means for it, and flags a stop wider than the margin. The futures
+  benchmark still pays in full: it is "what the market did", not a leveraged bet.
+  **Refresh the margin table** now and then; it goes stale with volatility.
 - **20% per position**, the share limit (futures had none; options are 10%).
   A small account gets an "ACCOUNT TOO SMALL FOR ONE LOT" warning naming the
   capital that would work: one Gold lot is about Rs 1.5 crore.
@@ -362,8 +394,8 @@ when the rule was deliberately broken:
 Fixed on the way: answering the stop-loss question with "1%" (what its own hint
 suggests) was silently ignored and the question came back; only "1" worked.
 
-Open: with the default Rs 1,00,000 and NIFTY, the example strategies take no
-trades (a lot exceeds the 20% position cap). Engine rule, so left for Justin.
+Resolved 2026-10-12: the default account is now Rs 25 lakh, and the five
+example strategies are each tested to take trades at it.
 
 ### One-off conditional orders (ATO-style) — **BUILT (2026-10-08), paper only**
 

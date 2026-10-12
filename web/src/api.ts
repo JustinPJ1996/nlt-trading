@@ -42,15 +42,32 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 
 // ------------------------------------------------------------------- shapes
 
+// Where a readback line came from. Null when unknown (a saved strategy).
+export type ReadbackLabel = "said" | "worked_out" | "default";
+
 export type Understood = {
   spec: unknown;
   readback: string;
+  // One per body line of `readback`, in order; null when not known.
+  readback_labels?: (ReadbackLabel | null)[] | null;
   name: string;
   symbol: string;
   timeframe: string;
 };
 
-export type Question = { field: string; text: string; why: string; suggestion: string | null };
+export type Choice = { label: string; value: string };
+
+export type Question = {
+  field: string;
+  text: string;
+  why: string;
+  suggestion: string | null;
+  // Tap-to-answer buttons. None is ever chosen for the user.
+  choices: Choice[];
+  // Whether a typed answer is read. With no choices either, the only way to
+  // answer is to change the description.
+  answerable: boolean;
+};
 
 export type Translation = {
   understood: Understood | null;
@@ -59,6 +76,8 @@ export type Translation = {
   notes: string[];
   read_by_ai: boolean;
   answers: Record<string, string>;
+  // The test period the sentence asked for, already turned into dates.
+  period: { words: string; start: string; end: string; note: string | null } | null;
 };
 
 export type Options = {
@@ -108,6 +127,9 @@ export type Result = {
     last: string;
   };
   metrics: { label: string; strategy: string; benchmark: string }[];
+  // The same strategy run again with charges switched off. Null when no
+  // charges were paid, so there is nothing to compare.
+  before_after_charges: { label: string; before: string; after: string }[] | null;
   all_metrics: Record<string, number | null>;
   chart: ChartPoint[];
   trades: Trade[];

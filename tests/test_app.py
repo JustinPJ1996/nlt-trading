@@ -9,6 +9,8 @@ an empty database renders instead of crashing. That is what is tested here.
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import pytest
 
@@ -47,6 +49,28 @@ def test_every_example_strategy_parses_cleanly(example: str) -> None:
     translation = logic.translate_text(example)
     assert translation.spec is not None, f"{example!r} produced questions: {translation.questions}"
     assert not translation.unparsed
+    assert translation.period is not None, "every example shows off the test period"
+    assert translation.spec.exit.has_stop
+
+
+@pytest.mark.parametrize("example", logic.EXAMPLE_STRATEGIES)
+def test_every_example_strategy_takes_trades_at_the_default_capital(example: str) -> None:
+    """A suggested prompt that takes no trades teaches nothing. Run as the screen
+    runs it: the default account, its own test period, ending on the pinned date
+    so the answer does not move with the market."""
+    from tests.conftest import NIFTY_FIXTURE_CUTOFF
+
+    translation = logic.translate_text(example)
+    end = dt.date.fromisoformat(NIFTY_FIXTURE_CUTOFF)
+    dates = logic.period_dates(translation.period, end)
+    result = logic.backtest_spec(
+        translation.spec,
+        start=dt.date.fromisoformat(dates["start"]),
+        end=end,
+        translation=translation,
+    )
+    assert result.error is None, result.error
+    assert len(result.backtest.trades) >= 1, example
 
 
 # ------------------------------------------------------------------ questions
@@ -407,3 +431,10 @@ def test_symbol_override_is_honoured_not_silently_ignored() -> None:
     assert result.error is not None, (
         "an unknown symbol override must fail loudly, not fall back to NIFTY"
     )
+
+
+def test_the_default_account_is_25_lakh():
+    """Justin's call (2026-10-12): at Rs 1 lakh no NIFTY example could trade."""
+    from app import logic
+
+    assert logic.DEFAULT_CAPITAL == 2_500_000

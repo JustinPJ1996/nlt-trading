@@ -15,6 +15,8 @@ avoid on the way in.
 
 from __future__ import annotations
 
+import re
+
 from nlt.indicators.registry import get as get_indicator
 from nlt.spec.models import (
     All,
@@ -213,24 +215,14 @@ def _universe_size(symbol: str) -> int:
 
 
 def _instrument_desc(spec: StrategySpec) -> str:
-    tf_word = _TIMEFRAME_WORDS.get(spec.instrument.timeframe, spec.instrument.timeframe)
-    is_daily = spec.instrument.timeframe == "1d"
-    tf_suffix = "" if is_daily else f", on {tf_word} candles"
-
     if spec.instrument.trade_as == "index":
-        return f"{spec.instrument.symbol}, on {tf_word} bars"
+        return f"{spec.instrument.symbol} index"
 
     if spec.instrument.is_future:
-        # Say what one lot physically is. "1 lot of GOLD" means nothing until
-        # you know it is a kilogram priced per 10 grams -- and the readback is
-        # where a wrong contract size would be caught by a person.
         from nlt.data.futures import contract
 
         c = contract(spec.instrument.symbol)
-        return (
-            f"{c.title} futures ({c.market}), nearest-month contract, on {tf_word} bars. "
-            f"{c.describe_lot}"
-        )
+        return f"{c.title} futures ({c.market})"
 
     if spec.instrument.trade_as == "stock" and spec.instrument.is_universe:
         # The whole point of this line: a user who typed "nifty 100 stocks"
@@ -239,10 +231,10 @@ def _instrument_desc(spec: StrategySpec) -> str:
         # so plainly is the only thing standing between them and finding out
         # the hard way.
         n = _universe_size(spec.instrument.symbol)
-        return f"All {n} stocks in {spec.instrument.symbol}{tf_suffix}"
+        return f"All {n} stocks in {spec.instrument.symbol}"
 
     if spec.instrument.trade_as == "stock":
-        return f"{spec.instrument.symbol} (NSE){tf_suffix}"
+        return f"{spec.instrument.symbol} (NSE)"
 
     if spec.instrument.option_type == "auto":
         side = "call" if spec.direction == "long" else "put"
@@ -262,25 +254,48 @@ def _instrument_desc(spec: StrategySpec) -> str:
         "monthly": "monthly expiry",
     }[spec.instrument.expiry]
 
-    return f"{spec.instrument.symbol}, {strike} {side} option, {expiry_word}, on {tf_word} bars"
+    return f"{spec.instrument.symbol}, {strike} {side} option, {expiry_word}"
 
 
-def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str) -> list[str]:
-    lines: list[str] = []
+def _contract_desc(spec: StrategySpec) -> str:
+    """Which futures contract, and what one lot physically is.
+
+    Say what one lot physically is. "1 lot of GOLD" means nothing until you
+    know it is a kilogram priced per 10 grams -- and the readback is where a
+    wrong contract size would be caught by a person.
+    """
+    from nlt.data.futures import contract
+
+    return f"Nearest-month contract. {contract(spec.instrument.symbol).describe_lot}"
+
+
+def _timeframe_desc(spec: StrategySpec) -> str:
+    """Its own line, so a bar size we assumed can be labelled as assumed."""
+    word = _TIMEFRAME_WORDS.get(spec.instrument.timeframe, spec.instrument.timeframe)
+    return f"{word[0].upper()}{word[1:]} candles"
+
+
+def _exit_lines(
+    spec: StrategySpec, indicators: dict[str, dict], timeframe: str
+) -> list[tuple[str, str]]:
+    """(line, the part of the strategy it states) for each exit rule."""
+    lines: list[tuple[str, str]] = []
     e = spec.exit
     if e.target_pct:
-        lines.append(f"Take profit at +{_num(e.target_pct)}%")
+        lines.append((f"Take profit at +{_num(e.target_pct)}%", "exit.target"))
     if e.stop_pct:
-        lines.append(f"Stop loss at -{_num(e.stop_pct)}%")
+        lines.append((f"Stop loss at -{_num(e.stop_pct)}%", "exit.stop"))
     if e.trailing_stop_pct:
-        lines.append(f"Trailing stop of {_num(e.trailing_stop_pct)}%")
+        lines.append((f"Trailing stop of {_num(e.trailing_stop_pct)}%", "exit.trailing_stop"))
     if e.stop_atr_mult:
         atr_label, _d = _indicator_desc(e.atr_id, indicators, timeframe)
-        lines.append(f"Stop loss at {_num(e.stop_atr_mult)}x {atr_label}")
+        lines.append((f"Stop loss at {_num(e.stop_atr_mult)}x {atr_label}", "exit.atr_stop"))
     if e.condition is not None:
-        lines.append(f"Exit when {_describe_condition(e.condition, indicators, timeframe)}")
+        condition = _describe_condition(e.condition, indicators, timeframe)
+        lines.append((f"Exit when {condition}", "exit.condition"))
     if e.max_bars_held:
-        lines.append(f"Exit after {_plural(e.max_bars_held, _bar_word(timeframe))} if still open")
+        bars = _plural(e.max_bars_held, _bar_word(timeframe))
+        lines.append((f"Exit after {bars} if still open", "exit.max_bars_held"))
     # Only promise the square-off when it will actually happen. The engine skips
     # every time-of-day rule on daily bars, because a daily bar's timestamp
     # carries no intraday clock -- so saying "square off at 15:15" on a daily
@@ -288,9 +303,14 @@ def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str)
     # value is that it says what the spec really does, so a line that is merely
     # plausible is worse than no line.
     if spec.schedule.intraday and timeframe != "1d":
-        lines.append(f"Square off at {spec.schedule.square_off.strftime('%H:%M')} if still open")
+        square_off = spec.schedule.square_off.strftime("%H:%M")
+        lines.append((f"Square off at {square_off} if still open", "schedule"))
+    elif timeframe != "1d":
+        # Said out loud because on minute or hourly candles squaring off is the
+        # usual habit; a position carried overnight can gap straight past its stop.
+        lines.append(("Hold overnight: no square-off before the close", "schedule"))
     if spec.instrument.is_future:
-        lines.append("Close at the end of the contract's expiry day if still open")
+        lines.append(("Close at the end of the contract's expiry day if still open", "expiry"))
     return lines
 
 
@@ -336,17 +356,24 @@ def _sizing_desc(spec: StrategySpec) -> str:
 
 def _risk_lines(spec: StrategySpec) -> list[str]:
     r = spec.risk
-    lines = [
-        f"Stop trading for the day after losing {format_inr(r.max_daily_loss)}",
-        f"Never risk more than {format_inr(r.max_loss_per_trade)} on one trade",
-        f"At most {_plural(r.max_concurrent_positions, 'position')} open at a time",
-    ]
+    # `max_daily_loss` and `max_loss_per_trade` are deliberately not shown: no
+    # engine applies them yet, and a readback promising a limit nothing enforces
+    # is the readback lying. Justin's call (2026-10-12): they come back as real
+    # limits with live trading (the hard daily limits, D2).
+    lines = [f"At most {_plural(r.max_concurrent_positions, 'position')} open at a time"]
 
     # Only mention a quantity cap where one exists. Stocks have none, because a
     # fixed count cannot bound risk across a market priced from Rs 50 to
     # Rs 20,000 a share -- the rupee limits above do that instead, and stating
     # a cap that is not enforced would be the readback lying again.
-    if r.max_position_pct is not None:
+    if r.max_position_pct is not None and spec.instrument.is_future:
+        # A futures lot ties up its exchange margin, not its value (see
+        # `nlt.engine.backtest._margin_rate`); say what the limit measures.
+        lines.append(
+            f"Never set aside more than {_num(r.max_position_pct)}% of the account "
+            "as margin for one position"
+        )
+    elif r.max_position_pct is not None:
         lines.append(
             f"Never put more than {_num(r.max_position_pct)}% of the account into one position"
         )
@@ -364,6 +391,42 @@ def _risk_lines(spec: StrategySpec) -> list[str]:
     return lines
 
 
+# Where a readback line came from. Shown beside each line so a user can tell
+# their own words from what we filled in.
+SAID = "said"  # the user's words, or their answer to a question
+WORKED_OUT = "worked_out"  # our reasoning from what they said
+DEFAULT = "default"  # filled in because they did not say
+
+# Parts no sentence can set: always ours.
+_FIXED_SOURCES = {"contract": WORKED_OUT, "expiry": WORKED_OUT, "risk": DEFAULT}
+
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _numbers(text: str) -> set[float]:
+    return {float(n) for n in _NUMBER.findall(text.replace(",", ""))}
+
+
+def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
+    """(heading, [(line, part)]) -- the one place the readback's lines are made."""
+    indicators = {i.id: i for i in spec.indicators}
+    timeframe = spec.instrument.timeframe
+    entry_verb = "BUYS" if spec.direction == "long" else "SHORTS"
+    exit_verb = "SELLS" if spec.direction == "long" else "COVERS"
+    entry = _describe_condition(spec.entry, indicators, timeframe)
+    trades = [(_instrument_desc(spec), "instrument")]
+    if spec.instrument.is_future:
+        trades.append((_contract_desc(spec), "contract"))
+    trades.append((_timeframe_desc(spec), "timeframe"))
+    return [
+        ("WHAT IT TRADES", trades),
+        (f"WHEN IT {entry_verb}", [(f"When {entry}", "entry")]),
+        (f"WHEN IT {exit_verb}", _exit_lines(spec, indicators, timeframe)),
+        ("HOW MUCH", [(_sizing_desc(spec), "sizing")]),
+        ("SAFETY LIMITS", [(line, "risk") for line in _risk_lines(spec)]),
+    ]
+
+
 def describe(spec: StrategySpec) -> str:
     """A plain-English readback of `spec`, generated mechanically from its fields.
 
@@ -371,27 +434,41 @@ def describe(spec: StrategySpec) -> str:
     intent -- it reports what the spec contains, so a wrong or surprising line
     means the spec itself needs to change, not the wording.
     """
-    indicators = {i.id: i for i in spec.indicators}
-    timeframe = spec.instrument.timeframe
-    entry_verb = "BUYS" if spec.direction == "long" else "SHORTS"
-    exit_verb = "SELLS" if spec.direction == "long" else "COVERS"
-
-    lines = [spec.name, ""]
-    lines.append("WHAT IT TRADES")
-    lines.append(f"  {_instrument_desc(spec)}")
-    lines.append("")
-    lines.append(f"WHEN IT {entry_verb}")
-    lines.append(f"  When {_describe_condition(spec.entry, indicators, timeframe)}")
-    lines.append("")
-    lines.append(f"WHEN IT {exit_verb}")
-    for line in _exit_lines(spec, indicators, timeframe):
-        lines.append(f"  {line}")
-    lines.append("")
-    lines.append("HOW MUCH")
-    lines.append(f"  {_sizing_desc(spec)}")
-    lines.append("")
-    lines.append("SAFETY LIMITS")
-    for line in _risk_lines(spec):
-        lines.append(f"  {line}")
-
+    lines = [spec.name]
+    for heading, body in _sections(spec):
+        lines.append("")
+        lines.append(heading)
+        lines.extend(f"  {line}" for line, _part in body)
     return "\n".join(lines)
+
+
+def describe_lines(
+    spec: StrategySpec,
+    sources: dict[str, str] | None,
+    answers: dict[str, str] | None = None,
+) -> list[tuple[str, str, str | None]]:
+    """(heading, line, label) for every body line of `describe(spec)`, in order.
+
+    The label says where the line came from: `SAID`, `WORKED_OUT` or `DEFAULT`.
+    "Said" is a claim about the user's own words, so it is only ever given when
+    the reader recorded it; a part with no record is labelled `DEFAULT`, never
+    `SAID`. And a "said" line showing any number the user never typed -- the
+    14 in "RSI(14)" when they wrote "RSI", the 65 in "1 lot of 65" -- is
+    `WORKED_OUT`: we filled that number in. With no record at all
+    (`sources is None`, e.g. a strategy saved before labels existed) every
+    label is None rather than a guess.
+    """
+    typed = _numbers(" ".join([spec.description, *(answers or {}).values()]))
+    out = []
+    for heading, body in _sections(spec):
+        for line, part in body:
+            if sources is None:
+                label = None
+            elif part in _FIXED_SOURCES:
+                label = _FIXED_SOURCES[part]
+            else:
+                label = sources.get(part, DEFAULT)
+                if label == SAID and not _numbers(line) <= typed:
+                    label = WORKED_OUT
+            out.append((heading, line, label))
+    return out

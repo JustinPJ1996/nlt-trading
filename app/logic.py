@@ -33,6 +33,7 @@ from nlt.costs.charges import (
     ZeroCharges,
 )
 from nlt.costs.charges import charge_fn as _adapt_charge_fn
+from nlt.data.source import DATA_FLOOR
 from nlt.data.yahoo import YahooSource
 from nlt.engine.backtest import BacktestResult, run_backtest
 from nlt.engine.basket import BasketResult, run_basket_backtest
@@ -41,7 +42,7 @@ from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 from nlt.translate.llm import translate
 from nlt.translate.readback import describe, format_inr
-from nlt.translate.rules import Question, TranslationResult
+from nlt.translate.rules import BacktestPeriod, Question, TranslationResult
 
 try:  # pragma: no cover -- exercised once nlt.report exists
     from nlt.report.benchmark import Benchmark, Comparison, buy_and_hold, compare
@@ -94,16 +95,23 @@ __all__ = [
 
 # --------------------------------------------------------------------- misc
 
-DEFAULT_CAPITAL = 100_000.0
+# Justin's call (2026-10-12). At Rs 1,00,000 the 20% limit is Rs 20,000, less
+# than one unit of NIFTY, so the index examples could take no trades at all.
+DEFAULT_CAPITAL = 2_500_000.0
 
 # Every example is verified (in tests/test_app.py) to parse into a spec with
 # no follow-up questions -- a "try this" button that itself needs clarifying
-# would be a bad first impression.
+# would be a bad first impression -- and to take at least one trade at the
+# default capital over its own test period. Each names a stop loss on its own,
+# the habit the prompt guide teaches.
 EXAMPLE_STRATEGIES = [
-    "buy nifty when rsi cracks 30, target 2%, stop loss 1%",
-    "buy nifty when 20 sma crosses above 50 sma, target 3%, stop loss 1.5%",
-    "short banknifty on death cross, target 2%, stop 1%",
-    "buy nifty when close is above 200 ema, target 5%, trailing stop 2%",
+    "Buy NIFTY when RSI(14) crosses below 30. Target 2%, stop loss 1%. Backtest the last 3 years.",
+    "Buy NIFTY when 20 SMA crosses above 50 SMA. Target 3%, stop loss 1.5%. "
+    "Backtest the last 5 years.",
+    "Buy RELIANCE when RSI(14) crosses below 30. Target 5%, stop loss 2%. "
+    "Backtest the last 5 years.",
+    "Buy INFY when 9 EMA crosses above 21 EMA. Target 4%, stop loss 2%. Backtest the last 3 years.",
+    "Buy TCS when close is above 200 EMA. Target 5%, trailing stop 2%. Backtest the last 5 years.",
 ]
 
 COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
@@ -259,6 +267,29 @@ def translate_text(text: str, answers: dict[str, str] | None = None) -> Translat
         )
 
 
+def period_dates(period: BacktestPeriod, today: dt.date) -> dict | None:
+    """The dates a test period from the sentence means, as of `today`.
+
+    None when there is nothing to test yet (a year still in the future).
+    Never earlier than the history we trust (`DATA_FLOOR`), and it says so.
+    """
+    if period.year is not None:
+        start, end = dt.date(period.year, 1, 1), min(dt.date(period.year, 12, 31), today)
+    else:
+        offset = pd.DateOffset(**{period.unit: period.last})
+        start, end = (pd.Timestamp(today) - offset).date(), today
+    if start >= today:
+        return None
+    note = None
+    if start < DATA_FLOOR:
+        start = DATA_FLOOR
+        note = (
+            f"History here starts on {DATA_FLOOR:%d %b %Y}, so the test starts there "
+            f'rather than at the start of "{period.words}".'
+        )
+    return {"words": period.words, "start": start.isoformat(), "end": end.isoformat(), "note": note}
+
+
 def answers_from_questions(questions: list[Question], values: dict[str, str]) -> dict[str, str]:
     """Keeps only non-empty answers, keyed by `Question.field`, for re-parsing."""
     return {q.field: values[q.field] for q in questions if values.get(q.field)}
@@ -310,6 +341,9 @@ class PipelineResult:
     # trades so every downstream consumer (charts, verdict, tables) works on one
     # shape regardless of whether one symbol or a hundred were traded.
     basket: BasketResult | None = None
+    # The same run again with charges switched off, for the before/after
+    # comparison. Exact: a second run, not charges added back to one number.
+    before_charges: BacktestResult | None = None
     data_notes: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -468,9 +502,16 @@ def backtest_spec(
                 error="There is no price history for that symbol and date range to test against.",
             )
 
+        no_charges = _adapt_charge_fn(ZeroCharges())
         if len(bars_by_symbol) > 1:
             basket = run_basket_backtest(load_spec, bars_by_symbol, capital=capital, charge_fn=cf)
             backtest = _as_backtest_result(basket, load_spec)
+            before_charges = _as_backtest_result(
+                run_basket_backtest(
+                    load_spec, bars_by_symbol, capital=capital, charge_fn=no_charges
+                ),
+                load_spec,
+            )
             # The benchmark for a basket is an equal-weight buy-and-hold of the
             # same names, which is the honest comparison: "would picking your
             # moments have beaten simply owning all of them?"
@@ -484,6 +525,9 @@ def backtest_spec(
             listed = _listed_expiries(load_spec)
             backtest = run_backtest(
                 load_spec, bars, capital=capital, charge_fn=cf, listed_expiries=listed
+            )
+            before_charges = run_backtest(
+                load_spec, bars, capital=capital, charge_fn=no_charges, listed_expiries=listed
             )
             data_notes = data_notes + list(backtest.warnings)
 
@@ -516,6 +560,7 @@ def backtest_spec(
             comparison=comparison,
             verdict=verdict,
             basket=basket,
+            before_charges=before_charges,
             data_notes=data_notes,
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad; this is the UI's last line of defence

@@ -46,6 +46,35 @@ export function emptyBuild(): BuildState {
   };
 }
 
+// What a complete strategy says, one part per line. Stop loss has its own line
+// and is marked required: a strategy without one comes back as a question.
+const GUIDE: { part: string; example: string; required?: boolean }[] = [
+  { part: "What to trade", example: "NIFTY, RELIANCE, crude oil futures" },
+  { part: "When to buy", example: "when RSI(14) crosses below 30" },
+  { part: "Stop loss", example: "stop loss 1%", required: true },
+  { part: "When to exit", example: "target 2%, or sell when RSI crosses above 70" },
+  { part: "Chart and test period", example: "on 15-minute candles, backtest the last 2 years" },
+];
+
+function PromptGuide() {
+  return (
+    <div className="guide" aria-label="What to include">
+      <p className="guide-title">What to include</p>
+      <dl>
+        {GUIDE.map((g) => (
+          <div className="guide-row" key={g.part}>
+            <dt>
+              {g.part}
+              {g.required && <span className="guide-required">required</span>}
+            </dt>
+            <dd>{g.example}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export function Build({
   options,
   state,
@@ -97,6 +126,8 @@ export function Build({
       const t = await api.translate(clean, answers);
       setState((s) => ({
         ...s,
+        // "Backtest the last 2 years" sets the dates; they stay editable below.
+        ...(t.period ? { start: t.period.start, end: t.period.end } : {}),
         checkedText: clean,
         translation: t,
         answers: t.answers,
@@ -192,6 +223,7 @@ export function Build({
               placeholder="e.g. buy nifty when rsi cracks 30, target 2%, stop loss 1%"
               rows={3}
             />
+            {!state.text && <PromptGuide />}
             {options && !state.text && (
               <div className="examples" aria-label="Examples">
                 <span className="muted small" style={{ alignSelf: "center" }}>
@@ -246,7 +278,7 @@ export function Build({
                   ) : (
                     <p className="muted">Read this carefully. If anything is not what you meant, change your description.</p>
                   )}
-                  <Readback text={understood.readback} />
+                  <Readback text={understood.readback} labels={understood.readback_labels} />
                   {tr.read_by_ai && (
                     <p className="ai-note">
                       An AI model helped read your sentence. The description above is written by the
@@ -269,22 +301,51 @@ export function Build({
               {!understood && visibleQuestions.length > 0 && (
                 <form className="panel" onSubmit={onAnswers}>
                   <p style={{ fontWeight: 650, marginBottom: 16 }}>I need a little more detail first.</p>
-                  {visibleQuestions.map((q) => (
-                    <div className="question" key={q.field}>
-                      <label className="field">
-                        <span className="label">{q.text}</span>
-                        <input
-                          type="text"
-                          value={state.draftAnswers[q.field] ?? ""}
-                          onChange={(e) => set({ draftAnswers: { ...state.draftAnswers, [q.field]: e.target.value } })}
-                        />
+                  {visibleQuestions.map((q) => {
+                    const draft = state.draftAnswers[q.field] ?? "";
+                    const answer = (value: string) =>
+                      set({ draftAnswers: { ...state.draftAnswers, [q.field]: value } });
+                    const picked = q.choices.some((c) => c.value === draft);
+                    return (
+                      <div className="question" key={q.field}>
+                        <p className="label">{q.text}</p>
+                        {q.choices.length > 0 && (
+                          <div className="choices" role="group" aria-label={q.text}>
+                            {q.choices.map((c) => (
+                              <button
+                                type="button"
+                                key={c.value}
+                                className={`choice${draft === c.value ? " picked" : ""}`}
+                                aria-pressed={draft === c.value}
+                                onClick={() => answer(draft === c.value ? "" : c.value)}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {q.answerable && (
+                          <label className="field" style={{ marginTop: q.choices.length ? 8 : 0 }}>
+                            {q.choices.length > 0 && <span className="hint">Or type your own</span>}
+                            <input
+                              type="text"
+                              aria-label={q.choices.length ? `${q.text} (type your own)` : q.text}
+                              value={picked ? "" : draft}
+                              onChange={(e) => answer(e.target.value)}
+                            />
+                          </label>
+                        )}
                         <span className="hint">
                           {q.why}
                           {q.suggestion ? ` ${q.suggestion}` : ""}
+                          {!q.answerable && q.choices.length === 0 && (
+                            <> To answer this, change your description above.</>
+                          )}
                         </span>
-                      </label>
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
+                  {visibleQuestions.some((q) => q.answerable || q.choices.length > 0) && (
                   <div className="btn-row" style={{ marginTop: 8 }}>
                     <button
                       className="btn"
@@ -295,6 +356,7 @@ export function Build({
                     </button>
                     {checking && <Working>Reading again...</Working>}
                   </div>
+                  )}
                 </form>
               )}
 
@@ -346,6 +408,12 @@ export function Build({
                   <input type="date" value={state.end} onChange={(e) => set({ end: e.target.value })} />
                 </label>
               </div>
+              {tr?.period && (
+                <p className="hint" style={{ marginTop: 12 }}>
+                  Dates set from your words: “{tr.period.words}”. You can change them.
+                  {tr.period.note && <> {tr.period.note}</>}
+                </p>
+              )}
               {dateProblem && (
                 <div style={{ marginTop: 12 }}>
                   <ErrorLine error={dateProblem} />
