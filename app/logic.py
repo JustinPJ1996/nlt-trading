@@ -35,6 +35,7 @@ from nlt.costs.charges import (
 from nlt.costs.charges import charge_fn as _adapt_charge_fn
 from nlt.data.source import DATA_FLOOR
 from nlt.data.yahoo import YahooSource
+from nlt.engine import warmup
 from nlt.engine.backtest import BacktestResult, run_backtest
 from nlt.engine.basket import BasketResult, run_basket_backtest
 from nlt.engine.loader import load_for_spec
@@ -114,18 +115,31 @@ EXAMPLE_STRATEGIES = [
     "Buy TCS when close is above 200 EMA. Target 5%, trailing stop 2%. Backtest the last 5 years.",
 ]
 
+# The first entry is the default. Index futures, not options: "buy NIFTY" is
+# tested on the index itself, and futures are the way to hold that; option
+# charges (STT on premium) describe a different trade (changed 2026-10-12).
 COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
-    "Index options (NIFTY/BANKNIFTY weekly)": NseOptionsCharges(),
     "Index futures": NseFuturesCharges(),
+    "Index options (NIFTY/BANKNIFTY weekly)": NseOptionsCharges(),
     "MCX commodity futures": McxFuturesCharges(),
     "Equity delivery": NseEquityDeliveryCharges(),
     "No costs (for comparison only)": ZeroCharges(),
 }
 
 
+def applied_charges_label(spec: StrategySpec, label: str) -> str:
+    """The name of the charges a run really used, which for shares and futures is
+    not the dropdown's (see `charge_model_for_spec`)."""
+    model, _note = charge_model_for_spec(spec, label)
+    for name, candidate in COST_MODEL_LABELS.items():
+        if type(candidate) is type(model):
+            return name
+    return {McxFuturesCharges: "MCX commodity futures"}.get(type(model), label)
+
+
 def charge_model_for_label(label: str) -> ChargeModel:
-    """Looks up a cost model by its dropdown label, defaulting to options costs."""
-    return COST_MODEL_LABELS.get(label, NseOptionsCharges())
+    """Looks up a cost model by its dropdown label, defaulting to index futures costs."""
+    return COST_MODEL_LABELS.get(label, NseFuturesCharges())
 
 
 def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, str | None]:
@@ -171,9 +185,8 @@ def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, 
     if spec.instrument.trade_as == "stock" and not isinstance(chosen, NseEquityDeliveryCharges):
         return NseEquityDeliveryCharges(), (
             f"Costs: this strategy buys and sells shares, so equity delivery charges "
-            f"were applied instead of '{label}'. Share trades are not taxed the way "
-            f"index options are, and using the option figures would have overstated "
-            f"what this strategy costs to run."
+            f"were applied instead of '{label}'. Shares are taxed and charged differently, "
+            f"and those figures would have misstated what this strategy costs to run."
         )
 
     return chosen, None
@@ -344,6 +357,9 @@ class PipelineResult:
     # The same run again with charges switched off, for the before/after
     # comparison. Exact: a second run, not charges added back to one number.
     before_charges: BacktestResult | None = None
+    # How the test was done, in plain words (nlt.report.method).
+    assumptions: list[str] = field(default_factory=list)
+    weak_spots: list[str] = field(default_factory=list)
     data_notes: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -491,7 +507,12 @@ def backtest_spec(
                 update={"instrument": spec.instrument.model_copy(update={"symbol": symbol})}
             )
 
-        bars_by_symbol, data_notes = load_for_spec(load_spec, start=start, end=end)
+        # Load extra history before `start` so indicators are ready on it; the
+        # runs below may not trade before it, and are cut back to it after.
+        load_from = warmup.padded_start(load_spec, start) if start else None
+        bars_by_symbol, data_notes = load_for_spec(
+            load_spec, start=load_from, end=end, tested_from=start
+        )
         if cost_note:
             data_notes = [cost_note, *data_notes]
         if not bars_by_symbol or all(df.empty for df in bars_by_symbol.values()):
@@ -503,33 +524,77 @@ def backtest_spec(
             )
 
         no_charges = _adapt_charge_fn(ZeroCharges())
+        all_index = pd.DatetimeIndex(
+            sorted(set().union(*(df.index for df in bars_by_symbol.values() if not df.empty)))
+        )
+        start_bar = warmup.first_bar_on_or_after(all_index, start) if start else None
+        if start and start_bar is None:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                data_notes=data_notes,
+                error="There is no price history for that symbol and date range to test against.",
+            )
+
+        def trimmed(result: BacktestResult) -> BacktestResult:
+            return warmup.trim(result, start_bar, capital) if start_bar is not None else result
+
         if len(bars_by_symbol) > 1:
-            basket = run_basket_backtest(load_spec, bars_by_symbol, capital=capital, charge_fn=cf)
-            backtest = _as_backtest_result(basket, load_spec)
-            before_charges = _as_backtest_result(
-                run_basket_backtest(
-                    load_spec, bars_by_symbol, capital=capital, charge_fn=no_charges
-                ),
-                load_spec,
+            basket = run_basket_backtest(
+                load_spec, bars_by_symbol, capital=capital, charge_fn=cf, trade_from=start_bar
+            )
+            backtest = trimmed(_as_backtest_result(basket, load_spec))
+            before_charges = trimmed(
+                _as_backtest_result(
+                    run_basket_backtest(
+                        load_spec,
+                        bars_by_symbol,
+                        capital=capital,
+                        charge_fn=no_charges,
+                        trade_from=start_bar,
+                    ),
+                    load_spec,
+                )
             )
             # The benchmark for a basket is an equal-weight buy-and-hold of the
             # same names, which is the honest comparison: "would picking your
             # moments have beaten simply owning all of them?"
             bars = _equal_weight_index(bars_by_symbol)
+            if start_bar is not None:
+                bars = bars.loc[start_bar:]
             benchmark_name = f"holding all {len(bars_by_symbol)} of these stocks equally"
             data_notes = data_notes + basket.warnings
         else:
-            bars = next(iter(bars_by_symbol.values()))
+            all_bars = next(iter(bars_by_symbol.values()))
             benchmark_name = f"holding {load_spec.instrument.symbol}"
             basket = None
             listed = _listed_expiries(load_spec)
-            backtest = run_backtest(
-                load_spec, bars, capital=capital, charge_fn=cf, listed_expiries=listed
+            backtest = trimmed(
+                run_backtest(
+                    load_spec,
+                    all_bars,
+                    capital=capital,
+                    charge_fn=cf,
+                    listed_expiries=listed,
+                    trade_from=start_bar,
+                )
             )
-            before_charges = run_backtest(
-                load_spec, bars, capital=capital, charge_fn=no_charges, listed_expiries=listed
+            before_charges = trimmed(
+                run_backtest(
+                    load_spec,
+                    all_bars,
+                    capital=capital,
+                    charge_fn=no_charges,
+                    listed_expiries=listed,
+                    trade_from=start_bar,
+                )
             )
+            bars = all_bars.loc[start_bar:] if start_bar is not None else all_bars
             data_notes = data_notes + list(backtest.warnings)
+            if start_bar is not None:
+                note = warmup.warmup_note(load_spec, all_bars, start_bar)
+                if note:
+                    data_notes.append(note)
 
         if load_spec.instrument.is_future:
             from nlt.data.futures import contract, expiry_close_mask
@@ -550,6 +615,21 @@ def backtest_spec(
             benchmark = buy_and_hold(bars, capital, charge_fn=cf, name=benchmark_name)
         comparison = compare(backtest, benchmark, bars)
         verdict = assess(backtest, comparison)
+        from nlt.report import method
+
+        equity_index = backtest.equity.index
+        stated = (
+            method.assumptions(
+                load_spec,
+                capital=capital,
+                charge_model=model,
+                first=equity_index[0].date(),
+                last=equity_index[-1].date(),
+            )
+            if len(equity_index)
+            else []
+        )
+        spots, data_notes = method.weak_spots(load_spec, data_notes)
 
         return PipelineResult(
             translation=translation,
@@ -561,6 +641,8 @@ def backtest_spec(
             verdict=verdict,
             basket=basket,
             before_charges=before_charges,
+            assumptions=stated,
+            weak_spots=spots,
             data_notes=data_notes,
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad; this is the UI's last line of defence
@@ -837,4 +919,246 @@ _EXIT_WORDS = {
     "max_bars": "time limit reached",
     "square_off": "end-of-day square-off",
     "expiry": "contract expired",
+    "end_of_data": "still open when the test ended",
 }
+
+
+# ------------------------------------------------------------------ CSV
+
+
+TRADE_CSV_COLUMNS = [
+    "symbol",
+    "direction",
+    "entered",
+    "entry_price",
+    "exited",
+    "exit_price",
+    "quantity",
+    "why_it_closed",
+    "profit_before_charges",
+    "charges",
+    "profit_after_charges",
+]
+
+
+def trades_csv(result: PipelineResult) -> str:
+    """Every trade of a run as CSV, for a spreadsheet (competitor review C4).
+
+    Plain numbers (no "Rs", no commas) so a spreadsheet can add them up; the
+    columns are the same trades the results screen lists, and the last column
+    adds up to the run's profit after charges.
+    """
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(TRADE_CSV_COLUMNS)
+    spec = result.backtest.spec
+    # A daily candle has no time of day; printing 00:00 would suggest one.
+    when = "%Y-%m-%d" if spec.instrument.timeframe == "1d" else "%Y-%m-%d %H:%M"
+    for t in result.backtest.trades:
+        writer.writerow(
+            [
+                t.symbol or spec.instrument.symbol,
+                "buy" if t.direction == "long" else "short",
+                t.entry_time.strftime(when),
+                round(float(t.entry_price), 2),
+                t.exit_time.strftime(when),
+                round(float(t.exit_price), 2),
+                int(t.quantity),
+                _EXIT_WORDS.get(t.exit_reason, t.exit_reason),
+                round(float(t.gross_pnl), 2),
+                round(float(t.charges), 2),
+                round(float(t.net_pnl), 2),
+            ]
+        )
+    return buf.getvalue()
+
+
+# ------------------------------------------------------- adjust before running
+
+
+TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "1d"]
+
+# Which readback part each box sets, so the labels can say "You said".
+_EDIT_PARTS = {
+    "stop_pct": "exit.stop",
+    "trailing_stop_pct": "exit.trailing_stop",
+    "target_pct": "exit.target",
+    "timeframe": "timeframe",
+}
+
+
+class AdjustError(ValueError):
+    """A box holds something the strategy cannot run with; the text says why."""
+
+
+def _percent(raw, label: str, *, optional: bool) -> float | None:
+    text = str(raw if raw is not None else "").strip().removesuffix("%").strip()
+    if not text:
+        if optional:
+            return None
+        raise AdjustError(f"The {label} cannot be empty: a strategy always needs one.")
+    try:
+        value = float(text)
+    except ValueError:
+        raise AdjustError(f"The {label} must be a number, like 1.5.") from None
+    if not 0 < value <= 50:
+        raise AdjustError(f"The {label} must be more than 0% and at most 50%.")
+    return value
+
+
+def adjust_spec(
+    spec: StrategySpec, edits: dict, sources: dict[str, str] | None
+) -> tuple[StrategySpec, dict[str, str] | None, dict[str, str]]:
+    """The confirmed strategy with the form's boxes applied (competitor review A4).
+
+    Returns (spec, sources, the boxes as typed). Only the boxes the strategy
+    already has can change: a stop loss can be moved but never removed, and a
+    trailing stop stays a trailing stop -- the form edits the strategy, it does
+    not rewrite it. Every change is checked by the same rules the reader uses,
+    and the readback is regenerated from the result, so it always says what
+    will be tested. A box the user set is labelled "You said".
+    """
+    from nlt.translate.readback import SAID
+    from nlt.translate.rules import _vwap_refusal
+
+    exit_updates: dict = {}
+    typed: dict[str, str] = {}
+    if "stop_pct" in edits and spec.exit.stop_pct is not None:
+        exit_updates["stop_pct"] = _percent(edits["stop_pct"], "stop loss", optional=False)
+    if "trailing_stop_pct" in edits and spec.exit.trailing_stop_pct is not None:
+        exit_updates["trailing_stop_pct"] = _percent(
+            edits["trailing_stop_pct"], "trailing stop", optional=False
+        )
+    if "target_pct" in edits:
+        exit_updates["target_pct"] = _percent(edits["target_pct"], "target", optional=True)
+
+    instrument = spec.instrument
+    if "timeframe" in edits:
+        timeframe = str(edits["timeframe"])
+        if timeframe not in TIMEFRAMES:
+            raise AdjustError("That candle size is not one this platform runs.")
+        if timeframe != "1d" and instrument.is_universe:
+            raise AdjustError("A basket of stocks can only be tested on daily candles.")
+        instrument = instrument.model_copy(update={"timeframe": timeframe})
+        indicators = [{"type": i.type, "params": dict(i.params)} for i in spec.indicators]
+        refusal = _vwap_refusal(
+            indicators,
+            {"symbol": instrument.symbol, "trade_as": instrument.trade_as, "timeframe": timeframe},
+        )
+        if refusal is not None:
+            raise AdjustError(refusal.text)
+
+    for key in _EDIT_PARTS:
+        if key in edits and (key in exit_updates or key == "timeframe"):
+            typed[f"form.{key}"] = str(edits[key])
+
+    try:
+        adjusted = StrategySpec.model_validate(
+            {
+                **spec.model_dump(),
+                "instrument": instrument.model_dump(),
+                "exit": {**spec.exit.model_dump(), **exit_updates},
+            }
+        )
+    except Exception as exc:  # pydantic's message, which names the rule broken
+        raise AdjustError(f"That does not make a valid strategy: {exc}") from None
+
+    if sources is not None:
+        sources = dict(sources)
+        for key, part in _EDIT_PARTS.items():
+            if f"form.{key}" in typed:
+                if key == "target_pct" and exit_updates.get("target_pct") is None:
+                    sources.pop(part, None)
+                else:
+                    sources[part] = SAID
+    return adjusted, sources, typed
+
+
+# ------------------------------------------------------- ready-made strategies
+
+
+# The library (competitor review B4): ready-made strategies shown as cards with
+# their own tested numbers. Each must read with no questions and take trades at
+# the default capital (tests/test_library.py). Tapping one puts its sentence in
+# the box, where it can be changed like anything the user typed.
+LIBRARY: list[dict[str, str]] = [
+    {"title": "NIFTY oversold bounce", "sentence": EXAMPLE_STRATEGIES[0]},
+    {"title": "NIFTY moving-average crossover", "sentence": EXAMPLE_STRATEGIES[1]},
+    {"title": "RELIANCE oversold bounce", "sentence": EXAMPLE_STRATEGIES[2]},
+    {"title": "INFY EMA crossover", "sentence": EXAMPLE_STRATEGIES[3]},
+    {"title": "TCS trend follower", "sentence": EXAMPLE_STRATEGIES[4]},
+    {
+        "title": "MARUTI 20-day breakout",
+        "sentence": "Buy MARUTI when the close is above the highest high of the last 20 days. "
+        "Sell when the close falls below the lowest low of the last 10 days. Stop loss 3%. "
+        "Backtest the last 5 years.",
+    },
+]
+
+
+def library_card(entry: dict[str, str], tested_to: dt.date) -> dict:
+    """One card: the strategy run as the screen would run it, up to `tested_to`.
+
+    The holding return sits beside the strategy's, and serious warnings are
+    flagged on the card itself, so a card cannot look better than its report.
+    """
+    translation = translate_text(entry["sentence"])
+    card: dict = {"title": entry["title"], "sentence": entry["sentence"]}
+    if translation.spec is None or translation.period is None:
+        return {**card, "error": "This strategy could not be read."}
+    dates = period_dates(translation.period, tested_to)
+    start = dt.date.fromisoformat(dates["start"])
+    result = backtest_spec(translation.spec, start=start, end=tested_to, translation=translation)
+    if result.error:
+        return {**card, "error": result.error}
+    m = result.backtest.metrics
+    equity = result.backtest.equity
+    return {
+        **card,
+        "name": translation.spec.name,
+        "return": format_signed_pct(result.comparison.strategy_return_pct),
+        "holding_return": format_signed_pct(result.comparison.benchmark_return_pct),
+        "benchmark_name": result.benchmark.name,
+        "win_rate": format_pct(m.get("win_rate_pct")),
+        "worst_drop": format_pct(m.get("max_drawdown_pct")),
+        "trades": int(m.get("total_trades") or 0),
+        "first": f"{equity.index[0]:%d %b %Y}",
+        "last": f"{equity.index[-1]:%d %b %Y}",
+        "serious_warning": any(f.severity == "critical" for f in result.verdict.flags),
+    }
+
+
+def library_cards(
+    cache_path,
+    today: dt.date,
+    compute: Callable[[dict, dt.date], dict] | None = None,
+) -> dict:
+    """The cards, recomputed at most once a day and kept on disk between restarts.
+
+    Tested to the day before `today`: today's daily candle is still forming.
+    """
+    from pathlib import Path
+
+    compute = compute or library_card
+    path = Path(cache_path)
+    tested_to = today - dt.timedelta(days=1)
+    try:
+        cached = json.loads(path.read_text())
+        if cached.get("tested_to") == tested_to.isoformat() and len(cached["cards"]) == len(
+            LIBRARY
+        ):
+            return cached
+    except (OSError, ValueError, KeyError):
+        pass
+    cards = [compute(entry, tested_to) for entry in LIBRARY]
+    out = {
+        "tested_to": tested_to.isoformat(),
+        "capital_text": format_inr(DEFAULT_CAPITAL),
+        "cards": cards,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out))
+    return out

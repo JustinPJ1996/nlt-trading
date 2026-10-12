@@ -18,7 +18,7 @@ import pytest
 
 from nlt.costs.charges import NseEquityDeliveryCharges
 from nlt.costs.charges import charge_fn as make_charge_fn
-from nlt.engine.backtest import BacktestResult, Trade, run_backtest
+from nlt.engine.backtest import NO_CHARGES_NOTE, BacktestResult, Trade, run_backtest
 from nlt.engine.metrics import compute_metrics
 from nlt.report.benchmark import Benchmark, Comparison, buy_and_hold, compare
 from nlt.report.text import render
@@ -514,7 +514,7 @@ def test_rarely_in_market_absent_when_mostly_invested():
 
 def test_untested_costs_fires_when_engine_warns_no_charge_fn():
     result = _baseline_good_result()
-    result.warnings.append("no charge_fn supplied; results exclude transaction costs")
+    result.warnings.append(NO_CHARGES_NOTE)
     comparison = _comparison(result, beats=True)
     verdict = assess(result, comparison)
     assert "untested_costs" in {f.code for f in verdict.flags}
@@ -792,7 +792,7 @@ def test_small_account_options_warning_becomes_a_critical_flag():
 def test_no_small_account_flag_without_the_warning():
     from nlt.report.verdict import assess
 
-    result = _with_warning("no charge_fn supplied; results exclude transaction costs")
+    result = _with_warning(NO_CHARGES_NOTE)
     verdict = assess(result, _comparison(result))
     assert not any(f.code == "options_need_a_bigger_account" for f in verdict.flags)
 

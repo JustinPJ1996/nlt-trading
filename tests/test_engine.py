@@ -19,7 +19,7 @@ import pandas as pd
 import pytest
 
 from nlt.data.session import NSE_EQUITY, session_date
-from nlt.engine.backtest import Trade, run_backtest
+from nlt.engine.backtest import NO_CHARGES_NOTE, Trade, run_backtest
 from nlt.engine.conditions import evaluate
 from nlt.engine.metrics import compute_metrics
 from nlt.spec.models import (
@@ -186,7 +186,7 @@ def test_stop_beats_target_when_both_hit_same_bar():
     # Bar1's range [90, 105] reaches both, so the engine must report the stop.
     assert trade.exit_reason == "stop"
     assert trade.exit_price == pytest.approx(99.0)
-    assert "stop was assumed to have filled first" in " ".join(res.warnings)
+    assert "the stop was assumed to come first" in " ".join(res.warnings)
 
 
 # --------------------------------------------------------------- trailing stop
@@ -284,7 +284,7 @@ def test_charges_are_subtracted_symmetrically(synthetic_bars):
         assert trade.net_pnl == pytest.approx(trade.gross_pnl - trade.charges)
 
     assert res.metrics["total_charges"] == pytest.approx(40.0 * len(res.trades))
-    assert "no charge_fn supplied" not in " ".join(res.warnings)
+    assert NO_CHARGES_NOTE not in res.warnings
 
 
 # ---------------------------------------------------------------------- sizing
@@ -380,7 +380,7 @@ def test_unaffordable_position_is_not_opened():
     res = run_backtest(spec, bars, capital=100_000.0, lot_size=1000, slippage_pct=0.0)
 
     assert res.trades == []
-    assert any("not enough spare capital" in w for w in res.warnings)
+    assert any("too little spare money" in w or "spare capital" in w for w in res.warnings)
 
 
 def test_unaffordable_position_is_capped_to_what_capital_allows():
@@ -1117,7 +1117,7 @@ def test_partial_last_bar_is_dropped_and_warned_about():
         drop_partial_last_bar=True,
     )
     assert len(res_dropped.equity) == 2, "the 3rd (still-forming) bar should have been dropped"
-    assert any("still-forming" in w for w in res_dropped.warnings)
+    assert any("still forming" in w for w in res_dropped.warnings)
 
     res_kept = run_backtest(
         spec,
@@ -1128,7 +1128,7 @@ def test_partial_last_bar_is_dropped_and_warned_about():
         drop_partial_last_bar=False,
     )
     assert len(res_kept.equity) == 3, "with the guard off, all 3 bars should remain"
-    assert not any("still-forming" in w for w in res_kept.warnings)
+    assert not any("still forming" in w for w in res_kept.warnings)
 
 
 def test_daily_nifty_rsi_regression_pinned(nifty_bars):
@@ -1172,7 +1172,7 @@ def test_long_lookback_indicator_warns_how_many_sessions_it_spans():
     )
     res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
 
-    assert any("200 bars" in w and "8 trading session" in w for w in res.warnings)
+    assert any("200 candles" in w and "8 trading days" in w for w in res.warnings)
 
 
 def test_intraday_end_to_end_produces_sane_trades():
@@ -1467,3 +1467,23 @@ def test_options_backtest_reports_which_lot_size_it_used():
 
     assert any("65 units" in w for w in result.warnings), result.warnings
     assert result.trades and result.trades[0].quantity % 65 == 0
+
+
+def test_daily_bars_with_the_default_schedule_add_no_note(synthetic_bars) -> None:
+    """The default schedule rides along on every daily spec; a note about it on
+    every run was noise, in engine words."""
+    spec = _spec(
+        Compare(op="gt", left=Ref(name="close"), right=Const(value=0)),
+        ExitRules(stop_pct=5.0, target_pct=5.0),
+    )
+    result = run_backtest(spec, synthetic_bars, capital=1_000_000)
+    assert not any("square-off" in w or "no_entry_after" in w for w in result.warnings)
+    custom = spec.model_copy(
+        update={"schedule": Schedule(no_entry_after=dt.time(13, 30), square_off=dt.time(14, 0))}
+    )
+    note = next(
+        w
+        for w in run_backtest(custom, synthetic_bars, capital=1_000_000).warnings
+        if "square-off time" in w
+    )
+    assert "14:00" in note and "_" not in note

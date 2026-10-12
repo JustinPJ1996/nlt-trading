@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nlt.data.instruments import lot_size as exchange_lot_size
+from nlt.engine.backtest import NO_CHARGES_NOTE
 
 if TYPE_CHECKING:
     from nlt.engine.backtest import BacktestResult
@@ -352,7 +353,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
             )
         )
 
-    if any("no charge_fn supplied" in w for w in result.warnings):
+    if NO_CHARGES_NOTE in result.warnings:
         flags.append(
             Flag(
                 severity="warning",

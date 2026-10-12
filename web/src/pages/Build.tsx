@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { api, ApiError, type Options, type Result, type Translation, type Understood } from "../api";
 import { Callout, ErrorLine, Working } from "../components/Callout";
+import { Library } from "../components/Library";
 import { Readback } from "../components/Readback";
 import { parseRupees } from "../format";
 
@@ -28,6 +29,9 @@ export type BuildState = {
   costModel: string;
   start: string;
   end: string;
+  // The form's boxes (A4), as typed, and the strategy the server made of them.
+  edits: Record<string, string>;
+  adjusted: Understood | null;
 };
 
 export function emptyBuild(): BuildState {
@@ -43,6 +47,8 @@ export function emptyBuild(): BuildState {
     costModel: "",
     start: "",
     end: "",
+    edits: {},
+    adjusted: null,
   };
 }
 
@@ -72,6 +78,87 @@ function PromptGuide() {
         ))}
       </dl>
     </div>
+  );
+}
+
+type SpecShape = {
+  instrument: { timeframe: string; symbol: string; trade_as: string };
+  exit: { stop_pct: number | null; trailing_stop_pct: number | null; target_pct: number | null };
+};
+
+const CANDLES: [string, string][] = [
+  ["1m", "1-minute"],
+  ["3m", "3-minute"],
+  ["5m", "5-minute"],
+  ["15m", "15-minute"],
+  ["30m", "30-minute"],
+  ["1h", "Hourly"],
+  ["1d", "Daily"],
+];
+
+// The boxes start at the strategy's own values -- they are its settings, not
+// suggestions. The readback above is redrawn by the server from whatever they
+// hold, so it always says what will be tested.
+function AdjustBoxes({
+  spec,
+  edits,
+  onEdit,
+  busy,
+  error,
+}: {
+  spec: SpecShape;
+  edits: Record<string, string>;
+  onEdit: (key: string, value: string) => void;
+  busy: boolean;
+  error: string | null;
+}) {
+  const value = (key: string, current: number | string | null) =>
+    key in edits ? edits[key] : current == null ? "" : String(current);
+  return (
+    <details className="adjust" open={Object.keys(edits).length > 0}>
+      <summary>Change the numbers before testing</summary>
+      <div className="adjust-grid">
+        {spec.exit.stop_pct != null && (
+          <label className="field">
+            <span className="label">Stop loss (%)</span>
+            <input inputMode="decimal" value={value("stop_pct", spec.exit.stop_pct)} onChange={(e) => onEdit("stop_pct", e.target.value)} />
+          </label>
+        )}
+        {spec.exit.trailing_stop_pct != null && (
+          <label className="field">
+            <span className="label">Trailing stop (%)</span>
+            <input
+              inputMode="decimal"
+              value={value("trailing_stop_pct", spec.exit.trailing_stop_pct)}
+              onChange={(e) => onEdit("trailing_stop_pct", e.target.value)}
+            />
+          </label>
+        )}
+        <label className="field">
+          <span className="label">Target (%)</span>
+          <input
+            inputMode="decimal"
+            placeholder="None"
+            value={value("target_pct", spec.exit.target_pct)}
+            onChange={(e) => onEdit("target_pct", e.target.value)}
+          />
+          <span className="hint">Leave empty for no target.</span>
+        </label>
+        <label className="field">
+          <span className="label">Candles</span>
+          <select value={value("timeframe", spec.instrument.timeframe)} onChange={(e) => onEdit("timeframe", e.target.value)}>
+            {CANDLES.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {busy && <Working>Updating what will be tested...</Working>}
+      {error && <ErrorLine error={error} />}
+      <p className="hint">The test period is set in the next step.</p>
+    </details>
   );
 }
 
@@ -110,8 +197,46 @@ export function Build({
 
   const stale = state.checkedText !== null && state.text.trim() !== state.checkedText;
   const tr = stale ? null : state.translation;
-  const understood: Understood | null = tr?.understood ?? null;
+  const original: Understood | null = tr?.understood ?? null;
+  // What is shown and what is run: the form's version once a box is changed.
+  const understood: Understood | null = original ? (state.adjusted ?? original) : null;
   const confirmed = state.confirmed && !!understood;
+  const [adjusting, setAdjusting] = useState(false);
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+
+  // Re-apply every box to the strategy as first read, a moment after typing
+  // stops. Changing a box withdraws "Yes, that's right": it was given to the
+  // strategy as it was.
+  useEffect(() => {
+    if (!original || Object.keys(state.edits).length === 0) {
+      setAdjustError(null);
+      return;
+    }
+    let cancelled = false;
+    setAdjusting(true);
+    const timer = setTimeout(async () => {
+      try {
+        const u = await api.adjust({
+          spec: original.spec,
+          sources: original.sources,
+          answers: state.answers,
+          edits: state.edits,
+        });
+        if (!cancelled) {
+          set({ adjusted: u });
+          setAdjustError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setAdjustError(err instanceof ApiError ? err.message : "Could not apply that.");
+      } finally {
+        if (!cancelled) setAdjusting(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [state.edits, original]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function check(text: string, answers: Record<string, string>) {
     const clean = text.trim();
@@ -134,6 +259,8 @@ export function Build({
         draftAnswers: {},
         confirmed: false,
         fromSaved: false,
+        edits: {},
+        adjusted: null,
       }));
       requestAnimationFrame(() => step2Ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
     } catch (err) {
@@ -224,20 +351,13 @@ export function Build({
               rows={3}
             />
             {!state.text && <PromptGuide />}
-            {options && !state.text && (
-              <div className="examples" aria-label="Examples">
-                <span className="muted small" style={{ alignSelf: "center" }}>
-                  Or try:
-                </span>
-                {options.examples.map((ex) => (
-                  <button type="button" className="example" key={ex} onClick={() => {
-                      set({ text: ex });
-                      check(ex, {});
-                    }}>
-                    {ex}
-                  </button>
-                ))}
-              </div>
+            {!state.text && (
+              <Library
+                onPick={(sentence) => {
+                  set({ text: sentence });
+                  check(sentence, {});
+                }}
+              />
             )}
             <div className="btn-row" style={{ marginTop: 16 }}>
               <button className="btn" type="submit" disabled={checking || !state.text.trim()}>
@@ -279,6 +399,17 @@ export function Build({
                     <p className="muted">Read this carefully. If anything is not what you meant, change your description.</p>
                   )}
                   <Readback text={understood.readback} labels={understood.readback_labels} />
+                  {original && (
+                    <AdjustBoxes
+                      spec={original.spec as SpecShape}
+                      edits={state.edits}
+                      onEdit={(key, value) =>
+                        set({ edits: { ...state.edits, [key]: value }, confirmed: false })
+                      }
+                      busy={adjusting}
+                      error={adjustError}
+                    />
+                  )}
                   {tr.read_by_ai && (
                     <p className="ai-note">
                       An AI model helped read your sentence. The description above is written by the
@@ -287,7 +418,7 @@ export function Build({
                   )}
                   {!confirmed && (
                     <div className="btn-row" style={{ marginTop: 20 }}>
-                      <button className="btn" onClick={confirm}>
+                      <button className="btn" onClick={confirm} disabled={adjusting || !!adjustError}>
                         Yes, that's right
                       </button>
                       <button className="btn secondary" onClick={rephrase}>

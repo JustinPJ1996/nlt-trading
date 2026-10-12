@@ -113,3 +113,42 @@ def fibonacci_retracement(high: pd.Series, low: pd.Series, length: int = 60) -> 
     for ratio in (0.236, 0.382, 0.5, 0.618, 0.786):
         out[f"level_{int(ratio * 1000)}"] = swing_high - ratio * span
     return pd.DataFrame(out, index=high.index)
+
+
+def opening_range(high: pd.Series, low: pd.Series, minutes: int = 15) -> pd.DataFrame:
+    """The high and low of each session's first `minutes`, from when they are known.
+
+    Candles are labelled by their start, and a session's first candle is its
+    open. The range is the candles starting before open + `minutes`; it has a
+    value only on candles starting at or after that moment, because until the
+    last range candle has closed nobody knows the range. A candle inside the
+    range therefore sees nothing -- "breaks above the 15-minute high" cannot
+    fire on a candle that is still helping to set that high.
+
+    `minutes` must be a whole number of candles (checked before a strategy is
+    accepted, see `rules.timeframe_refusal`): on hourly candles the first candle
+    already runs past 15 minutes, and its high is not the 15-minute high.
+    """
+    idx = high.index
+    day = idx.normalize()
+    first = pd.Series(idx, index=idx).groupby(day).transform("min")
+    in_range = pd.Series(idx < (first + pd.Timedelta(minutes=minutes)).to_numpy(), index=idx)
+    range_high = high.where(in_range).groupby(day).transform("max")
+    range_low = low.where(in_range).groupby(day).transform("min")
+    ready = ~in_range
+    return pd.DataFrame({"high": range_high.where(ready), "low": range_low.where(ready)}, index=idx)
+
+
+def daily_average(close: pd.Series, length: int = 50, kind: str = "sma") -> pd.DataFrame:
+    """On an intraday chart: the previous day's close and its `length`-day average.
+
+    Built from each day's last close. Shifted one day, so a candle on day D sees
+    day D-1's values: today's daily close does not exist until the market
+    shuts, and using it mid-session would be reading the future.
+    """
+    from nlt.indicators import smoothing
+
+    daily = close.resample("D").last().dropna()
+    average = {"sma": smoothing.sma, "ema": smoothing.ema}[kind](daily, int(length))
+    prev = pd.DataFrame({"close": daily, "average": average}).shift(1)
+    return prev.reindex(close.index, method="ffill")

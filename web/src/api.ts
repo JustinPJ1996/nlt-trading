@@ -50,6 +50,8 @@ export type Understood = {
   readback: string;
   // One per body line of `readback`, in order; null when not known.
   readback_labels?: (ReadbackLabel | null)[] | null;
+  // Where each part came from, kept so form edits can keep the labels.
+  sources?: Record<string, ReadbackLabel> | null;
   name: string;
   symbol: string;
   timeframe: string;
@@ -80,6 +82,25 @@ export type Translation = {
   period: { words: string; start: string; end: string; note: string | null } | null;
 };
 
+// A ready-made strategy with its own tested numbers (recomputed daily).
+export type LibraryCard = {
+  title: string;
+  sentence: string;
+  error?: string;
+  name?: string;
+  return?: string;
+  holding_return?: string;
+  benchmark_name?: string;
+  win_rate?: string;
+  worst_drop?: string;
+  trades?: number;
+  first?: string;
+  last?: string;
+  serious_warning?: boolean;
+};
+
+export type Library = { tested_to: string; capital_text: string; cards: LibraryCard[] };
+
 export type Options = {
   examples: string[];
   cost_models: string[];
@@ -108,6 +129,7 @@ export type BacktestParams = {
   capital: number;
   capital_text: string;
   cost_model: string;
+  charges_applied?: string;
   start: string | null;
   end: string | null;
 };
@@ -130,6 +152,9 @@ export type Result = {
   // The same strategy run again with charges switched off. Null when no
   // charges were paid, so there is nothing to compare.
   before_after_charges: { label: string; before: string; after: string }[] | null;
+  // How the test was done (plain words, from the engine's own rules).
+  assumptions: string[];
+  weak_spots: string[];
   all_metrics: Record<string, number | null>;
   chart: ChartPoint[];
   trades: Trade[];
@@ -258,6 +283,13 @@ export const api = {
   options: () => call<Options>("/api/options"),
   translate: (text: string, answers: Record<string, string>) =>
     call<Translation>("/api/translate", { text, answers }),
+  library: () => call<Library>("/api/library"),
+  adjust: (body: {
+    spec: unknown;
+    sources: Record<string, ReadbackLabel> | null | undefined;
+    answers: Record<string, string>;
+    edits: Record<string, string>;
+  }) => call<Understood>("/api/adjust", body),
   backtest: (body: {
     spec: unknown;
     capital: number;

@@ -32,6 +32,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -281,6 +282,8 @@ def _spec_payload(
             if sources
             else None
         ),
+        # Sent back with form edits so the labels can be kept (see /api/adjust).
+        "sources": sources or None,
         "name": spec.name,
         "symbol": spec.instrument.symbol,
         "timeframe": spec.instrument.timeframe,
@@ -419,7 +422,8 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
     spec = bt.spec
     m = bt.metrics
     tf = spec.instrument.timeframe
-    notes = list(dict.fromkeys([*result.data_notes, *bt.warnings]))
+    spotted = set(result.weak_spots)
+    notes = [n for n in dict.fromkeys([*result.data_notes, *bt.warnings]) if n not in spotted]
     return {
         "result_id": result_id,
         "tested": _spec_payload(result.spec),
@@ -474,6 +478,8 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
             },
         ],
         "before_after_charges": _before_after(m, result.before_charges),
+        "assumptions": list(result.assumptions),
+        "weak_spots": list(result.weak_spots),
         "all_metrics": {
             k: (None if v is None or (isinstance(v, float) and pd.isna(v)) else v)
             for k, v in m.items()
@@ -531,6 +537,8 @@ async def backtest(request: Request) -> Response:
         "capital": capital,
         "capital_text": format_inr(capital),
         "cost_model": cost_label,
+        # What was really charged: shares and futures use their own charges.
+        "charges_applied": logic.applied_charges_label(spec, cost_label),
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
     }
@@ -555,6 +563,60 @@ async def save(request: Request) -> Response:
         cost_model_label=params["cost_model"],
     )
     return JSONResponse({"strategy_id": strategy_id, "name": result.spec.name})
+
+
+async def library(request: Request) -> Response:
+    """The ready-made strategy cards, recomputed at most once a day."""
+
+    def cards():
+        # One computation at a time: two first visitors of the day would
+        # otherwise both run every backtest.
+        with request.app.state.library_lock:
+            return logic.library_cards(request.app.state.library_path, dt.date.today())
+
+    return JSONResponse(await _run(cards))
+
+
+async def trades_csv(request: Request) -> Response:
+    cached = request.app.state.results.get(request.path_params["rid"])
+    if cached is None:
+        raise _BadRequest(
+            "That backtest is no longer in memory (the app was restarted). Run it again."
+        )
+    result, _params = cached
+    name = re.sub(r"[^A-Za-z0-9]+", "-", result.spec.name).strip("-").lower() or "trades"
+    return Response(
+        logic.trades_csv(result),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}-trades.csv"'},
+    )
+
+
+async def adjust(request: Request) -> Response:
+    """The confirmed strategy with the form's boxes applied, and its new readback.
+
+    Always applied to the strategy as first read, so the boxes can be changed
+    any number of times without drifting. The readback comes from the result,
+    never from the boxes, so it says what will really be tested.
+    """
+    body = await _json_body(request)
+    spec = _parse_spec(body.get("spec"))
+    edits = body.get("edits") or {}
+    answers = body.get("answers") or {}
+    sources = body.get("sources")
+    if not isinstance(edits, dict) or not isinstance(answers, dict):
+        raise _BadRequest("Those changes could not be read.")
+    if sources is not None and not (
+        isinstance(sources, dict)
+        and all(v in {"said", "worked_out", "default"} for v in sources.values())
+    ):
+        raise _BadRequest("Those changes could not be read.")
+    try:
+        adjusted, new_sources, typed = logic.adjust_spec(spec, edits, sources)
+    except logic.AdjustError as exc:
+        raise _BadRequest(str(exc)) from None
+    answers = {str(k): str(v) for k, v in answers.items()}
+    return JSONResponse(_spec_payload(adjusted, new_sources, {**answers, **typed}))
 
 
 # ---------------------------------------------------------------- strategies
@@ -982,6 +1044,9 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/options", options),
         r("/api/translate", translate, ["POST"]),
         r("/api/backtest", backtest, ["POST"]),
+        r("/api/adjust", adjust, ["POST"]),
+        r("/api/results/{rid}/trades.csv", trades_csv),
+        r("/api/library", library),
         r("/api/strategies", strategies),
         r("/api/strategies", save, ["POST"]),
         r("/api/strategies/{sid:int}/spec", strategy_spec),
@@ -1023,6 +1088,11 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
     app.state.store = store or Store()
     app.state.lockout = _Lockout()
     app.state.results = _ResultCache()
+    # Kept beside the price cache, outside the repo (data/ is not committed).
+    from nlt.data.source import CACHE_DIR
+
+    app.state.library_path = CACHE_DIR.parent / "library.json"
+    app.state.library_lock = threading.Lock()
     return app
 
 

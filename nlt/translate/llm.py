@@ -63,6 +63,7 @@ from nlt.spec.models import (
     StrategySpec,
 )
 from nlt.translate import rules
+from nlt.translate import spelling as rules_spelling
 from nlt.translate.rules import Question, TranslationResult
 
 logger = logging.getLogger(__name__)
@@ -639,9 +640,14 @@ def parse_llm(
 ) -> TranslationResult | None:
     """The model's reading, checked. `None` means "no usable AI answer" -- use the rules'."""
     answers = answers or {}
-    original = description.strip()
-    if not original:
+    typed = description.strip()
+    if not typed:
         return None
+    # Read the sentence with the same typo fixes the rules made; the recipe
+    # keeps the words as typed.
+    original, spelling_notes, spelling_question = rules_spelling.prepare(typed, answers)
+    if spelling_question is not None:
+        return TranslationResult(spec=None, questions=[spelling_question], source="rules")
     lowered = original.lower()
 
     # Deterministic policy first, on the raw sentence. These are the rules'
@@ -702,7 +708,7 @@ def parse_llm(
         for i in range(m.start(), m.end()):
             covered[i] = True
 
-    notes = [AI_NOTE]
+    notes = [AI_NOTE, *spelling_notes]
     if backtest_note:
         notes.append(backtest_note)
 
@@ -874,7 +880,7 @@ def parse_llm(
     try:
         spec = StrategySpec(
             name=rules._name_from(original),
-            description=original,
+            description=typed,
             instrument=Instrument(**instrument_kwargs),
             indicators=draft.indicators,
             direction=draft.direction,
@@ -893,6 +899,7 @@ def parse_llm(
             notes=notes,
         )
 
+    spec = spec.model_copy(update={"name": rules.strategy_name(spec)})
     sources = rules.recipe_sources(
         spec,
         symbol_said=bool(rules_kwargs.get("symbol") or by_field.get("instrument")),
