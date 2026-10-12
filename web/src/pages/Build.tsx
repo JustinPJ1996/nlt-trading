@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import { api, ApiError, type Options, type Result, type Translation, type Understood } from "../api";
 import { Callout, ErrorLine, Working } from "../components/Callout";
+import { Library } from "../components/Library";
 import { Readback } from "../components/Readback";
 import { parseRupees } from "../format";
 
@@ -350,20 +351,13 @@ export function Build({
               rows={3}
             />
             {!state.text && <PromptGuide />}
-            {options && !state.text && (
-              <div className="examples" aria-label="Examples">
-                <span className="muted small" style={{ alignSelf: "center" }}>
-                  Or try:
-                </span>
-                {options.examples.map((ex) => (
-                  <button type="button" className="example" key={ex} onClick={() => {
-                      set({ text: ex });
-                      check(ex, {});
-                    }}>
-                    {ex}
-                  </button>
-                ))}
-              </div>
+            {!state.text && (
+              <Library
+                onPick={(sentence) => {
+                  set({ text: sentence });
+                  check(sentence, {});
+                }}
+              />
             )}
             <div className="btn-row" style={{ marginTop: 16 }}>
               <button className="btn" type="submit" disabled={checking || !state.text.trim()}>

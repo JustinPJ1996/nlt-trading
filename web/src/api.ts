@@ -82,6 +82,25 @@ export type Translation = {
   period: { words: string; start: string; end: string; note: string | null } | null;
 };
 
+// A ready-made strategy with its own tested numbers (recomputed daily).
+export type LibraryCard = {
+  title: string;
+  sentence: string;
+  error?: string;
+  name?: string;
+  return?: string;
+  holding_return?: string;
+  benchmark_name?: string;
+  win_rate?: string;
+  worst_drop?: string;
+  trades?: number;
+  first?: string;
+  last?: string;
+  serious_warning?: boolean;
+};
+
+export type Library = { tested_to: string; capital_text: string; cards: LibraryCard[] };
+
 export type Options = {
   examples: string[];
   cost_models: string[];
@@ -263,6 +282,7 @@ export const api = {
   options: () => call<Options>("/api/options"),
   translate: (text: string, answers: Record<string, string>) =>
     call<Translation>("/api/translate", { text, answers }),
+  library: () => call<Library>("/api/library"),
   adjust: (body: {
     spec: unknown;
     sources: Record<string, ReadbackLabel> | null | undefined;

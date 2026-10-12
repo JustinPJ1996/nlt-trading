@@ -563,6 +563,18 @@ async def save(request: Request) -> Response:
     return JSONResponse({"strategy_id": strategy_id, "name": result.spec.name})
 
 
+async def library(request: Request) -> Response:
+    """The ready-made strategy cards, recomputed at most once a day."""
+
+    def cards():
+        # One computation at a time: two first visitors of the day would
+        # otherwise both run every backtest.
+        with request.app.state.library_lock:
+            return logic.library_cards(request.app.state.library_path, dt.date.today())
+
+    return JSONResponse(await _run(cards))
+
+
 async def trades_csv(request: Request) -> Response:
     cached = request.app.state.results.get(request.path_params["rid"])
     if cached is None:
@@ -1032,6 +1044,7 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/backtest", backtest, ["POST"]),
         r("/api/adjust", adjust, ["POST"]),
         r("/api/results/{rid}/trades.csv", trades_csv),
+        r("/api/library", library),
         r("/api/strategies", strategies),
         r("/api/strategies", save, ["POST"]),
         r("/api/strategies/{sid:int}/spec", strategy_spec),
@@ -1073,6 +1086,11 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
     app.state.store = store or Store()
     app.state.lockout = _Lockout()
     app.state.results = _ResultCache()
+    # Kept beside the price cache, outside the repo (data/ is not committed).
+    from nlt.data.source import CACHE_DIR
+
+    app.state.library_path = CACHE_DIR.parent / "library.json"
+    app.state.library_lock = threading.Lock()
     return app
 
 

@@ -1063,3 +1063,90 @@ def adjust_spec(
                 else:
                     sources[part] = SAID
     return adjusted, sources, typed
+
+
+# ------------------------------------------------------- ready-made strategies
+
+
+# The library (competitor review B4): ready-made strategies shown as cards with
+# their own tested numbers. Each must read with no questions and take trades at
+# the default capital (tests/test_library.py). Tapping one puts its sentence in
+# the box, where it can be changed like anything the user typed.
+LIBRARY: list[dict[str, str]] = [
+    {"title": "NIFTY oversold bounce", "sentence": EXAMPLE_STRATEGIES[0]},
+    {"title": "NIFTY moving-average crossover", "sentence": EXAMPLE_STRATEGIES[1]},
+    {"title": "RELIANCE oversold bounce", "sentence": EXAMPLE_STRATEGIES[2]},
+    {"title": "INFY EMA crossover", "sentence": EXAMPLE_STRATEGIES[3]},
+    {"title": "TCS trend follower", "sentence": EXAMPLE_STRATEGIES[4]},
+    {
+        "title": "MARUTI 20-day breakout",
+        "sentence": "Buy MARUTI when the close is above the highest high of the last 20 days. "
+        "Sell when the close falls below the lowest low of the last 10 days. Stop loss 3%. "
+        "Backtest the last 5 years.",
+    },
+]
+
+
+def library_card(entry: dict[str, str], tested_to: dt.date) -> dict:
+    """One card: the strategy run as the screen would run it, up to `tested_to`.
+
+    The holding return sits beside the strategy's, and serious warnings are
+    flagged on the card itself, so a card cannot look better than its report.
+    """
+    translation = translate_text(entry["sentence"])
+    card: dict = {"title": entry["title"], "sentence": entry["sentence"]}
+    if translation.spec is None or translation.period is None:
+        return {**card, "error": "This strategy could not be read."}
+    dates = period_dates(translation.period, tested_to)
+    start = dt.date.fromisoformat(dates["start"])
+    result = backtest_spec(translation.spec, start=start, end=tested_to, translation=translation)
+    if result.error:
+        return {**card, "error": result.error}
+    m = result.backtest.metrics
+    equity = result.backtest.equity
+    return {
+        **card,
+        "name": translation.spec.name,
+        "return": format_signed_pct(result.comparison.strategy_return_pct),
+        "holding_return": format_signed_pct(result.comparison.benchmark_return_pct),
+        "benchmark_name": result.benchmark.name,
+        "win_rate": format_pct(m.get("win_rate_pct")),
+        "worst_drop": format_pct(m.get("max_drawdown_pct")),
+        "trades": int(m.get("total_trades") or 0),
+        "first": f"{equity.index[0]:%d %b %Y}",
+        "last": f"{equity.index[-1]:%d %b %Y}",
+        "serious_warning": any(f.severity == "critical" for f in result.verdict.flags),
+    }
+
+
+def library_cards(
+    cache_path,
+    today: dt.date,
+    compute: Callable[[dict, dt.date], dict] | None = None,
+) -> dict:
+    """The cards, recomputed at most once a day and kept on disk between restarts.
+
+    Tested to the day before `today`: today's daily candle is still forming.
+    """
+    from pathlib import Path
+
+    compute = compute or library_card
+    path = Path(cache_path)
+    tested_to = today - dt.timedelta(days=1)
+    try:
+        cached = json.loads(path.read_text())
+        if cached.get("tested_to") == tested_to.isoformat() and len(cached["cards"]) == len(
+            LIBRARY
+        ):
+            return cached
+    except (OSError, ValueError, KeyError):
+        pass
+    cards = [compute(entry, tested_to) for entry in LIBRARY]
+    out = {
+        "tested_to": tested_to.isoformat(),
+        "capital_text": format_inr(DEFAULT_CAPITAL),
+        "cards": cards,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out))
+    return out

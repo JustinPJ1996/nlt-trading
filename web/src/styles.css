@@ -1390,3 +1390,76 @@ details[open] > summary::before {
   gap: 12px;
   margin: 12px 0 8px;
 }
+
+/* ------------------------------------------------------ ready-made strategies */
+
+.library {
+  margin-top: 18px;
+}
+
+.library-title {
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.library-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  font: inherit;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.library-card:hover {
+  border-color: var(--ink-2);
+}
+
+.library-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.library-card-title {
+  font-weight: 650;
+}
+
+.library-warning {
+  align-self: flex-start;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--critical-wash);
+  color: var(--critical);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.library-numbers {
+  display: flex;
+  gap: 14px;
+  font-size: 0.9rem;
+}
+
+.library-small {
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+
+.library-sentence {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
