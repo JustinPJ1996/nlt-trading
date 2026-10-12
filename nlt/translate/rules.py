@@ -937,7 +937,170 @@ def _build_generic_compare(op: str):
     return build
 
 
+def _stoch_kd_ref(ind: _Indicators, output: str) -> Ref:
+    ind.declare("stoch14", "stochastic", {"length": 14})
+    return Ref(name="stoch14", output=output)
+
+
+def _build_stoch_k_cross_d(op: str):
+    def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+        return Compare(op=op, left=_stoch_kd_ref(ind, "k"), right=_stoch_kd_ref(ind, "d"))
+
+    return build
+
+
+def _build_stoch_k_level(op: str):
+    def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+        return Compare(op=op, left=_stoch_kd_ref(ind, "k"), right=Const(value=float(m["level"])))
+
+    return build
+
+
+def _build_extreme_level(op: str, output: str):
+    """ "close above the highest high of the last 20 days" -- a Donchian channel edge."""
+
+    def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+        length = int(m.group("len"))
+        return Compare(op=op, left=Ref(name="close"), right=_extremes_ref(ind, length, output))
+
+    return build
+
+
+def _build_opening_range(op: str, output: str):
+    """ "breaks above the high of the first 15 minutes" -- only once those minutes end."""
+
+    def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+        minutes = int(m.group("min") or m.group("min2"))
+        ind_id = f"orange{minutes}"
+        ind.declare(ind_id, "opening_range", {"minutes": minutes})
+        return Compare(op=op, left=Ref(name="close"), right=Ref(name=ind_id, output=output))
+
+    return build
+
+
+def _build_daily_close_vs_average(op: str):
+    """ "the daily close is above the 50-day SMA" on an intraday chart.
+
+    Read as the previous day's close against its average, because today's
+    daily close does not exist yet; the readback says "previous day" out loud.
+    """
+
+    def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+        length = int(m.group("len"))
+        kind = "ema" if m.group("kind").startswith(("ema", "exp")) else "sma"
+        ind_id = f"daily_{kind}{length}"
+        ind.declare(ind_id, "daily_average", {"length": length, "kind": kind})
+        return Compare(
+            op=op, left=Ref(name=ind_id, output="close"), right=Ref(name=ind_id, output="average")
+        )
+
+    return build
+
+
+_BARS_WORD = r"(?:days?|bars?|candles?|sessions?)"
+_RANGE_HIGH_OR_LOW = (
+    r"(?:the\s*)?(?:{hl}\s*of\s*the\s*first\s*(?P<min>\d{{1,3}})\s*(?:minutes?|mins?)"
+    r"|first\s*(?P<min2>\d{{1,3}})\s*-?\s*min(?:ute)?s?\s*{hl})"
+)
+_DAILY_AVG_KIND = (
+    r"(?P<kind>sma|ema|simple\s*moving\s*average|exponential\s*moving\s*average"
+    r"|moving\s*average|average)"
+)
+_DAILY_CLOSE = r"(?:the\s*)?(?:daily|previous\s*day'?s?|yesterday'?s?)\s*close\s*(?:is\s*)?"
+
+_A6_PATTERNS: list[PatternRule] = [
+    PatternRule(
+        "stoch_k_cross_up_d",
+        re.compile(rf"(?:stochastic\s*)?%\s*k\s*(?:{_CROSS_UP_WORDS})\s*(?:the\s*)?%\s*d"),
+        _build_stoch_k_cross_d("crosses_above"),
+        "%K crosses above %D",
+    ),
+    PatternRule(
+        "stoch_k_cross_down_d",
+        re.compile(rf"(?:stochastic\s*)?%\s*k\s*(?:{_CROSS_DOWN_WORDS})\s*(?:the\s*)?%\s*d"),
+        _build_stoch_k_cross_d("crosses_below"),
+        "%K crosses below %D",
+    ),
+    PatternRule(
+        "stoch_k_up_level",
+        re.compile(rf"(?:stochastic\s*)?%\s*k\s*(?:{_CROSS_UP_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"),
+        _build_stoch_k_level("crosses_above"),
+        "%K goes above 80",
+    ),
+    PatternRule(
+        "stoch_k_down_level",
+        re.compile(
+            rf"(?:stochastic\s*)?%\s*k\s*(?:{_CROSS_DOWN_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"
+        ),
+        _build_stoch_k_level("crosses_below"),
+        "%K falls below 20",
+    ),
+    PatternRule(
+        "above_highest_high",
+        re.compile(
+            rf"{_OPT_PRICE}(?:is\s*)?(?:above|over)\s*(?:the\s*)?highest\s*high\s*"
+            rf"(?:of|in|over)\s*(?:the\s*)?(?:last|past|previous)\s*(?P<len>\d{{1,3}})\s*{_BARS_WORD}"
+        ),
+        _build_extreme_level("gt", "highest"),
+        "close is above the highest high of the last 20 days",
+    ),
+    PatternRule(
+        "below_lowest_low",
+        re.compile(
+            rf"{_OPT_PRICE}(?:{_CROSS_DOWN_WORDS})\s*(?:the\s*)?lowest\s*low\s*"
+            rf"(?:of|in|over)\s*(?:the\s*)?(?:last|past|previous)\s*(?P<len>\d{{1,3}})\s*{_BARS_WORD}"
+        ),
+        _build_extreme_level("crosses_below", "lowest"),
+        "close falls below the lowest low of the last 10 days",
+    ),
+    PatternRule(
+        "is_below_lowest_low",
+        re.compile(
+            rf"{_OPT_PRICE}(?:is\s*)?(?:below|under)\s*(?:the\s*)?lowest\s*low\s*"
+            rf"(?:of|in|over)\s*(?:the\s*)?(?:last|past|previous)\s*(?P<len>\d{{1,3}})\s*{_BARS_WORD}"
+        ),
+        _build_extreme_level("lt", "lowest"),
+        "close is below the lowest low of the last 10 days",
+    ),
+    PatternRule(
+        "breaks_opening_range_high",
+        re.compile(
+            rf"{_OPT_PRICE}(?:{_CROSS_UP_WORDS}|closes\s*above)\s*"
+            + _RANGE_HIGH_OR_LOW.format(hl="high")
+        ),
+        _build_opening_range("crosses_above", "high"),
+        "breaks above the high of the first 15 minutes",
+    ),
+    PatternRule(
+        "breaks_opening_range_low",
+        re.compile(
+            rf"{_OPT_PRICE}(?:{_CROSS_DOWN_WORDS}|closes\s*below)\s*"
+            + _RANGE_HIGH_OR_LOW.format(hl="low")
+        ),
+        _build_opening_range("crosses_below", "low"),
+        "breaks below the low of the first 15 minutes",
+    ),
+    PatternRule(
+        "daily_close_above_average",
+        re.compile(
+            rf"{_DAILY_CLOSE}(?:above|over)\s*(?:the\s*|its\s*)?(?P<len>\d{{1,3}})\s*-?\s*day\s*{_DAILY_AVG_KIND}"
+        ),
+        _build_daily_close_vs_average("gt"),
+        "the daily close is above the 50-day SMA",
+    ),
+    PatternRule(
+        "daily_close_below_average",
+        re.compile(
+            rf"{_DAILY_CLOSE}(?:below|under)\s*(?:the\s*|its\s*)?(?P<len>\d{{1,3}})\s*-?\s*day\s*{_DAILY_AVG_KIND}"
+        ),
+        _build_daily_close_vs_average("lt"),
+        "the daily close is below the 50-day SMA",
+    ),
+]
+
+
 CONDITION_PATTERNS: list[PatternRule] = [
+    *_A6_PATTERNS,
     PatternRule(
         "rsi_crosses_below",
         re.compile(rf"rsi{_LEN}\s*(?:{_CROSS_DOWN_WORDS})\s*(?P<level>\d+(?:\.\d+)?)"),
@@ -1941,7 +2104,53 @@ def _is_universe_symbol(symbol: str) -> bool:
     return is_universe(symbol)
 
 
+_TIMEFRAME_MINUTES = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
+
+
+def _intraday_only_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question | None:
+    """The opening range and a daily average on an intraday chart, where they cannot work.
+
+    On daily candles a whole session is one candle: there is no "first 15
+    minutes" inside it, and a daily average is just an ordinary average. And
+    the opening range must be a whole number of candles -- the first hourly
+    candle runs past 15 minutes, so its high is not the 15-minute high.
+    """
+    timeframe = instrument_kwargs.get("timeframe", "1d")
+    why = "Running it anyway would test something other than what was described."
+    for d in indicators:
+        if d["type"] == "opening_range":
+            minutes = int((d.get("params") or {}).get("minutes", 15))
+            if timeframe == "1d":
+                text = (
+                    f"The first {minutes} minutes only exist on intraday candles; on daily "
+                    "candles a whole session is a single candle. Say e.g. '5-minute candles'."
+                )
+            elif minutes % _TIMEFRAME_MINUTES[timeframe]:
+                text = (
+                    f"The first {minutes} minutes do not line up with {timeframe} candles: the "
+                    f"first candle already runs past them. Use candles of {minutes} minutes or less "
+                    f"that divide it evenly, e.g. 5-minute candles."
+                )
+            else:
+                continue
+            return Question(text=text, why=why, suggestion=None, field="instrument.timeframe")
+        if d["type"] == "daily_average" and timeframe == "1d":
+            return Question(
+                text=(
+                    "A daily average on a daily chart is just an ordinary moving average. Say "
+                    "e.g. 'close above the 50-day SMA' instead."
+                ),
+                why=why,
+                suggestion=None,
+                field="instrument.timeframe",
+            )
+    return None
+
+
 def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question | None:
+    intraday_only = _intraday_only_refusal(indicators, instrument_kwargs)
+    if intraday_only is not None:
+        return intraday_only
     if not any(d["type"] == "vwap" for d in indicators):
         return None
 

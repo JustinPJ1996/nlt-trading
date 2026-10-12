@@ -736,6 +736,8 @@ def _warn_on_cross_session_lookback(
     """
     longest = 0
     for ind in spec.indicators:
+        if ind.type == "daily_average":
+            continue  # counted in days on purpose; it does not cross gaps candle by candle
         for key, value in ind.resolved_params().items():
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 continue

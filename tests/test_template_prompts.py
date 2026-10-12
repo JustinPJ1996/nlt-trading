@@ -34,7 +34,9 @@ _NEVER_A_STRATEGY = {"screen", "options", "no-stop", "unsupported-stop"}
 _EXPECTED_RULES_SPECS: list[int] = []
 # Grew from 0 when the test period, "hourly" and "hold overnight" were read
 # (2026-10-12). Each readback was checked against its sentence by hand.
-_EXPECTED_AI_SPECS = [22, 23, 30, 38, 39, 42]
+# 29 joined when the daily average on an intraday chart was built (A6), its
+# readback checked by hand: it says "the previous day's close" out loud.
+_EXPECTED_AI_SPECS = [22, 23, 29, 30, 38, 39, 42]
 
 
 def _facts(spec) -> dict:

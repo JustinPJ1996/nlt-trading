@@ -47,7 +47,13 @@ def longest_lookback(spec: StrategySpec) -> int:
     signal line is averaged over values that already needed the slow length.
     """
     longest = 0
+    per_session = _BARS_PER_SESSION.get(spec.instrument.timeframe, 1)
     for ind in spec.indicators:
+        if ind.type == "daily_average":
+            # Its length is in days, whatever the candles: that many sessions.
+            length = int(ind.resolved_params().get("length", 50))
+            longest = max(longest, length * per_session)
+            continue
         total = 0
         for key, value in ind.resolved_params().items():
             if isinstance(value, bool) or not isinstance(value, (int, float)):

@@ -1031,7 +1031,7 @@ def adjust_spec(
         if timeframe != "1d" and instrument.is_universe:
             raise AdjustError("A basket of stocks can only be tested on daily candles.")
         instrument = instrument.model_copy(update={"timeframe": timeframe})
-        indicators = [{"type": i.type} for i in spec.indicators]
+        indicators = [{"type": i.type, "params": dict(i.params)} for i in spec.indicators]
         refusal = _vwap_refusal(
             indicators,
             {"symbol": instrument.symbol, "trade_as": instrument.trade_as, "timeframe": timeframe},

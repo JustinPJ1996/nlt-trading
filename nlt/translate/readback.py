@@ -132,8 +132,36 @@ _OUTPUT_WORDS = {
 }
 
 
+def _special_ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> str | None:
+    """Indicators whose plain meaning is not "label(params) output".
+
+    The daily average says "previous day" out loud because that is what it
+    reads: today's daily close is not known until the market shuts.
+    """
+    spec = indicators.get(ref.name)
+    if spec is None:
+        return None
+    params = spec.resolved_params()
+    if spec.type == "rolling_extremes" and ref.output in ("highest", "lowest"):
+        # Excludes the current candle (see `levels.rolling_extremes`), hence "last".
+        words = "highest high" if ref.output == "highest" else "lowest low"
+        return f"the {words} of the last {_plural(int(params['length']), _bar_word(timeframe))}"
+    if spec.type == "opening_range" and ref.output in ("high", "low"):
+        return f"the {ref.output} of the first {int(params['minutes'])} minutes"
+    if spec.type == "daily_average":
+        if ref.output == "close":
+            return "the previous day's close"
+        if ref.output == "average":
+            kind = "exponential average" if params.get("kind") == "ema" else "average"
+            return f"the {int(params['length'])}-day {kind} of daily closes, up to the previous day"
+    return None
+
+
 def _ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> str:
-    if ref.name in _PRICE_WORDS:
+    special = _special_ref_desc(ref, indicators, timeframe)
+    if special is not None:
+        text = special
+    elif ref.name in _PRICE_WORDS:
         text = _PRICE_WORDS[ref.name]
     else:
         label, _d = _indicator_desc(ref.name, indicators, timeframe)

@@ -373,6 +373,28 @@ _add(
 )
 _add(
     IndicatorDef(
+        name="opening_range",
+        fn=lambda df, minutes=15: levels.opening_range(df.high, df.low, int(minutes)),
+        inputs=("high", "low"),
+        outputs=("high", "low"),
+        params={"minutes": 15},
+        label="Opening Range",
+        description="High and low of each session's first `minutes`, known only once they end.",
+    )
+)
+_add(
+    IndicatorDef(
+        name="daily_average",
+        fn=lambda df, length=50, kind="sma": levels.daily_average(df.close, int(length), kind),
+        inputs=("close",),
+        outputs=("close", "average"),
+        params={"length": 50, "kind": "sma"},
+        label="Daily Average",
+        description="Previous day's close and its N-day average, for intraday charts.",
+    )
+)
+_add(
+    IndicatorDef(
         name="fibonacci",
         fn=lambda df, length=60: levels.fibonacci_retracement(df.high, df.low, length),
         inputs=("high", "low"),
