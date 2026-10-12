@@ -289,6 +289,10 @@ def _exit_lines(spec: StrategySpec, indicators: dict[str, dict], timeframe: str)
     # plausible is worse than no line.
     if spec.schedule.intraday and timeframe != "1d":
         lines.append(f"Square off at {spec.schedule.square_off.strftime('%H:%M')} if still open")
+    elif timeframe != "1d":
+        # Said out loud because on minute or hourly candles squaring off is the
+        # usual habit; a position carried overnight can gap straight past its stop.
+        lines.append("Hold overnight: no square-off before the close")
     if spec.instrument.is_future:
         lines.append("Close at the end of the contract's expiry day if still open")
     return lines

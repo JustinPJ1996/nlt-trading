@@ -29,8 +29,12 @@ _REPLIES_PATH = FIXTURES / "llm_template_replies.json"
 # opening range low" is not something the engine can hold yet.
 _NEVER_A_STRATEGY = {"screen", "options", "no-stop", "unsupported-stop"}
 
-# Pinned so coverage cannot drift silently. Raise it deliberately.
+# Pinned so coverage cannot drift silently. Raise it deliberately, after reading
+# each new readback against its sentence by hand.
 _EXPECTED_RULES_SPECS: list[int] = []
+# Grew from 0 when the test period, "hourly" and "hold overnight" were read
+# (2026-10-12). Each readback was checked against its sentence by hand.
+_EXPECTED_AI_SPECS = [22, 23, 30, 38, 39, 42]
 
 
 def _facts(spec) -> dict:
@@ -109,3 +113,17 @@ def test_no_wrong_reads_among_the_template_prompts_on_the_ai_path() -> None:
     wrong = [(c["n"], c["name"], _wrong(c, r)) for c, r in _replayed()]
     wrong = [w for w in wrong if w[2]]
     assert not wrong, wrong
+
+
+def test_pinned_template_coverage_on_the_ai_path() -> None:
+    produced = [c["n"] for c, r in _replayed() if r.spec is not None]
+    assert produced == _EXPECTED_AI_SPECS, (
+        f"template prompts the AI path now reads: {produced}. Check each readback by hand."
+    )
+
+
+def test_ai_path_template_periods_become_the_test_period() -> None:
+    for case, result in _replayed():
+        if result.spec is not None:
+            assert result.period is not None, case["name"]
+            assert result.period.words in case["text"].lower(), case["name"]

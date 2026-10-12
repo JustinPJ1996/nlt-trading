@@ -459,3 +459,41 @@ def test_positions_flow_from_fill_to_exit_order_to_close_now(authed, no_prices) 
     assert authed.post(f"/api/orders/positions/{pos['id']}/close", json={}).status_code == 200
     again = authed.post(f"/api/orders/positions/{pos['id']}/close", json={})
     assert again.status_code == 400 and "already under way" in again.json()["error"]
+
+
+# ------------------------------------------------------------- the test period
+
+
+def test_a_test_period_in_the_sentence_comes_back_as_dates(authed) -> None:
+    body = authed.post("/api/translate", json={"text": RSI + ", backtest the last 2 years"}).json()
+    assert body["understood"] is not None
+    period = body["period"]
+    assert period["words"] == "backtest the last 2 years"
+    start, end = pd.Timestamp(period["start"]), pd.Timestamp(period["end"])
+    assert end.date() == pd.Timestamp.today().date()
+    assert end - pd.DateOffset(years=2) == start
+
+
+def test_no_test_period_leaves_the_dates_alone(authed) -> None:
+    assert authed.post("/api/translate", json={"text": RSI}).json()["period"] is None
+
+
+def test_period_dates_never_start_before_trusted_history() -> None:
+    import datetime as dt
+
+    from nlt.data.source import DATA_FLOOR
+    from nlt.translate.rules import BacktestPeriod
+
+    today = dt.date(2026, 10, 12)
+    out = logic.period_dates(
+        BacktestPeriod(words="the last 10 years", last=10, unit="years"), today
+    )
+    assert out["start"] == DATA_FLOOR.isoformat()
+    assert out["note"] and "starts on" in out["note"]
+    year = logic.period_dates(BacktestPeriod(words="2024", year=2024), today)
+    assert (year["start"], year["end"], year["note"]) == ("2024-01-01", "2024-12-31", None)
+    this_year = logic.period_dates(BacktestPeriod(words="2026", year=2026), today)
+    assert this_year["end"] == "2026-10-12"
+    assert logic.period_dates(BacktestPeriod(words="2027", year=2027), today) is None
+    months = logic.period_dates(BacktestPeriod(words="6 months", last=6, unit="months"), today)
+    assert months["start"] == "2026-04-12"

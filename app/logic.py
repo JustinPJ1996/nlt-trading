@@ -33,6 +33,7 @@ from nlt.costs.charges import (
     ZeroCharges,
 )
 from nlt.costs.charges import charge_fn as _adapt_charge_fn
+from nlt.data.source import DATA_FLOOR
 from nlt.data.yahoo import YahooSource
 from nlt.engine.backtest import BacktestResult, run_backtest
 from nlt.engine.basket import BasketResult, run_basket_backtest
@@ -41,7 +42,7 @@ from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 from nlt.translate.llm import translate
 from nlt.translate.readback import describe, format_inr
-from nlt.translate.rules import Question, TranslationResult
+from nlt.translate.rules import BacktestPeriod, Question, TranslationResult
 
 try:  # pragma: no cover -- exercised once nlt.report exists
     from nlt.report.benchmark import Benchmark, Comparison, buy_and_hold, compare
@@ -257,6 +258,29 @@ def translate_text(text: str, answers: dict[str, str] | None = None) -> Translat
             ],
             source="rules",
         )
+
+
+def period_dates(period: BacktestPeriod, today: dt.date) -> dict | None:
+    """The dates a test period from the sentence means, as of `today`.
+
+    None when there is nothing to test yet (a year still in the future).
+    Never earlier than the history we trust (`DATA_FLOOR`), and it says so.
+    """
+    if period.year is not None:
+        start, end = dt.date(period.year, 1, 1), min(dt.date(period.year, 12, 31), today)
+    else:
+        offset = pd.DateOffset(**{period.unit: period.last})
+        start, end = (pd.Timestamp(today) - offset).date(), today
+    if start >= today:
+        return None
+    note = None
+    if start < DATA_FLOOR:
+        start = DATA_FLOOR
+        note = (
+            f"History here starts on {DATA_FLOOR:%d %b %Y}, so the test starts there "
+            f'rather than at the start of "{period.words}".'
+        )
+    return {"words": period.words, "start": start.isoformat(), "end": end.isoformat(), "note": note}
 
 
 def answers_from_questions(questions: list[Question], values: dict[str, str]) -> dict[str, str]:

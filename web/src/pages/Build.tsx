@@ -97,6 +97,8 @@ export function Build({
       const t = await api.translate(clean, answers);
       setState((s) => ({
         ...s,
+        // "Backtest the last 2 years" sets the dates; they stay editable below.
+        ...(t.period ? { start: t.period.start, end: t.period.end } : {}),
         checkedText: clean,
         translation: t,
         answers: t.answers,
@@ -346,6 +348,12 @@ export function Build({
                   <input type="date" value={state.end} onChange={(e) => set({ end: e.target.value })} />
                 </label>
               </div>
+              {tr?.period && (
+                <p className="hint" style={{ marginTop: 12 }}>
+                  Dates set from your words: “{tr.period.words}”. You can change them.
+                  {tr.period.note && <> {tr.period.note}</>}
+                </p>
+              )}
               {dateProblem && (
                 <div style={{ marginTop: 12 }}>
                   <ErrorLine error={dateProblem} />

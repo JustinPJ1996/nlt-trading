@@ -297,6 +297,9 @@ async def translate(request: Request) -> Response:
             "notes": list(tr.notes),
             "read_by_ai": tr.source != "rules",
             "answers": answers,
+            "period": (
+                logic.period_dates(tr.period, dt.date.today()) if tr.period is not None else None
+            ),
         }
     )
 

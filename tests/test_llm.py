@@ -499,3 +499,26 @@ def test_every_ai_recipe_among_the_70_states_a_stop_the_user_gave() -> None:
     for case, result in _replayed_results():
         if result.spec is not None:
             assert result.spec.exit.has_stop, case["text"]
+
+
+# ------------------------------------------- bar size, overnight, test period
+
+
+def test_ai_path_hold_overnight_on_hourly_bars() -> None:
+    text = SENTENCE + ", on hourly bars, hold overnight. Backtest the last 2 years."
+    result = llm.parse_llm(text, transport=Scripted(GOOD))
+    assert result.spec is not None, result.questions
+    assert result.spec.instrument.timeframe == "1h"
+    assert result.spec.schedule.intraday is False
+    assert (result.period.last, result.period.unit) == (2, "years")
+
+
+def test_ai_path_hold_overnight_and_a_square_off_is_a_question() -> None:
+    text = SENTENCE + ", on hourly bars, hold overnight, square off at 15:15"
+    reply = _variant(
+        square_off="15:15",
+        evidence=[*GOOD["evidence"], {"field": "square_off", "quote": "square off at 15:15"}],
+    )
+    result = llm.parse_llm(text, transport=Scripted(reply))
+    assert result.spec is None
+    assert _fields(result) == {"schedule.intraday"}

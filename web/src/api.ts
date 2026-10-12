@@ -59,6 +59,8 @@ export type Translation = {
   notes: string[];
   read_by_ai: boolean;
   answers: Record<string, string>;
+  // The test period the sentence asked for, already turned into dates.
+  period: { words: string; start: string; end: string; note: string | null } | null;
 };
 
 export type Options = {

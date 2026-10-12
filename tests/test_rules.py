@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from nlt.spec.models import StrategySpec
+from nlt.translate.readback import describe
 from nlt.translate.rules import CONDITION_PATTERNS, _known_tickers, parse
 
 FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "strategies.json").read_text())
@@ -1084,14 +1085,87 @@ def test_inline_period_still_honours_crossing_vs_state(text: str, expected_op: s
 
 
 @pytest.mark.parametrize(
-    "phrase",
-    ["backtest this for the last 3 months", "backtest for 2024", "full year 2024"],
+    ("phrase", "last", "unit", "year"),
+    [
+        ("backtest this for the last 3 months", 3, "months", None),
+        ("backtest the last 2 years", 2, "years", None),
+        ("backtest the past 1 year", 1, "years", None),
+        ("backtest over the last 6 months", 6, "months", None),
+        ("backtest for 2024", None, None, 2024),
+        ("full year 2024", None, None, 2024),
+    ],
 )
-def test_trailing_backtest_window_does_not_block_parsing(phrase: str) -> None:
+def test_a_test_period_is_read_and_kept_off_the_spec(phrase, last, unit, year) -> None:
+    """Tradl's prompts all end "Backtest the last N years"; it used to block them."""
     result = parse(f"buy itc when rsi cracks 30, stop 1%, target 2%. {phrase}.")
     assert result.spec is not None, result.questions
-    assert any("backtest" in n.lower() for n in result.notes)
     assert result.unparsed == []
+    assert (result.period.last, result.period.unit, result.period.year) == (last, unit, year)
+    without = parse("buy itc when rsi cracks 30, stop 1%, target 2%.").spec
+    keep = {"name", "description"}
+    assert result.spec.model_dump(exclude=keep) == without.model_dump(exclude=keep)
+
+
+def test_a_vague_test_period_sets_no_dates_but_is_named() -> None:
+    result = parse("buy itc when rsi cracks 30, stop 1%, target 2%, for last year")
+    assert result.spec is not None
+    assert result.period is None
+    assert any("for last year" in n for n in result.notes)
+
+
+def test_a_lookback_inside_a_rule_is_not_a_test_period() -> None:
+    """ "The highest high of the last 20 days" is part of the entry, not the dates."""
+    result = parse("buy itc when close is above the highest high of the last 20 days, stop 1%")
+    assert result.period is None
+
+
+# ------------------------------------------------------- bar size and overnight
+
+_BASE = "buy RELIANCE when rsi crosses below 30 on {}, target 2%, stop loss 1%"
+
+
+@pytest.mark.parametrize(
+    ("words", "timeframe"),
+    [
+        ("hourly bars", "1h"),
+        ("hourly candles", "1h"),
+        ("hourly chart", "1h"),
+        ("60 minute candles", "1h"),
+        ("1 hour candles", "1h"),
+        ("15-minute bars", "15m"),
+        ("daily bars", "1d"),
+    ],
+)
+def test_bar_size_wording(words, timeframe) -> None:
+    result = parse(_BASE.format(words))
+    assert result.spec is not None, result.questions
+    assert result.spec.instrument.timeframe == timeframe
+
+
+def test_an_hour_long_average_is_not_a_bar_size() -> None:
+    result = parse("buy RELIANCE when close is above 20-hour ema, target 2%, stop loss 1%")
+    assert result.spec is None or result.spec.instrument.timeframe == "1d"
+
+
+def test_hold_overnight_turns_off_the_square_off_and_says_so() -> None:
+    result = parse(_BASE.format("15 minute candles") + ", hold overnight")
+    assert result.spec is not None, result.questions
+    assert result.spec.schedule.intraday is False
+    text = describe(result.spec)
+    assert "Hold overnight" in text
+    assert "Square off" not in text
+
+
+def test_without_hold_overnight_minute_bars_still_square_off() -> None:
+    result = parse(_BASE.format("15 minute candles"))
+    assert result.spec.schedule.intraday is True
+    assert "Square off at 15:15" in describe(result.spec)
+
+
+def test_hold_overnight_and_square_off_together_is_a_question() -> None:
+    result = parse(_BASE.format("15 minute candles") + ", hold overnight, square off at 15:15")
+    assert result.spec is None
+    assert [q.field for q in result.questions] == ["schedule.intraday"]
 
 
 # --------------------------------------------------------------- determinism

@@ -81,6 +81,20 @@ class Question:
     field: str
 
 
+@dataclass(frozen=True)
+class BacktestPeriod:
+    """A test period in the user's own terms: the last N units, or one calendar year.
+
+    Relative, not dated: the screen turns it into dates on the day it runs, so
+    the reader gives the same answer every day.
+    """
+
+    words: str
+    last: int | None = None
+    unit: str | None = None  # "days" | "weeks" | "months" | "years"
+    year: int | None = None
+
+
 @dataclass
 class TranslationResult:
     spec: StrategySpec | None
@@ -88,6 +102,9 @@ class TranslationResult:
     notes: list[str] = field(default_factory=list)
     unparsed: list[str] = field(default_factory=list)
     source: str = "rules"
+    # The test period the user asked for ("backtest the last 2 years"), kept
+    # off the spec on purpose -- it belongs to a run, not to the strategy.
+    period: BacktestPeriod | None = None
 
 
 @dataclass
@@ -1588,11 +1605,12 @@ _MINUTE_TIMEFRAME = re.compile(
     r"(?P<n>\d{1,3})\s*-?\s*min(?:ute)?s?\s*(?:candles?|chart|bars?|timeframe)"
 )
 _HOUR_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*hours?\s*(?:candles?|chart|bars?|timeframe)")
+_HOURLY_TIMEFRAME = re.compile(r"\bhourly\b(?:\s*(?:candles?|charts?|bars?|timeframe))?")
 _DAY_TIMEFRAME = re.compile(r"(?P<n>\d{1,2})\s*-?\s*days?\s*timeframe")
-_DAILY_TIMEFRAME = re.compile(r"\bdaily\b")
+_DAILY_TIMEFRAME = re.compile(r"\bdaily\b(?:\s*(?:candles?|charts?|bars?|timeframe))?")
 _INTRADAY_TIMEFRAME = re.compile(r"\bintraday\b")
 
-_SUPPORTED_MINUTES = {"1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m"}
+_SUPPORTED_MINUTES = {"1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m", "60": "1h"}
 
 
 def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
@@ -1631,6 +1649,11 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
                     "Only 1-hour candles are available above minute bars."
                 ),
             )
+        return text, "1h", None
+
+    m = _HOURLY_TIMEFRAME.search(text)
+    if m:
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
         return text, "1h", None
 
     m = _DAY_TIMEFRAME.search(text)
@@ -1679,31 +1702,87 @@ def _extract_timeframe(text: str) -> tuple[str, str | None, str | None]:
 # is recognised, stripped so it stops blocking, and named in a note so nothing
 # the user typed is silently dropped on the floor.
 
+_PERIOD_UNIT = r"(?P<unit>days?|weeks?|months?|years?)"
 _BACKTEST_WINDOW_PATTERNS = [
     re.compile(
-        r"backtest\s*(?:this\s*)?for\s*(?:the\s*)?last\s*\d+\s*"
-        r"(?:days?|weeks?|months?|years?)\b"
+        r"backtest\s*(?:it\s*|this\s*)?(?:for\s*|on\s*|over\s*)?(?:the\s*)?(?:last|past)\s*"
+        r"(?P<n>\d+)\s*" + _PERIOD_UNIT + r"\b"
     ),
-    re.compile(r"backtest\s*(?:for|on)\s*\d{4}\b"),
-    re.compile(r"\bfor\s*(?:the\s*)?last\s*\d+\s*(?:days?|weeks?|months?|years?)\b"),
-    re.compile(r"\bfull\s*year\s*\d{4}\b"),
+    re.compile(r"backtest\s*(?:it\s*|this\s*)?(?:for|on|in)\s*(?P<year>\d{4})\b"),
+    re.compile(r"\bfor\s*(?:the\s*)?last\s*(?P<n>\d+)\s*" + _PERIOD_UNIT + r"\b"),
+    re.compile(r"\bfull\s*year\s*(?P<year>\d{4})\b"),
+    # "For last year" could mean the last calendar year or the last twelve
+    # months; it is understood but sets no dates.
     re.compile(r"\bfor\s*last\s*year\b"),
 ]
 
 
-def _extract_backtest_window(text: str) -> tuple[str, str | None]:
+def _extract_backtest_window(text: str) -> tuple[str, str | None, BacktestPeriod | None]:
+    """Returns (text, note or None, the period or None).
+
+    Exactly one clear period ("the last 2 years", "2024") comes back as a
+    `BacktestPeriod` for the run screen to turn into dates. Anything else that
+    was recognised is only named in a note, so it is not silently dropped.
+    """
     found: list[str] = []
+    periods: list[BacktestPeriod] = []
     for pat in _BACKTEST_WINDOW_PATTERNS:
         m = pat.search(text)
         if m:
-            found.append(text[m.start() : m.end()].strip())
+            words = text[m.start() : m.end()].strip()
+            found.append(words)
+            groups = m.groupdict()
+            if groups.get("n"):
+                unit = groups["unit"] if groups["unit"].endswith("s") else groups["unit"] + "s"
+                periods.append(BacktestPeriod(words=words, last=int(groups["n"]), unit=unit))
+            elif groups.get("year"):
+                periods.append(BacktestPeriod(words=words, year=int(groups["year"])))
             text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
     if not found:
-        return text, None
-    return text, (
-        "The description mentioned a backtest date range (" + "; ".join(found) + ") -- "
-        "this platform has no field for that on the strategy itself, so it was left out; "
-        "set the backtest window separately when you actually run it."
+        return text, None, None
+    if len(found) == 1 and len(periods) == 1 and periods[0].last != 0:
+        return text, None, periods[0]
+    return (
+        text,
+        (
+            "The description mentioned a backtest date range (" + "; ".join(found) + ") -- "
+            "it was not clear enough to set the dates from, so set the test period "
+            "yourself when you run it."
+        ),
+        None,
+    )
+
+
+# ---------------------------------------------------------------- holding overnight
+#
+# On intraday bars a strategy squares off before the close unless told
+# otherwise. "Hold overnight" is the user telling us otherwise. It is only a
+# fact about the schedule: on daily bars every position is held overnight
+# anyway, and the words are simply understood.
+
+_OVERNIGHT_PATTERN = re.compile(
+    r"\b(?:hold|holding|carry|keep)\s*(?:it\s*|them\s*|the\s*position\s*|positions?\s*|"
+    r"trades?\s*)?(?:overnight|forward)\b"
+)
+
+
+def _extract_overnight(text: str) -> tuple[str, bool]:
+    text, m = _consume(text, _OVERNIGHT_PATTERN)
+    return text, m is not None
+
+
+def _overnight_conflict_question() -> Question:
+    return Question(
+        text=(
+            "You asked to hold overnight and also to square off the same day. "
+            "Which one should it do?"
+        ),
+        why=(
+            "Holding overnight and squaring off before the close are opposite rules; "
+            "picking one for you could test a strategy you never described."
+        ),
+        suggestion=None,
+        field="schedule.intraday",
     )
 
 
@@ -1877,7 +1956,9 @@ _MCX_NO_ENTRY_AFTER = dt.time(23, 0)
 _MCX_SQUARE_OFF = dt.time(23, 15)
 
 
-def _schedule_kwargs(instrument_kwargs: dict, square_off, intraday) -> dict:
+def _schedule_kwargs(
+    instrument_kwargs: dict, square_off, intraday, *, overnight: bool = False
+) -> dict:
     """Schedule fields for the spec: what the user said, plus the market's defaults."""
     from nlt.data.futures import is_commodity
 
@@ -1886,6 +1967,8 @@ def _schedule_kwargs(instrument_kwargs: dict, square_off, intraday) -> dict:
         out["square_off"] = square_off
     if intraday:
         out["intraday"] = True
+    if overnight:
+        out["intraday"] = False
     if instrument_kwargs.get("trade_as") == "future" and is_commodity(
         instrument_kwargs.get("symbol", "")
     ):
@@ -1997,9 +2080,14 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if timeframe:
         instrument_kwargs["timeframe"] = timeframe
 
-    text, backtest_note = _extract_backtest_window(text)
+    text, backtest_note, period = _extract_backtest_window(text)
     if backtest_note:
         notes.append(backtest_note)
+    text, overnight = _extract_overnight(text)
+    if overnight and rest_exits.get("_intraday"):
+        return TranslationResult(
+            spec=None, questions=[_overnight_conflict_question()], notes=notes, source="rules"
+        )
 
     text, percent_exits = _extract_percent_exits(text)
     text, exit_condition, exit_cond_inds, exit_cond_notes, exit_ambiguous = _extract_exit_condition(
@@ -2128,7 +2216,10 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         exit_kwargs["max_bars_held"] = max_bars_held
 
     schedule_kwargs = _schedule_kwargs(
-        instrument_kwargs, rest_exits.get("_square_off"), rest_exits.get("_intraday")
+        instrument_kwargs,
+        rest_exits.get("_square_off"),
+        rest_exits.get("_intraday"),
+        overnight=overnight,
     )
 
     name = _name_from(original)
@@ -2161,7 +2252,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
 
     return TranslationResult(
-        spec=spec, questions=[], notes=notes, unparsed=unparsed, source="rules"
+        spec=spec, questions=[], notes=notes, unparsed=unparsed, source="rules", period=period
     )
 
 
