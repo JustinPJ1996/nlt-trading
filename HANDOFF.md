@@ -154,6 +154,60 @@ exit at +2%"* returns a question, because it has no stop loss — deliberate, an
 better than the original criterion. And a good deal of Phase 2/3 groundwork
 landed early: stocks, universes, baskets, the session-aware intraday engine.
 
+### Phase 1b — Reading and reporting, from the competitor review — **NEXT**
+
+On 2026-10-11/12 FinStocks, Tradara and Tradl were reviewed (Tradl logged in:
+its AI was given our sentences, and its 26 backtest + 17 screen suggested
+prompts were run through our reader). Justin agreed the order below. Item codes
+(A1, C3...) are the wish-list numbers he prioritised by; raw notes are in
+`~/tradl-review/`, outside the repo.
+
+The headline finding: **0 of Tradl's 26 backtest prompts run on our reader, and
+0 come back wrong.** 11 are options (correctly refused), but 10 are complete
+strategies with stops that fail only on ordinary wording -- "Backtest the last
+1 year", "hourly bars", "hold overnight". That is the cheapest big gain available.
+
+**First batch** (small, visible at once):
+
+- **A1 Said / Derived / Assumed labels** on each readback line -- the user's
+  words, our reasoning, or a default they can change (Tradara). Still generated
+  mechanically, never by a model.
+- **A2 Tap-to-answer questions** -- buttons plus "type your own" (Tradara, Tradl).
+- **A3 Read common wording** -- test period ("the last 2 years"), bar size
+  ("hourly", "15-minute bars"), "hold overnight". Re-run the 26 afterwards.
+- **B1 Prompt guide** -- fill-in card: what to trade, when to buy, **stop loss
+  (required, its own line)**, when to exit, chart and period (modelled on Tradl's).
+- **B2 Suggested prompts** -- only ones confirmed to run on our engine.
+- **B3 Template test list** -- Tradl's 43 prompts as a **second** fixture, kept
+  apart from the 70 real sentences (those prove honesty with real users; the
+  templates measure coverage of well-written prompts). Same 0-wrong rule.
+- **C1 Before vs after costs** side by side in the report (Tradara).
+
+**Second batch:**
+
+- **A4 Editable form before running** -- stop, target, chart, period as boxes,
+  then "Run backtest" (Tradl, FinStocks). The readback must still match it.
+- **C2 The report lists its own weak spots** -- e.g. today's lot sizes, only
+  companies that exist today, fills assumed adverse (Tradara, Tradl).
+- **C3 Plain list of assumptions**, plus "same strategy + same data = same
+  result" (Tradl).
+- **C4 Download trades as CSV** (Tradl).
+- **C5 Indicator warm-up** -- check we don't trade before indicators have enough
+  history, and say so in the report (Tradl does). Check first; may exist.
+- **B4 Ready-made strategy library** -- cards with return, win rate, worst drop,
+  trade count; tap, edit, it becomes yours (FinStocks, Tradl).
+- **A5 Forgive typos** ("stcoks", "oversld") (Tradara).
+- **A6 More conditions** -- Supertrend, Stochastic, Donchian, high of the first
+  15 minutes, a daily average on an intraday chart (Tradl's prompts need these).
+
+**Where we are already ahead -- keep it that way.** Tradl's own backtest of
+"Buy RELIANCE at RSI 30, 5% stop, 10% target" bought **1 share** of a Rs 1,00,000
+account and reported "+0.1%"; charges were off by default (yet listed); there
+was no buy-and-hold comparison; it did not insist on a stop loss; its NIFTY
+futures backtest crashed on a missing lot size; and a raw code dict leaked into
+its assumptions list. Our sizing, charges, benchmark and stop rule exist to
+prevent exactly these.
+
 ### Phase 2 — Options execution — **NOT STARTED**
 
 `nlt/options/` is empty. Needs: strike selection (ATM default, configurable
@@ -167,6 +221,11 @@ label results as estimates while the paper phase records real chains.
 
 The charge model already handles options correctly, including the trap that an
 exercised ITM option is charged STT on intrinsic value at the buy side.
+
+**From the competitor review (F3):** 11 of Tradl's 26 suggested backtest prompts
+are options -- 9:20 short straddle, straddle with re-entry, iron condor, iron
+butterfly, bull put spread, ATM call/put buys with premium stops, an IV-percentile
+filter. They are a ready-made acceptance list for this phase.
 
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 
@@ -231,6 +290,16 @@ Saving a strategy from its results now records the backtest as a completed run
 -- before, nothing did, so the proving gate could never pass.
 
 **Not built:** the option-chain recorder, and any order placement (Phase 4).
+
+**Next, from the competitor review** (paper first, carried into live):
+
+- **E1 Live activity feed** -- every decision with its reason: "RSI below 30 ·
+  order sent", "results in 2 days · skipped" (Tradara).
+- **E2 Step-by-step timeline** per trade: "3:30 PM trigger met -> next open order
+  queued -> 9:15 filled" (FinStocks).
+- **E3 One drawer for running strategies** -- P&L for each, Pause and Stop
+  (FinStocks).
+- **E4 Alerts instead of trades** -- "tell me when...", by email or web (Tradara).
 
 ### Futures: MCX and NSE index — **BUILT (2026-10-07)**
 
@@ -376,11 +445,40 @@ The store already enforces the proving gate: live requires a completed backtest
 creates a new version that starts unproven, so approval cannot be inherited by
 rules that have changed.
 
+**Safety items from the competitor review**, to build with the risk chokepoint:
+
+- **D1 Pre-order safety check** that can pass, shrink or refuse: results due
+  within 2 days -> skip; order too large for the stock's daily volume -> refuse;
+  India VIX above 25 -> halve the size. Thresholds in one readable table, not a
+  model's opinion (Tradara).
+- **D2 Hard daily limits** -- max automatic trades a day, max rupees per order,
+  pause after 3 rejected orders in a row (Tradara: 50 / Rs 1,00,000 / 1 hour).
+- **D3 Going live looks different** -- a separate, differently worded button:
+  "This places real orders with real money" (FinStocks).
+- **D4 Upfront risk statement** -- SEBI's finding that 9 in 10 individual F&O
+  traders lost money, shown before anything goes live (FinStocks).
+
 ### Phase 5 — Deferred
 
 Fundamentals (P/E, ROE, promoter holding — free via yfinance, verified working),
 corporate events, multi-user, the factual-questions surface Justin chose
 (answer verifiable questions, refuse predictions and recommendations).
+
+**Added from the competitor review**, each a project in itself:
+
+- **F1 Screen mode** -- "find oversold Nifty 50 stocks" returns a list. Tradl and
+  Tradara both have it; several of the 70 sentences ask for it; Tradl's 17
+  suggested screen prompts are an acceptance list.
+- **F2 Many stocks in one strategy**, filtered and ranked (Tradara).
+- **F4 Company-data and event strategies** -- P/E, ROE, promoter holding,
+  dividend dates, buyback meetings, block deals (FinStocks, Tradara). Overlaps
+  the fundamentals and corporate events above.
+- **F5 News-based strategies** -- "when a US tariff on Indian exports is
+  announced" (FinStocks).
+- **Research and engagement, nice to have** (Tradl): G1 "since featured" -- how a
+  suggestion moved since we showed it; G2 a public track record for any calls;
+  G3 events calendar (would also feed D1); G4 sector strength view; G5 morning
+  briefing; G6 stock pages; G7 community (not a build item).
 
 ---
 
