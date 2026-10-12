@@ -88,6 +88,7 @@ from nlt.spec.models import (
     Operand,
     PercentChange,
     Ref,
+    Schedule,
     StrategySpec,
 )
 
@@ -323,10 +324,12 @@ def run_backtest(
         evaluate(spec.exit.condition, features) if spec.exit.condition is not None else None
     )
 
-    if not is_intraday_tf and spec.schedule.intraday:
+    # Only when the user set times: the default schedule rides along on every
+    # daily spec and a note about it on every daily run was noise.
+    if not is_intraday_tf and spec.schedule.intraday and spec.schedule != Schedule():
         warnings.append(
-            "schedule time-of-day rules (no_entry_after/square_off) skipped: "
-            "instrument timeframe is 1d, where bar timestamps carry no intraday clock"
+            f"The square-off time ({spec.schedule.square_off:%H:%M}) was not used: on daily "
+            "candles there is no time of day to act on, so positions are held overnight."
         )
 
     # --- session bookkeeping, used only for intraday timeframes below -------

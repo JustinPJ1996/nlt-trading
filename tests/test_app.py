@@ -257,10 +257,12 @@ def test_flags_by_severity_orders_critical_first() -> None:
     assert [f.severity for f in ordered] == ["critical", "warning", "info"]
 
 
-def test_charge_model_for_label_defaults_to_options() -> None:
-    from nlt.costs.charges import NseOptionsCharges
+def test_charge_model_for_label_defaults_to_index_futures() -> None:
+    """An index strategy is tested on the index; futures are how it is held."""
+    from nlt.costs.charges import NseFuturesCharges
 
-    assert isinstance(logic.charge_model_for_label("not a real label"), NseOptionsCharges)
+    assert isinstance(logic.charge_model_for_label("not a real label"), NseFuturesCharges)
+    assert next(iter(logic.COST_MODEL_LABELS)) == "Index futures"
 
 
 # --------------------------------------------- costs must match what is traded
@@ -438,3 +440,27 @@ def test_the_default_account_is_25_lakh():
     from app import logic
 
     assert logic.DEFAULT_CAPITAL == 2_500_000
+
+
+def test_names_say_what_the_strategy_is() -> None:
+    assert (
+        logic.translate_text("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec.name
+        == "Buy NIFTY · RSI"
+    )
+    assert (
+        logic.translate_text("short banknifty on death cross, target 2%, stop 1%").spec.name
+        == "Short BANKNIFTY · SMA"
+    )
+    assert (
+        logic.translate_text(
+            "buy tcs when rsi crosses below 30 and close is above 200 ema, stop 1%"
+        ).spec.name
+        == "Buy TCS · RSI + EMA"
+    )
+    # Named for its entry: the ATR behind the stop is not what it trades on.
+    name = logic.translate_text("buy tcs when rsi cracks 30, stop loss at 2x atr").spec.name
+    assert name == "Buy TCS · RSI"
+
+
+def test_a_trade_still_open_at_the_end_is_said_in_words() -> None:
+    assert logic._EXIT_WORDS["end_of_data"] == "still open when the test ended"

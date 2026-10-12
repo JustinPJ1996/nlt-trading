@@ -1467,3 +1467,23 @@ def test_options_backtest_reports_which_lot_size_it_used():
 
     assert any("65 units" in w for w in result.warnings), result.warnings
     assert result.trades and result.trades[0].quantity % 65 == 0
+
+
+def test_daily_bars_with_the_default_schedule_add_no_note(synthetic_bars) -> None:
+    """The default schedule rides along on every daily spec; a note about it on
+    every run was noise, in engine words."""
+    spec = _spec(
+        Compare(op="gt", left=Ref(name="close"), right=Const(value=0)),
+        ExitRules(stop_pct=5.0, target_pct=5.0),
+    )
+    result = run_backtest(spec, synthetic_bars, capital=1_000_000)
+    assert not any("square-off" in w or "no_entry_after" in w for w in result.warnings)
+    custom = spec.model_copy(
+        update={"schedule": Schedule(no_entry_after=dt.time(13, 30), square_off=dt.time(14, 0))}
+    )
+    note = next(
+        w
+        for w in run_backtest(custom, synthetic_bars, capital=1_000_000).warnings
+        if "square-off time" in w
+    )
+    assert "14:00" in note and "_" not in note

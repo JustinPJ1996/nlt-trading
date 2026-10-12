@@ -893,6 +893,7 @@ def parse_llm(
             notes=notes,
         )
 
+    spec = spec.model_copy(update={"name": rules.strategy_name(spec)})
     sources = rules.recipe_sources(
         spec,
         symbol_said=bool(rules_kwargs.get("symbol") or by_field.get("instrument")),

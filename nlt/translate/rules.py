@@ -2308,6 +2308,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules"
         )
 
+    spec = spec.model_copy(update={"name": strategy_name(spec)})
     sources = recipe_sources(
         spec,
         symbol_said=symbol_said,
@@ -2388,6 +2389,45 @@ def _float_answer(answers: dict[str, str], field_name: str) -> float | None:
 
 
 def _name_from(description: str) -> str:
+    """A placeholder until the spec exists; `strategy_name` replaces it."""
     words = re.findall(r"[A-Za-z]+", description)
     name = " ".join(w.capitalize() for w in words[:6]) or "Untitled Strategy"
     return name[:80]
+
+
+_SHORT_LABELS = {"sma": "SMA", "ema": "EMA", "wma": "WMA", "hma": "HMA"}
+
+
+def strategy_name(spec: StrategySpec) -> str:
+    """A name made from what the strategy is: "Buy INFY · Bollinger Bands".
+
+    Built from the spec, not the first words typed -- those gave names like
+    "On Infy Hourly Bars Buy When".
+    """
+    from nlt.indicators.registry import get as get_indicator
+
+    used = _refs_in(spec.entry)
+    families: list[str] = []
+    for ind in spec.indicators:
+        if ind.id in used:
+            label = _SHORT_LABELS.get(ind.type) or get_indicator(ind.type).label
+            if label not in families:
+                families.append(label)
+    verb = "Buy" if spec.direction == "long" else "Short"
+    what = " + ".join(families) if families else "price rule"
+    return f"{verb} {spec.instrument.symbol} · {what}"[:80]
+
+
+def _refs_in(condition) -> set[str]:
+    """Every indicator id a condition reads."""
+    from nlt.spec.models import All, Any_, Compare, IsTrue, Not, PercentChange, Ref
+
+    if isinstance(condition, Compare):
+        return {o.name for o in (condition.left, condition.right) if isinstance(o, Ref)}
+    if isinstance(condition, (IsTrue, PercentChange)):
+        return {condition.ref.name}
+    if isinstance(condition, (All, Any_)):
+        return set().union(*(_refs_in(c) for c in condition.conditions))
+    if isinstance(condition, Not):
+        return _refs_in(condition.condition)
+    return set()

@@ -114,9 +114,12 @@ EXAMPLE_STRATEGIES = [
     "Buy TCS when close is above 200 EMA. Target 5%, trailing stop 2%. Backtest the last 5 years.",
 ]
 
+# The first entry is the default. Index futures, not options: "buy NIFTY" is
+# tested on the index itself, and futures are the way to hold that; option
+# charges (STT on premium) describe a different trade (changed 2026-10-12).
 COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
-    "Index options (NIFTY/BANKNIFTY weekly)": NseOptionsCharges(),
     "Index futures": NseFuturesCharges(),
+    "Index options (NIFTY/BANKNIFTY weekly)": NseOptionsCharges(),
     "MCX commodity futures": McxFuturesCharges(),
     "Equity delivery": NseEquityDeliveryCharges(),
     "No costs (for comparison only)": ZeroCharges(),
@@ -124,8 +127,8 @@ COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
 
 
 def charge_model_for_label(label: str) -> ChargeModel:
-    """Looks up a cost model by its dropdown label, defaulting to options costs."""
-    return COST_MODEL_LABELS.get(label, NseOptionsCharges())
+    """Looks up a cost model by its dropdown label, defaulting to index futures costs."""
+    return COST_MODEL_LABELS.get(label, NseFuturesCharges())
 
 
 def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, str | None]:
@@ -837,4 +840,5 @@ _EXIT_WORDS = {
     "max_bars": "time limit reached",
     "square_off": "end-of-day square-off",
     "expiry": "contract expired",
+    "end_of_data": "still open when the test ended",
 }
