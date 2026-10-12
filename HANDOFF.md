@@ -126,6 +126,8 @@ Ask before changing any of these; each was a deliberate decision.
 | `nlt/data/futures.py` | Futures contracts: lot sizes, expiry rules, MCX hours |
 | `nlt/data/kite_login.py` | Logs in to Kite by itself (password + authenticator) to get that token; logs in, nothing else |
 | `nlt/paper/runner.py` | Paper trading: the engine re-run each pass, plus an append-only record |
+| `nlt/orders/` | One-off conditional orders (ATO-style), paper only: reader, readback, engine, checker |
+| `app/orders_view.py` | The one-off orders page, server side |
 | `nlt/translate/readback.py` | Spec → plain English, deterministic |
 | `nlt/indicators/` | 43 indicators matching TradingView's Pine formulas |
 | `nlt/engine/backtest.py` | Single-instrument engine |
@@ -152,6 +154,60 @@ exit at +2%"* returns a question, because it has no stop loss — deliberate, an
 better than the original criterion. And a good deal of Phase 2/3 groundwork
 landed early: stocks, universes, baskets, the session-aware intraday engine.
 
+### Phase 1b — Reading and reporting, from the competitor review — **NEXT**
+
+On 2026-10-11/12 FinStocks, Tradara and Tradl were reviewed (Tradl logged in:
+its AI was given our sentences, and its 26 backtest + 17 screen suggested
+prompts were run through our reader). Justin agreed the order below. Item codes
+(A1, C3...) are the wish-list numbers he prioritised by; raw notes are in
+`~/tradl-review/`, outside the repo.
+
+The headline finding: **0 of Tradl's 26 backtest prompts run on our reader, and
+0 come back wrong.** 11 are options (correctly refused), but 10 are complete
+strategies with stops that fail only on ordinary wording -- "Backtest the last
+1 year", "hourly bars", "hold overnight". That is the cheapest big gain available.
+
+**First batch** (small, visible at once):
+
+- **A1 Said / Derived / Assumed labels** on each readback line -- the user's
+  words, our reasoning, or a default they can change (Tradara). Still generated
+  mechanically, never by a model.
+- **A2 Tap-to-answer questions** -- buttons plus "type your own" (Tradara, Tradl).
+- **A3 Read common wording** -- test period ("the last 2 years"), bar size
+  ("hourly", "15-minute bars"), "hold overnight". Re-run the 26 afterwards.
+- **B1 Prompt guide** -- fill-in card: what to trade, when to buy, **stop loss
+  (required, its own line)**, when to exit, chart and period (modelled on Tradl's).
+- **B2 Suggested prompts** -- only ones confirmed to run on our engine.
+- **B3 Template test list** -- Tradl's 43 prompts as a **second** fixture, kept
+  apart from the 70 real sentences (those prove honesty with real users; the
+  templates measure coverage of well-written prompts). Same 0-wrong rule.
+- **C1 Before vs after costs** side by side in the report (Tradara).
+
+**Second batch:**
+
+- **A4 Editable form before running** -- stop, target, chart, period as boxes,
+  then "Run backtest" (Tradl, FinStocks). The readback must still match it.
+- **C2 The report lists its own weak spots** -- e.g. today's lot sizes, only
+  companies that exist today, fills assumed adverse (Tradara, Tradl).
+- **C3 Plain list of assumptions**, plus "same strategy + same data = same
+  result" (Tradl).
+- **C4 Download trades as CSV** (Tradl).
+- **C5 Indicator warm-up** -- check we don't trade before indicators have enough
+  history, and say so in the report (Tradl does). Check first; may exist.
+- **B4 Ready-made strategy library** -- cards with return, win rate, worst drop,
+  trade count; tap, edit, it becomes yours (FinStocks, Tradl).
+- **A5 Forgive typos** ("stcoks", "oversld") (Tradara).
+- **A6 More conditions** -- Supertrend, Stochastic, Donchian, high of the first
+  15 minutes, a daily average on an intraday chart (Tradl's prompts need these).
+
+**Where we are already ahead -- keep it that way.** Tradl's own backtest of
+"Buy RELIANCE at RSI 30, 5% stop, 10% target" bought **1 share** of a Rs 1,00,000
+account and reported "+0.1%"; charges were off by default (yet listed); there
+was no buy-and-hold comparison; it did not insist on a stop loss; its NIFTY
+futures backtest crashed on a missing lot size; and a raw code dict leaked into
+its assumptions list. Our sizing, charges, benchmark and stop rule exist to
+prevent exactly these.
+
 ### Phase 2 — Options execution — **NOT STARTED**
 
 `nlt/options/` is empty. Needs: strike selection (ATM default, configurable
@@ -165,6 +221,11 @@ label results as estimates while the paper phase records real chains.
 
 The charge model already handles options correctly, including the trap that an
 exercised ITM option is charged STT on intrinsic value at the buy side.
+
+**From the competitor review (F3):** 11 of Tradl's 26 suggested backtest prompts
+are options -- 9:20 short straddle, straddle with re-entry, iron condor, iron
+butterfly, bull put spread, ATM call/put buys with premium stops, an IV-percentile
+filter. They are a ready-made acceptance list for this phase.
 
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 
@@ -230,6 +291,16 @@ Saving a strategy from its results now records the backtest as a completed run
 
 **Not built:** the option-chain recorder, and any order placement (Phase 4).
 
+**Next, from the competitor review** (paper first, carried into live):
+
+- **E1 Live activity feed** -- every decision with its reason: "RSI below 30 ·
+  order sent", "results in 2 days · skipped" (Tradara).
+- **E2 Step-by-step timeline** per trade: "3:30 PM trigger met -> next open order
+  queued -> 9:15 filled" (FinStocks).
+- **E3 One drawer for running strategies** -- P&L for each, Pause and Stop
+  (FinStocks).
+- **E4 Alerts instead of trades** -- "tell me when...", by email or web (Tradara).
+
 ### Futures: MCX and NSE index — **BUILT (2026-10-07)**
 
 Backtest and paper trade NIFTY/BANKNIFTY futures and eight MCX contracts: Crude
@@ -294,6 +365,69 @@ suggests) was silently ignored and the question came back; only "1" worked.
 Open: with the default Rs 1,00,000 and NIFTY, the example strategies take no
 trades (a lot exceeds the 20% position cap). Engine rule, so left for Justin.
 
+### One-off conditional orders (ATO-style) — **BUILT (2026-10-08), paper only**
+
+Justin asked for "simple strategies" that work like Zerodha's Alert Trigger
+Orders: *when this happens, do that, once.* His three examples, and what they
+read as:
+
+| Sentence | Result |
+| --- | --- |
+| If Nifty spot goes below 22000, buy 1 lot Nifty Futures | Order; readback warns there is no stop loss and offers to add one |
+| Buy 1 lot Futures if Nifty has been going down for 4 consecutive weeks (4 consecutive red candles) | Order: 4 red weekly candles. Without the brackets, "going down" is a question: red candles, or lower closes? |
+| If P&L has gone below Rs. 50000, exit positions | Question first: a loss of 50,000, or profit falling under 50,000? Then a list of open paper positions to tick |
+
+**What real ATO can and cannot do** (researched 2026-10-08): one live value
+(LTP, close, change %, OI, volume...) against a number or another instrument;
+up to 20 orders fire once, then the alert disables itself. No indicators, no
+candle patterns, no P&L condition (Zerodha staff say a P&L exit is coming "by
+year end" 2026), no MCX/commodity ATO, 200 ATOs max, margin checked only when
+it fires. Examples 2 and 3 are impossible as real ATOs; only example 1 is.
+
+**Justin's decisions**, each given to him as a trade-off:
+
+- **Paper only.** Nothing is sent to Zerodha. Real ATOs would mean the app
+  placing orders, which is still undecided (see Phase 4).
+- **No stop loss is allowed on a one-off order, but said out loud**: the
+  readback says so, and the screen offers to add one. Strategies still always
+  need one.
+- **P&L exits look only at the app's own paper positions** (those opened by
+  one-off orders), never the real Zerodha account.
+
+**Rules**, the strategy engine's where they apply (`nlt/orders/engine.py`):
+closed 1-minute candles only; a candle that began before the order was saved
+never counts; fill at the next candle's open plus 0.02% slippage; stop first
+when one candle hits both; a gap through the stop fills at the open; futures
+closed at the expiry-day close, never rolled. Choices made for one-off orders,
+written in the engine's docstring:
+
+- Stops/targets are measured from the **fill price**, not a signal close --
+  "1% stop" on a one-off order means 1% from what you paid.
+- A new position never opens in a contract on its expiry day; it goes to the
+  next month.
+- "Below" means strictly below (Zerodha's `<`).
+- P&L is **before charges**, like Kite's positions screen, over the chosen
+  positions still open.
+- A minute is judged one minute after it ends, and a daily/weekly candle an
+  hour after the close, so a late-arriving candle is never skipped. The fill
+  price is the same either way.
+- A weekly run counts only weeks ending after the order is saved; if the run
+  is already there, the screen warns that the next week must do the same.
+- While the paper kill switch is on, minutes are **skipped**, not caught up on
+  later at stale prices.
+
+The sentence is re-read on save and must give the identical order, so what is
+stored beside a sentence is always what it means. `one_off_event` is
+append-only (SQLite triggers), like `paper_event`. The checker runs inside
+`scripts/paper_run.py` every minute.
+
+**Fixed on the way:** the paper cron line ran 08:30-16:29 IST only, so MCX
+evenings (to 23:55) were never checked, for strategies either. It is now
+08:30-00:29. **Re-run `scripts/install_paper_cron.sh`** to apply it.
+
+`tests/test_one_off_orders.py`: each rule above was broken on purpose and a
+test was seen to fail. None of the 70 user sentences becomes an order.
+
 ### Phase 4 — Live — **NOT STARTED**
 
 `nlt/risk/` and `nlt/broker/` are empty. Needs: an order router, every order
@@ -311,11 +445,40 @@ The store already enforces the proving gate: live requires a completed backtest
 creates a new version that starts unproven, so approval cannot be inherited by
 rules that have changed.
 
+**Safety items from the competitor review**, to build with the risk chokepoint:
+
+- **D1 Pre-order safety check** that can pass, shrink or refuse: results due
+  within 2 days -> skip; order too large for the stock's daily volume -> refuse;
+  India VIX above 25 -> halve the size. Thresholds in one readable table, not a
+  model's opinion (Tradara).
+- **D2 Hard daily limits** -- max automatic trades a day, max rupees per order,
+  pause after 3 rejected orders in a row (Tradara: 50 / Rs 1,00,000 / 1 hour).
+- **D3 Going live looks different** -- a separate, differently worded button:
+  "This places real orders with real money" (FinStocks).
+- **D4 Upfront risk statement** -- SEBI's finding that 9 in 10 individual F&O
+  traders lost money, shown before anything goes live (FinStocks).
+
 ### Phase 5 — Deferred
 
 Fundamentals (P/E, ROE, promoter holding — free via yfinance, verified working),
 corporate events, multi-user, the factual-questions surface Justin chose
 (answer verifiable questions, refuse predictions and recommendations).
+
+**Added from the competitor review**, each a project in itself:
+
+- **F1 Screen mode** -- "find oversold Nifty 50 stocks" returns a list. Tradl and
+  Tradara both have it; several of the 70 sentences ask for it; Tradl's 17
+  suggested screen prompts are an acceptance list.
+- **F2 Many stocks in one strategy**, filtered and ranked (Tradara).
+- **F4 Company-data and event strategies** -- P/E, ROE, promoter holding,
+  dividend dates, buyback meetings, block deals (FinStocks, Tradara). Overlaps
+  the fundamentals and corporate events above.
+- **F5 News-based strategies** -- "when a US tariff on Indian exports is
+  announced" (FinStocks).
+- **Research and engagement, nice to have** (Tradl): G1 "since featured" -- how a
+  suggestion moved since we showed it; G2 a public track record for any calls;
+  G3 events calendar (would also feed D1); G4 sector strength view; G5 morning
+  briefing; G6 stock pages; G7 community (not a build item).
 
 ---
 

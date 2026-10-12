@@ -494,3 +494,123 @@ class Store:
             ]
         finally:
             conn.close()
+
+    # ------------------------------------------------------ one-off orders
+
+    def save_one_off_order(
+        self, sentence: str, order_json: str, readback: str, created_at: str
+    ) -> int:
+        with self.tx() as conn:
+            cur = conn.execute(
+                """INSERT INTO one_off_order (sentence, order_json, readback, created_at)
+                   VALUES (?,?,?,?)""",
+                (sentence, order_json, readback, created_at),
+            )
+            order_id = cur.lastrowid
+            self._audit(conn, "one_off_order_saved", None, None, {"order_id": order_id})
+            return order_id
+
+    def one_off_orders(self) -> list[dict]:
+        conn = self._connect()
+        try:
+            return [dict(r) for r in conn.execute("SELECT * FROM one_off_order ORDER BY id")]
+        finally:
+            conn.close()
+
+    def cancel_one_off_order(self, order_id: int) -> bool:
+        """Cancels an order that has not triggered yet. Returns False if it could not be."""
+        with self.tx() as conn:
+            triggered = conn.execute(
+                "SELECT 1 FROM one_off_event WHERE order_id = ? AND kind IN ('triggered','finished')",
+                (order_id,),
+            ).fetchone()
+            if triggered:
+                return False
+            cur = conn.execute(
+                "UPDATE one_off_order SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL",
+                (now(), order_id),
+            )
+            if cur.rowcount == 1:
+                self._audit(conn, "one_off_order_cancelled", None, None, {"order_id": order_id})
+            return cur.rowcount == 1
+
+    def record_one_off_event(
+        self,
+        order_id: int,
+        kind: str,
+        event_key: str,
+        *,
+        observed_at: str | None = None,
+        symbol: str = "",
+        bar_time: str | None = None,
+        side: str | None = None,
+        quantity: float | None = None,
+        price: float | None = None,
+        detail: dict | None = None,
+    ) -> bool:
+        """Records an event the first time it is seen. Returns False if already recorded."""
+        with self.tx() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO one_off_event (order_id, kind, event_key, observed_at,
+                   symbol, bar_time, side, quantity, price, detail_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    order_id,
+                    kind,
+                    event_key,
+                    observed_at or now(),
+                    symbol,
+                    bar_time,
+                    side,
+                    quantity,
+                    price,
+                    json.dumps(detail or {}, default=str),
+                ),
+            )
+            return cur.rowcount == 1
+
+    def one_off_events(self) -> list[dict]:
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM one_off_event ORDER BY id").fetchall()
+        finally:
+            conn.close()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = json.loads(d.pop("detail_json") or "{}")
+            out.append(d)
+        return out
+
+    def one_off_book(self) -> dict:
+        conn = self._connect()
+        try:
+            row = dict(conn.execute("SELECT * FROM one_off_book WHERE id = 1").fetchone())
+        finally:
+            conn.close()
+        row["prices"] = json.loads(row.pop("prices_json") or "{}")
+        return row
+
+    def set_one_off_book(
+        self,
+        *,
+        health: str,
+        message: str,
+        cursor: str | None = None,
+        prices: dict | None = None,
+    ) -> None:
+        with self.tx() as conn:
+            conn.execute(
+                """UPDATE one_off_book SET updated_at = ?, health = ?, message = ?,
+                   cursor = COALESCE(?, cursor),
+                   prices_json = CASE WHEN ? IS NULL THEN prices_json ELSE ? END
+                   WHERE id = 1""",
+                (
+                    now(),
+                    health,
+                    message,
+                    cursor,
+                    None if prices is None else 1,
+                    json.dumps(prices or {}, default=str),
+                ),
+            )

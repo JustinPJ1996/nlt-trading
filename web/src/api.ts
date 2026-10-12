@@ -178,6 +178,54 @@ export type SafetyState = {
   audit: { when: string; event: string; detail: string }[];
 };
 
+export type OrderPosition = {
+  id: number;
+  name: string;
+  what: string;
+  entered: string;
+  entry_price: string;
+  last_price: string;
+  last_at: string;
+  stop: string;
+  target: string;
+  pnl: number | null;
+  pnl_text: string;
+  expiry: string;
+};
+
+export type OrderReading = {
+  order: unknown | null;
+  readback: string[];
+  warnings: string[];
+  notes: string[];
+  questions: Question[];
+  answers: Record<string, string>;
+  offer_stop: boolean;
+  needs_positions: boolean;
+  positions: OrderPosition[];
+};
+
+export type SavedOrder = {
+  id: number;
+  sentence: string;
+  readback: string[];
+  saved: string;
+  status: "waiting" | "filling" | "open" | "done" | "cancelled";
+  status_label: string;
+  can_cancel: boolean;
+  result: number | null;
+  result_text: string;
+  events: { when: string; text: string }[];
+};
+
+export type OrdersState = {
+  kill_switch: boolean;
+  job_installed: boolean;
+  checker: { health: string; message: string; checked: string };
+  positions: OrderPosition[];
+  orders: SavedOrder[];
+};
+
 // -------------------------------------------------------------------- calls
 
 export const api = {
@@ -209,6 +257,15 @@ export const api = {
     call<{ ok: boolean }>("/api/kite/login", { user_id, password, secret }),
   kiteForget: () => call<{ ok: boolean }>("/api/kite/forget", {}),
   kiteToken: (token: string) => call<{ ok: boolean }>("/api/kite/token", { token }),
+  orders: () => call<OrdersState>("/api/orders"),
+  orderRead: (text: string, answers: Record<string, string>) =>
+    call<OrderReading>("/api/orders/read", { text, answers }),
+  orderCreate: (text: string, answers: Record<string, string>, order: unknown, positions: number[]) =>
+    call<{ order_id: number }>("/api/orders/create", { text, answers, order, positions }),
+  orderCancel: (id: number) => call<{ ok: boolean }>(`/api/orders/${id}/cancel`, {}),
+  orderClose: (positionId: number) =>
+    call<{ order_id: number }>(`/api/orders/positions/${positionId}/close`, {}),
+  ordersCheck: () => call<{ message: string }>("/api/orders/check", {}),
   safety: () => call<SafetyState>("/api/safety"),
   killSwitch: (which: "live" | "paper", action: "engage" | "release", confirm = false) =>
     call<SafetyState>(`/api/safety/${which}/${action}`, { confirm }),

@@ -49,7 +49,7 @@ from starlette.responses import FileResponse, JSONResponse, PlainTextResponse, R
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from app import auth, logic
+from app import auth, logic, orders_view
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 from nlt.translate.readback import format_inr
@@ -741,6 +741,68 @@ async def kite_token_save(request: Request) -> Response:
     return JSONResponse({"ok": True})
 
 
+# ------------------------------------------------------------- one-off orders
+
+
+async def orders(request: Request) -> Response:
+    return JSONResponse(await _run(orders_view.page, _store(request)))
+
+
+async def orders_read(request: Request) -> Response:
+    body = await _json_body(request)
+    text = str(body.get("text") or "").strip()
+    if not text:
+        raise _BadRequest("Type an order first.")
+    answers = body.get("answers") or {}
+    if not isinstance(answers, dict):
+        raise _BadRequest("Answers must be a list of field: answer pairs.")
+    answers = {str(k): str(v) for k, v in answers.items() if str(v).strip()}
+    return JSONResponse(await _run(orders_view.read, _store(request), text, answers))
+
+
+async def orders_create(request: Request) -> Response:
+    body = await _json_body(request)
+    try:
+        order_id = await _run(
+            orders_view.create,
+            _store(request),
+            str(body.get("text") or ""),
+            {str(k): str(v) for k, v in (body.get("answers") or {}).items() if str(v).strip()}
+            if isinstance(body.get("answers"), dict)
+            else {},
+            body.get("order"),
+            body.get("positions"),
+        )
+    except orders_view.OrderError as exc:
+        raise _BadRequest(str(exc)) from None
+    return JSONResponse({"order_id": order_id})
+
+
+async def orders_cancel(request: Request) -> Response:
+    await _json_body(request)
+    try:
+        await _run(orders_view.cancel, _store(request), int(request.path_params["oid"]))
+    except orders_view.OrderError as exc:
+        raise _BadRequest(str(exc)) from None
+    return JSONResponse({"ok": True})
+
+
+async def orders_close(request: Request) -> Response:
+    await _json_body(request)
+    try:
+        order_id = await _run(
+            orders_view.close_now, _store(request), int(request.path_params["pid"])
+        )
+    except orders_view.OrderError as exc:
+        raise _BadRequest(str(exc)) from None
+    return JSONResponse({"order_id": order_id})
+
+
+async def orders_check(request: Request) -> Response:
+    await _json_body(request)
+    return JSONResponse({"message": await _run(orders_view.check_now, _store(request))})
+
+
 # -------------------------------------------------------------------- safety
 
 
@@ -874,6 +936,12 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/paper/start", paper_start, ["POST"]),
         r("/api/paper/{rid:int}/check", paper_check, ["POST"]),
         r("/api/paper/{rid:int}/stop", paper_stop, ["POST"]),
+        r("/api/orders", orders),
+        r("/api/orders/read", orders_read, ["POST"]),
+        r("/api/orders/create", orders_create, ["POST"]),
+        r("/api/orders/check", orders_check, ["POST"]),
+        r("/api/orders/{oid:int}/cancel", orders_cancel, ["POST"]),
+        r("/api/orders/positions/{pid:int}/close", orders_close, ["POST"]),
         r("/api/kite/login", kite_login_save, ["POST"]),
         r("/api/kite/forget", kite_login_forget, ["POST"]),
         r("/api/kite/token", kite_token_save, ["POST"]),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""One pass over every running paper strategy. Run by cron every minute.
+"""One pass over every running paper strategy and one-off order. Run by cron every minute.
 
     .venv/bin/python scripts/paper_run.py           # only runs that are due
     .venv/bin/python scripts/paper_run.py --force   # every running paper run, now
@@ -25,6 +25,7 @@ from app.logic import charge_model_for_spec  # noqa: E402
 from nlt.costs.charges import charge_fn  # noqa: E402
 from nlt.data import kite  # noqa: E402
 from nlt.data.kite import KiteSource  # noqa: E402
+from nlt.orders import runner as orders_runner  # noqa: E402
 from nlt.paper import runner  # noqa: E402
 from nlt.store.db import Store  # noqa: E402
 
@@ -78,6 +79,19 @@ def _pass(*, force: bool) -> int:
         except Exception as exc:  # one broken run must not stop the others
             store.set_paper_status(run["id"], "error", f"The paper runner hit an error: {exc}")
             print(f"{now:%Y-%m-%d %H:%M:%S} run {run['id']} ERROR {exc!r}")
+
+    # One-off conditional orders, all in one pass.
+    if force or orders_runner.is_due(now):
+        try:
+            result = orders_runner.step(store, orders_runner.kite_feed(), now=now)
+            if result.health != "idle":
+                print(
+                    f"{now:%Y-%m-%d %H:%M:%S} one-off orders {result.health}: {result.message}"
+                    + (f" new: {', '.join(result.new_events)}" if result.new_events else "")
+                )
+        except Exception as exc:
+            store.set_one_off_book(health="error", message=f"The order checker hit an error: {exc}")
+            print(f"{now:%Y-%m-%d %H:%M:%S} one-off orders ERROR {exc!r}")
     return 0
 
 
