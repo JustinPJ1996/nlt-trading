@@ -35,6 +35,7 @@ from nlt.costs.charges import (
 from nlt.costs.charges import charge_fn as _adapt_charge_fn
 from nlt.data.source import DATA_FLOOR
 from nlt.data.yahoo import YahooSource
+from nlt.engine import warmup
 from nlt.engine.backtest import BacktestResult, run_backtest
 from nlt.engine.basket import BasketResult, run_basket_backtest
 from nlt.engine.loader import load_for_spec
@@ -494,7 +495,10 @@ def backtest_spec(
                 update={"instrument": spec.instrument.model_copy(update={"symbol": symbol})}
             )
 
-        bars_by_symbol, data_notes = load_for_spec(load_spec, start=start, end=end)
+        # Load extra history before `start` so indicators are ready on it; the
+        # runs below may not trade before it, and are cut back to it after.
+        load_from = warmup.padded_start(load_spec, start) if start else None
+        bars_by_symbol, data_notes = load_for_spec(load_spec, start=load_from, end=end)
         if cost_note:
             data_notes = [cost_note, *data_notes]
         if not bars_by_symbol or all(df.empty for df in bars_by_symbol.values()):
@@ -506,33 +510,77 @@ def backtest_spec(
             )
 
         no_charges = _adapt_charge_fn(ZeroCharges())
+        all_index = pd.DatetimeIndex(
+            sorted(set().union(*(df.index for df in bars_by_symbol.values() if not df.empty)))
+        )
+        start_bar = warmup.first_bar_on_or_after(all_index, start) if start else None
+        if start and start_bar is None:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                data_notes=data_notes,
+                error="There is no price history for that symbol and date range to test against.",
+            )
+
+        def trimmed(result: BacktestResult) -> BacktestResult:
+            return warmup.trim(result, start_bar, capital) if start_bar is not None else result
+
         if len(bars_by_symbol) > 1:
-            basket = run_basket_backtest(load_spec, bars_by_symbol, capital=capital, charge_fn=cf)
-            backtest = _as_backtest_result(basket, load_spec)
-            before_charges = _as_backtest_result(
-                run_basket_backtest(
-                    load_spec, bars_by_symbol, capital=capital, charge_fn=no_charges
-                ),
-                load_spec,
+            basket = run_basket_backtest(
+                load_spec, bars_by_symbol, capital=capital, charge_fn=cf, trade_from=start_bar
+            )
+            backtest = trimmed(_as_backtest_result(basket, load_spec))
+            before_charges = trimmed(
+                _as_backtest_result(
+                    run_basket_backtest(
+                        load_spec,
+                        bars_by_symbol,
+                        capital=capital,
+                        charge_fn=no_charges,
+                        trade_from=start_bar,
+                    ),
+                    load_spec,
+                )
             )
             # The benchmark for a basket is an equal-weight buy-and-hold of the
             # same names, which is the honest comparison: "would picking your
             # moments have beaten simply owning all of them?"
             bars = _equal_weight_index(bars_by_symbol)
+            if start_bar is not None:
+                bars = bars.loc[start_bar:]
             benchmark_name = f"holding all {len(bars_by_symbol)} of these stocks equally"
             data_notes = data_notes + basket.warnings
         else:
-            bars = next(iter(bars_by_symbol.values()))
+            all_bars = next(iter(bars_by_symbol.values()))
             benchmark_name = f"holding {load_spec.instrument.symbol}"
             basket = None
             listed = _listed_expiries(load_spec)
-            backtest = run_backtest(
-                load_spec, bars, capital=capital, charge_fn=cf, listed_expiries=listed
+            backtest = trimmed(
+                run_backtest(
+                    load_spec,
+                    all_bars,
+                    capital=capital,
+                    charge_fn=cf,
+                    listed_expiries=listed,
+                    trade_from=start_bar,
+                )
             )
-            before_charges = run_backtest(
-                load_spec, bars, capital=capital, charge_fn=no_charges, listed_expiries=listed
+            before_charges = trimmed(
+                run_backtest(
+                    load_spec,
+                    all_bars,
+                    capital=capital,
+                    charge_fn=no_charges,
+                    listed_expiries=listed,
+                    trade_from=start_bar,
+                )
             )
+            bars = all_bars.loc[start_bar:] if start_bar is not None else all_bars
             data_notes = data_notes + list(backtest.warnings)
+            if start_bar is not None:
+                note = warmup.warmup_note(load_spec, all_bars, start_bar)
+                if note:
+                    data_notes.append(note)
 
         if load_spec.instrument.is_future:
             from nlt.data.futures import contract, expiry_close_mask
