@@ -101,12 +101,17 @@ DEFAULT_CAPITAL = 2_500_000.0
 
 # Every example is verified (in tests/test_app.py) to parse into a spec with
 # no follow-up questions -- a "try this" button that itself needs clarifying
-# would be a bad first impression.
+# would be a bad first impression -- and to take at least one trade at the
+# default capital over its own test period. Each names a stop loss on its own,
+# the habit the prompt guide teaches.
 EXAMPLE_STRATEGIES = [
-    "buy nifty when rsi cracks 30, target 2%, stop loss 1%",
-    "buy nifty when 20 sma crosses above 50 sma, target 3%, stop loss 1.5%",
-    "short banknifty on death cross, target 2%, stop 1%",
-    "buy nifty when close is above 200 ema, target 5%, trailing stop 2%",
+    "Buy NIFTY when RSI(14) crosses below 30. Target 2%, stop loss 1%. Backtest the last 3 years.",
+    "Buy NIFTY when 20 SMA crosses above 50 SMA. Target 3%, stop loss 1.5%. "
+    "Backtest the last 5 years.",
+    "Buy RELIANCE when RSI(14) crosses below 30. Target 5%, stop loss 2%. "
+    "Backtest the last 5 years.",
+    "Buy INFY when 9 EMA crosses above 21 EMA. Target 4%, stop loss 2%. Backtest the last 3 years.",
+    "Buy TCS when close is above 200 EMA. Target 5%, trailing stop 2%. Backtest the last 5 years.",
 ]
 
 COST_MODEL_LABELS: dict[str, ChargeModel | None] = {

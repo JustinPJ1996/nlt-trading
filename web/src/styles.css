@@ -584,6 +584,59 @@ textarea:focus {
   min-height: 112px;
 }
 
+.guide {
+  margin-top: 14px;
+  padding: 12px 16px;
+  background: var(--sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  font-size: 0.875rem;
+}
+
+.guide-title {
+  font-weight: 650;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+
+.guide dl {
+  margin: 0;
+}
+
+.guide-row {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.guide dt {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.guide dd {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.guide-required {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warning-wash);
+  color: var(--warning);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+@media (max-width: 560px) {
+  .guide-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
 .examples {
   display: flex;
   flex-wrap: wrap;

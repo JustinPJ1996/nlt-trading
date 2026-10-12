@@ -46,6 +46,35 @@ export function emptyBuild(): BuildState {
   };
 }
 
+// What a complete strategy says, one part per line. Stop loss has its own line
+// and is marked required: a strategy without one comes back as a question.
+const GUIDE: { part: string; example: string; required?: boolean }[] = [
+  { part: "What to trade", example: "NIFTY, RELIANCE, crude oil futures" },
+  { part: "When to buy", example: "when RSI(14) crosses below 30" },
+  { part: "Stop loss", example: "stop loss 1%", required: true },
+  { part: "When to exit", example: "target 2%, or sell when RSI crosses above 70" },
+  { part: "Chart and test period", example: "on 15-minute candles, backtest the last 2 years" },
+];
+
+function PromptGuide() {
+  return (
+    <div className="guide" aria-label="What to include">
+      <p className="guide-title">What to include</p>
+      <dl>
+        {GUIDE.map((g) => (
+          <div className="guide-row" key={g.part}>
+            <dt>
+              {g.part}
+              {g.required && <span className="guide-required">required</span>}
+            </dt>
+            <dd>{g.example}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 export function Build({
   options,
   state,
@@ -194,6 +223,7 @@ export function Build({
               placeholder="e.g. buy nifty when rsi cracks 30, target 2%, stop loss 1%"
               rows={3}
             />
+            {!state.text && <PromptGuide />}
             {options && !state.text && (
               <div className="examples" aria-label="Examples">
                 <span className="muted small" style={{ alignSelf: "center" }}>
