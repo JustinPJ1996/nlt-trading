@@ -517,3 +517,11 @@ def test_a_saved_strategy_has_no_guessed_labels(authed) -> None:
     assert [label for *_x, label in describe_lines(spec, None)] == [None] * len(
         describe_lines(spec, None)
     )
+
+
+def test_questions_carry_their_buttons_and_nothing_is_picked(authed) -> None:
+    body = authed.post("/api/translate", json={"text": "buy nifty when rsi cracks 30"}).json()
+    stop = next(q for q in body["questions"] if q["field"] == "exit.stop_pct")
+    assert [c["label"] for c in stop["choices"]] == ["0.5%", "1%", "2%"]
+    assert stop["answerable"] is True
+    assert body["answers"] == {}

@@ -55,7 +55,19 @@ export type Understood = {
   timeframe: string;
 };
 
-export type Question = { field: string; text: string; why: string; suggestion: string | null };
+export type Choice = { label: string; value: string };
+
+export type Question = {
+  field: string;
+  text: string;
+  why: string;
+  suggestion: string | null;
+  // Tap-to-answer buttons. None is ever chosen for the user.
+  choices: Choice[];
+  // Whether a typed answer is read. With no choices either, the only way to
+  // answer is to change the description.
+  answerable: boolean;
+};
 
 export type Translation = {
   understood: Understood | null;

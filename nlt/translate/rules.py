@@ -72,13 +72,29 @@ from nlt.spec.models import (
 
 
 @dataclass
+class Choice:
+    """One tap-to-answer button: what it says, and the answer it sends."""
+
+    label: str
+    value: str
+
+
+@dataclass
 class Question:
-    """Something we need the user to answer before we can trade their money on it."""
+    """Something we need the user to answer before we can trade their money on it.
+
+    `choices` are buttons; nothing is ever pre-selected. `answerable` says the
+    reader will take a typed answer for `field`. A question with neither can
+    only be answered by changing the description, and the screen says so
+    instead of showing a box whose answer would be ignored.
+    """
 
     text: str
     why: str
     suggestion: str | None
     field: str
+    choices: list[Choice] = field(default_factory=list)
+    answerable: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +109,16 @@ class BacktestPeriod:
     last: int | None = None
     unit: str | None = None  # "days" | "weeks" | "months" | "years"
     year: int | None = None
+
+
+# Tap-to-answer buttons. Common round numbers, offered side by side; none is
+# chosen for the user, and "type your own" stays beside them.
+STOP_CHOICES = [Choice("0.5%", "0.5"), Choice("1%", "1"), Choice("2%", "2")]
+TARGET_CHOICES = [Choice("+2%", "2"), Choice("+3%", "3"), Choice("+5%", "5")]
+OVERNIGHT_CHOICES = [
+    Choice("Hold overnight", "overnight"),
+    Choice("Square off the same day", "square_off"),
+]
 
 
 @dataclass
@@ -1519,7 +1545,9 @@ _ANTECEDENT_FAMILIES: list[tuple[str, str, re.Pattern[str]]] = [
 ]
 
 
-def _find_antecedent(entry_text: str) -> tuple[str | None, str | None]:
+def _find_antecedent(
+    entry_text: str,
+) -> tuple[str | None, str | None, list[tuple[str, str]]]:
     """Returns (substitution token, ambiguity description).
 
     Exactly one of the two is set: a substitution token (e.g. "rsi14", to
@@ -1535,16 +1563,17 @@ def _find_antecedent(entry_text: str) -> tuple[str | None, str | None]:
             labels_seen.append(label)
             length = m.group("len")
             tokens.append(f"{token_prefix}{length}" if length else token_prefix)
+    candidates = list(zip(labels_seen, tokens, strict=True))
     if len(labels_seen) > 1:
-        return None, " and ".join(labels_seen)
+        return None, " or the ".join(labels_seen), candidates
     if len(labels_seen) == 1:
-        return tokens[0], None
-    return None, None
+        return tokens[0], None, candidates
+    return None, None, candidates
 
 
 def _extract_exit_condition(
-    text: str, direction: str
-) -> tuple[str, Condition | None, list[dict], list[str], str | None]:
+    text: str, direction: str, chosen: str | None = None
+) -> tuple[str, Condition | None, list[dict], list[str], Question | None]:
     """The second (or later) 'when ...' clause in the text is an exit condition.
 
     Returns (text, condition, indicators, notes, ambiguous_antecedent). The last
@@ -1564,16 +1593,27 @@ def _extract_exit_condition(
 
     if re.search(r"\bit\b", clause_text):
         entry_text = text[: whens[1].start()]
-        token, ambiguous = _find_antecedent(entry_text)
+        token, ambiguous, candidates = _find_antecedent(entry_text)
+        if ambiguous and chosen in {t for _label, t in candidates}:
+            token, ambiguous = chosen, None
         if ambiguous:
             return (
                 text,
                 None,
                 [],
                 [],
-                (
-                    f"'it' in \"...{clause_text.strip()}\" could mean either the {ambiguous} "
-                    "mentioned in the entry -- say which one, e.g. 'sell when RSI crosses 70'."
+                Question(
+                    text=(
+                        f"'it' in \"...{clause_text.strip()}\" could mean either the "
+                        f"{ambiguous} mentioned in the entry. Which one?"
+                    ),
+                    why=(
+                        "Guessing which indicator 'it' refers to could exit the trade on a "
+                        "condition you never actually described."
+                    ),
+                    suggestion=None,
+                    field="exit.condition",
+                    choices=[Choice(label, t) for label, t in candidates],
                 ),
             )
         if token:
@@ -1786,7 +1826,14 @@ def _overnight_conflict_question() -> Question:
         ),
         suggestion=None,
         field="schedule.intraday",
+        choices=OVERNIGHT_CHOICES,
     )
+
+
+def overnight_answer(answers: dict[str, str]) -> str | None:
+    """The user's pick on the overnight-or-square-off question, if they made one."""
+    value = answers.get("schedule.intraday", "").strip()
+    return value if value in {c.value for c in OVERNIGHT_CHOICES} else None
 
 
 # ----------------------------------------------------------------------- sizing
@@ -2094,31 +2141,20 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         notes.append(backtest_note)
     text, overnight = _extract_overnight(text)
     if overnight and rest_exits.get("_intraday"):
-        return TranslationResult(
-            spec=None, questions=[_overnight_conflict_question()], notes=notes, source="rules"
-        )
+        picked = overnight_answer(answers)
+        if picked is None:
+            return TranslationResult(
+                spec=None, questions=[_overnight_conflict_question()], notes=notes, source="rules"
+            )
+        if picked == "square_off":
+            overnight = False  # "overnight" needs nothing: holding overnight wins below
 
     text, percent_exits = _extract_percent_exits(text)
     text, exit_condition, exit_cond_inds, exit_cond_notes, exit_ambiguous = _extract_exit_condition(
-        text, direction
+        text, direction, answers.get("exit.condition")
     )
     if exit_ambiguous:
-        return TranslationResult(
-            spec=None,
-            questions=[
-                Question(
-                    text=exit_ambiguous,
-                    why=(
-                        "Guessing which indicator 'it' refers to could exit the trade on a "
-                        "condition you never actually described."
-                    ),
-                    suggestion=None,
-                    field="exit.condition",
-                )
-            ],
-            notes=notes,
-            source="rules",
-        )
+        return TranslationResult(spec=None, questions=[exit_ambiguous], notes=notes, source="rules")
     notes.extend(exit_cond_notes)
 
     sizing_said = _sizing_said(text)
@@ -2161,7 +2197,11 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         return TranslationResult(spec=None, questions=[vwap_question], notes=notes, source="rules")
 
     stop_pct = percent_exits.get("stop_pct") or _float_answer(answers, "exit.stop_pct")
-    target_pct = percent_exits.get("target_pct") or _float_answer(answers, "exit.target_pct")
+    target_pct = (
+        percent_exits.get("target_pct")
+        or _float_answer(answers, "exit.target_pct")
+        or _float_answer(answers, "exit.rule")
+    )
     stop_atr_mult = rest_exits.get("stop_atr_mult")
     trailing = rest_exits.get("trailing_stop_pct")
     max_bars_held = rest_exits.get("max_bars_held")
@@ -2179,6 +2219,8 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
                     ),
                     suggestion="A common starting point is 1%.",
                     field="exit.stop_pct",
+                    choices=STOP_CHOICES,
+                    answerable=True,
                 )
             )
 
@@ -2189,9 +2231,14 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         questions.append(
             Question(
                 text="How should this strategy get out of a trade?",
-                why="Without an exit, a position would be held forever.",
+                why=(
+                    "Without an exit, a position would be held forever. A stop loss alone is "
+                    "enough; a profit target here is optional."
+                ),
                 suggestion="A target and a stop loss, e.g. +2% / -1%.",
                 field="exit.rule",
+                choices=TARGET_CHOICES,
+                answerable=True,
             )
         )
 

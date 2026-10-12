@@ -618,6 +618,39 @@ textarea:focus {
   padding-top: 0;
 }
 
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.choice {
+  font: inherit;
+  font-weight: 600;
+  padding: 6px 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--ink-2);
+}
+
+.choice:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.choice.picked {
+  background: var(--action);
+  border-color: var(--action);
+  color: var(--action-ink);
+}
+
 /* ---------------------------------------------------------------- readback */
 
 .readback {

@@ -271,22 +271,51 @@ export function Build({
               {!understood && visibleQuestions.length > 0 && (
                 <form className="panel" onSubmit={onAnswers}>
                   <p style={{ fontWeight: 650, marginBottom: 16 }}>I need a little more detail first.</p>
-                  {visibleQuestions.map((q) => (
-                    <div className="question" key={q.field}>
-                      <label className="field">
-                        <span className="label">{q.text}</span>
-                        <input
-                          type="text"
-                          value={state.draftAnswers[q.field] ?? ""}
-                          onChange={(e) => set({ draftAnswers: { ...state.draftAnswers, [q.field]: e.target.value } })}
-                        />
+                  {visibleQuestions.map((q) => {
+                    const draft = state.draftAnswers[q.field] ?? "";
+                    const answer = (value: string) =>
+                      set({ draftAnswers: { ...state.draftAnswers, [q.field]: value } });
+                    const picked = q.choices.some((c) => c.value === draft);
+                    return (
+                      <div className="question" key={q.field}>
+                        <p className="label">{q.text}</p>
+                        {q.choices.length > 0 && (
+                          <div className="choices" role="group" aria-label={q.text}>
+                            {q.choices.map((c) => (
+                              <button
+                                type="button"
+                                key={c.value}
+                                className={`choice${draft === c.value ? " picked" : ""}`}
+                                aria-pressed={draft === c.value}
+                                onClick={() => answer(draft === c.value ? "" : c.value)}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {q.answerable && (
+                          <label className="field" style={{ marginTop: q.choices.length ? 8 : 0 }}>
+                            {q.choices.length > 0 && <span className="hint">Or type your own</span>}
+                            <input
+                              type="text"
+                              aria-label={q.choices.length ? `${q.text} (type your own)` : q.text}
+                              value={picked ? "" : draft}
+                              onChange={(e) => answer(e.target.value)}
+                            />
+                          </label>
+                        )}
                         <span className="hint">
                           {q.why}
                           {q.suggestion ? ` ${q.suggestion}` : ""}
+                          {!q.answerable && q.choices.length === 0 && (
+                            <> To answer this, change your description above.</>
+                          )}
                         </span>
-                      </label>
-                    </div>
-                  ))}
+                      </div>
+                    );
+                  })}
+                  {visibleQuestions.some((q) => q.answerable || q.choices.length > 0) && (
                   <div className="btn-row" style={{ marginTop: 8 }}>
                     <button
                       className="btn"
@@ -297,6 +326,7 @@ export function Build({
                     </button>
                     {checking && <Working>Reading again...</Working>}
                   </div>
+                  )}
                 </form>
               )}
 

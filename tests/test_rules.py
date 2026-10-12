@@ -1185,3 +1185,70 @@ def test_deterministic_output_for_anaphoric_exit() -> None:
     b = parse(text)
     assert a.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
+
+
+# ------------------------------------------------------------ tap-to-answer
+
+_NO_STOP = "buy nifty when rsi cracks 30, target 2%"
+_IT = "buy nifty when rsi crosses below 30 and adx > 25, sell when it crosses above 70, stop 1%"
+_BOTH = _BASE.format("15 minute candles") + ", hold overnight, square off at 15:15"
+
+
+def test_the_stop_question_offers_buttons_and_takes_typing() -> None:
+    q = parse(_NO_STOP).questions[0]
+    assert q.field == "exit.stop_pct"
+    assert [c.value for c in q.choices] == ["0.5", "1", "2"]
+    assert q.answerable
+
+
+@pytest.mark.parametrize("value", ["0.5", "1", "2"])
+def test_every_stop_button_is_understood(value) -> None:
+    result = parse(_NO_STOP, answers={"exit.stop_pct": value})
+    assert result.spec.exit.stop_pct == float(value)
+
+
+def test_a_target_can_be_picked_alongside_the_stop() -> None:
+    questions = parse("buy nifty when rsi cracks 30").questions
+    target = next(q for q in questions if q.field == "exit.rule")
+    assert [c.value for c in target.choices] == ["2", "3", "5"]
+    result = parse("buy nifty when rsi cracks 30", answers={"exit.stop_pct": "1", "exit.rule": "3"})
+    assert (result.spec.exit.stop_pct, result.spec.exit.target_pct) == (1.0, 3.0)
+
+
+def test_a_target_alone_never_stands_in_for_the_stop() -> None:
+    result = parse("buy nifty when rsi cracks 30", answers={"exit.rule": "3"})
+    assert result.spec is None
+    assert "exit.stop_pct" in [q.field for q in result.questions]
+
+
+def test_overnight_or_square_off_is_answered_by_a_button() -> None:
+    q = parse(_BOTH).questions[0]
+    assert [c.value for c in q.choices] == ["overnight", "square_off"]
+    assert not q.answerable
+    held = parse(_BOTH, answers={"schedule.intraday": "overnight"}).spec
+    assert held.schedule.intraday is False
+    closed = parse(_BOTH, answers={"schedule.intraday": "square_off"}).spec
+    assert closed.schedule.intraday is True
+    assert "Square off at 15:15" in describe(closed)
+
+
+def test_an_unknown_answer_to_a_button_question_asks_again() -> None:
+    result = parse(_BOTH, answers={"schedule.intraday": "yes"})
+    assert result.spec is None
+    assert [q.field for q in result.questions] == ["schedule.intraday"]
+
+
+def test_which_indicator_it_means_is_a_button_per_indicator() -> None:
+    q = parse(_IT).questions[0]
+    assert q.field == "exit.condition"
+    assert [(c.label, c.value) for c in q.choices] == [("RSI", "rsi"), ("ADX", "adx")]
+    picked = parse(_IT, answers={"exit.condition": "adx"}).spec
+    assert picked.exit.condition.left.name.startswith("adx")
+    # CCI is a family we could read, but the sentence never named it.
+    assert parse(_IT, answers={"exit.condition": "cci"}).spec is None
+
+
+def test_a_question_only_a_new_description_can_answer_says_so() -> None:
+    q = parse("buy nifty, stop 1%").questions[0]
+    assert q.field == "entry.condition"
+    assert not q.answerable and q.choices == []

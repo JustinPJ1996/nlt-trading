@@ -303,7 +303,14 @@ async def translate(request: Request) -> Response:
                 _spec_payload(tr.spec, tr.sources, answers) if tr.spec is not None else None
             ),
             "questions": [
-                {"field": q.field, "text": q.text, "why": q.why, "suggestion": q.suggestion}
+                {
+                    "field": q.field,
+                    "text": q.text,
+                    "why": q.why,
+                    "suggestion": q.suggestion,
+                    "choices": [{"label": c.label, "value": c.value} for c in q.choices],
+                    "answerable": q.answerable,
+                }
                 for q in tr.questions
                 if q.field != "unparsed"
             ],

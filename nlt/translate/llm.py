@@ -276,6 +276,8 @@ def _stop_question(notes: list[str]) -> TranslationResult:
                 ),
                 suggestion="A common starting point is 1%.",
                 field="exit.stop_pct",
+                choices=rules.STOP_CHOICES,
+                answerable=True,
             )
         ],
         notes=notes,
@@ -818,9 +820,16 @@ def parse_llm(
             stray.append(draft.square_off)
 
     if overnight and square_off is not None:
-        return TranslationResult(
-            spec=None, questions=[rules._overnight_conflict_question()], notes=notes, source="llm"
-        )
+        picked = rules.overnight_answer(answers)
+        if picked is None:
+            return TranslationResult(
+                spec=None,
+                questions=[rules._overnight_conflict_question()],
+                notes=notes,
+                source="llm",
+            )
+        if picked == "square_off":
+            overnight = False  # "overnight" needs nothing: holding overnight wins below
 
     if stray:
         logger.warning("parse_llm: numbers not in the sentence %r: %r", original, stray)
