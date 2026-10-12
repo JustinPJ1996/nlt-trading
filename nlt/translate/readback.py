@@ -356,11 +356,11 @@ def _sizing_desc(spec: StrategySpec) -> str:
 
 def _risk_lines(spec: StrategySpec) -> list[str]:
     r = spec.risk
-    lines = [
-        f"Stop trading for the day after losing {format_inr(r.max_daily_loss)}",
-        f"Never risk more than {format_inr(r.max_loss_per_trade)} on one trade",
-        f"At most {_plural(r.max_concurrent_positions, 'position')} open at a time",
-    ]
+    # `max_daily_loss` and `max_loss_per_trade` are deliberately not shown: no
+    # engine applies them yet, and a readback promising a limit nothing enforces
+    # is the readback lying. Justin's call (2026-10-12): they come back as real
+    # limits with live trading (the hard daily limits, D2).
+    lines = [f"At most {_plural(r.max_concurrent_positions, 'position')} open at a time"]
 
     # Only mention a quantity cap where one exists. Stocks have none, because a
     # fixed count cannot bound risk across a market priced from Rs 50 to

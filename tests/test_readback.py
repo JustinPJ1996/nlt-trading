@@ -264,9 +264,10 @@ def test_completeness_every_optional_field_appears() -> None:
     assert "70" in text  # exit condition threshold
     # sizing
     assert "3 lots" in text
-    # risk
-    assert format_inr(2500.0) in text
-    assert format_inr(6000.0) in text
+    # risk -- the rupee loss limits are deliberately absent: nothing enforces
+    # them yet (see test_the_readback_never_promises_a_loss_limit_nothing_enforces)
+    assert format_inr(2500.0) not in text
+    assert format_inr(6000.0) not in text
     assert "2 positions" in text
     assert "4 lots" in text
 
@@ -668,7 +669,7 @@ def test_what_the_user_typed_is_you_said_and_the_rest_is_not() -> None:
     assert labels["Stop loss at -1%"] == SAID
     assert labels["Daily candles"] == DEFAULT
     assert labels["Risk 1% of capital per trade"] == DEFAULT
-    assert labels["Never risk more than Rs 5,000 on one trade"] == DEFAULT
+    assert labels["At most 1 position open at a time"] == DEFAULT
 
 
 def test_an_assumed_instrument_is_default() -> None:
@@ -712,3 +713,14 @@ def test_futures_contract_facts_are_worked_out() -> None:
     assert labels[contract] == WORKED_OUT
     assert labels["Square off at 23:15 if still open"] == WORKED_OUT
     assert labels["Close at the end of the contract's expiry day if still open"] == WORKED_OUT
+
+
+def test_the_readback_never_promises_a_loss_limit_nothing_enforces() -> None:
+    """No engine applies the daily or per-trade rupee loss limits, so the readback
+    must not state them (Justin's call, 2026-10-12)."""
+    spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    text = describe(spec)
+    assert "Stop trading for the day" not in text
+    assert "Never risk more than" not in text
+    assert format_inr(spec.risk.max_daily_loss) not in text
+    assert format_inr(spec.risk.max_loss_per_trade) not in text
