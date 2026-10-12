@@ -2086,7 +2086,15 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             source="rules",
         )
 
-    text = original.lower()
+    # Typos: everyday words fixed and said; a misspelt stock name only asked.
+    # The spec keeps `original`, the user's words as typed.
+    from nlt.translate import spelling
+
+    read, spelling_notes, spelling_question = spelling.prepare(original, answers)
+    if spelling_question is not None:
+        return TranslationResult(spec=None, questions=[spelling_question], source="rules")
+    notes.extend(spelling_notes)
+    text = read.lower()
     # "5 percent" -> "5%" and "close_price" -> "close" up front so every pattern
     # below only has to know the "%"/"close" spelling, not every synonym a user
     # might type for it.
