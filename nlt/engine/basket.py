@@ -31,6 +31,7 @@ that symbol contributes nothing, not a day it silently repeats its last price.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -40,6 +41,7 @@ from nlt.engine.backtest import (
     _DEFAULT_INTRADAY_BARS_PER_YEAR,
     BARS_PER_YEAR,
     NO_CHARGES_NOTE,
+    Decision,
     Trade,
     _apply_slippage,
     _assert_equity_floor,
@@ -47,6 +49,7 @@ from nlt.engine.backtest import (
     _default_lot_size,
     _describe,
     _gross_pnl,
+    _in_blocked_window,
     _open_position,
     _OpenPosition,
     _zero_charges,
@@ -66,6 +69,7 @@ class BasketResult:
     per_symbol: dict[str, dict]
     warnings: list[str]
     skipped: dict[str, str]
+    decisions: list[Decision] = field(default_factory=list)
 
 
 @dataclass
@@ -85,6 +89,7 @@ class _SymbolTrack:
     entry_reason: str
     open_positions: list[_OpenPosition] = field(default_factory=list)
     pending_entry: bool = False
+    pending_entry_ts: pd.Timestamp | None = None
     trades: list[Trade] = field(default_factory=list)
 
 
@@ -96,6 +101,7 @@ def run_basket_backtest(
     charge_fn=None,
     slippage_pct: float = 0.02,
     trade_from: pd.Timestamp | None = None,
+    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
 ) -> BasketResult:
     """Run `spec` across every symbol in `bars_by_symbol`, sharing one account.
 
@@ -109,6 +115,10 @@ def run_basket_backtest(
 
     `trade_from` means what it means in `run_backtest`: the first bar allowed
     to signal an entry, with everything earlier used only to warm indicators up.
+
+    `blocked_windows` is the same pause mechanism `run_backtest` has: a new
+    entry signalling inside one of these `[start, end)` windows is skipped
+    (reason "paused"); a position already open keeps being managed normally.
     """
 
     # The basket loop does not carry the intraday machinery the single-symbol
@@ -186,6 +196,7 @@ def run_basket_backtest(
     all_days = _union_index(tracks)
 
     all_trades: list[Trade] = []
+    all_decisions: list[Decision] = []
     equity = np.empty(len(all_days), dtype="float64")
     realized_pnl = 0.0
 
@@ -221,8 +232,11 @@ def run_basket_backtest(
         for s in candidates:
             track = tracks[s]
             track.pending_entry = False
+            signal_ts = track.pending_entry_ts
+            track.pending_entry_ts = None
             if total_open >= max_concurrent:
                 dropped_for_slots += 1
+                all_decisions.append(Decision(signal_ts, s, "signal_skipped", "slots", {}))
                 continue
             j = track.bars.index.get_loc(ts)
             bar = track.bars.iloc[j]
@@ -236,9 +250,11 @@ def run_basket_backtest(
                 lot_size,
                 capital_total,
                 capital_spare,
+                signal_time=signal_ts,
             )
             if pos is None:
                 dropped_for_capital += 1
+                all_decisions.append(Decision(signal_ts, s, "signal_skipped", "capital", {}))
                 continue
             if used_fallback:
                 risk_fallback_count += 1
@@ -284,9 +300,17 @@ def run_basket_backtest(
                     # single-symbol basket must produce byte-identical trades.
                     pos.bars_held += 1
                     outcome = ("end_of_data", bar.close, False)
-                reason, raw_price, _ambiguous = outcome
+                reason, raw_price, ambiguous = outcome
                 trade = _close_position(
-                    pos, s, ts, reason, raw_price, slippage_pct, charge_fn, track.entry_reason
+                    pos,
+                    s,
+                    ts,
+                    reason,
+                    raw_price,
+                    slippage_pct,
+                    charge_fn,
+                    track.entry_reason,
+                    ambiguous,
                 )
                 realized_pnl += trade.net_pnl
                 track.trades.append(trade)
@@ -315,23 +339,49 @@ def run_basket_backtest(
             if ts not in track.bars.index:
                 continue
             j = track.bars.index.get_loc(ts)
-            weekday_ok = ts.weekday() in spec.schedule.weekdays and (
-                trade_from is None or ts >= trade_from
-            )
+            trade_from_ok = trade_from is None or ts >= trade_from
+            weekday_ok_bare = ts.weekday() in spec.schedule.weekdays
+            paused = _in_blocked_window(ts, blocked_windows)
+            weekday_ok = weekday_ok_bare and not paused and trade_from_ok
             sig = bool(track.entry_signal.iloc[j])
             has_next_bar = j + 1 < len(track.bars)
-            if sig and weekday_ok and has_next_bar:
-                if total_open_after_exits < max_concurrent:
-                    track.pending_entry = True
-                else:
-                    # The portfolio is already fully invested, so this signal
-                    # never even gets a chance to compete at fill time -- it
-                    # would otherwise vanish from every count below (fill-time
-                    # `dropped_for_slots` only sees signals that made it to
-                    # `pending_entry`). Counted here so a strategy that fires
-                    # on 40 names while 2 slots are held does not look, from
-                    # the warnings alone, like it only ever saw 2 signals.
-                    dropped_for_slots += 1
+            # A decision is only meaningful from `trade_from` onward -- bars
+            # before it are history used only to warm indicators up, never a
+            # choice the engine made (see `run_backtest`'s own docstring).
+            emit_decision = sig and trade_from_ok
+            if sig and weekday_ok:
+                room = total_open_after_exits < max_concurrent
+                # The decision is emitted whether or not a next bar exists in
+                # THIS run (see `run_backtest`'s matching comment): paper
+                # trading re-runs with one more candle appended each pass, and
+                # that candle is the fill this "queued" decision promises.
+                # The `dropped_for_slots` counter and `pending_entry` below
+                # stay gated on `has_next_bar`, unchanged from before this
+                # feature existed -- only decision emission is new.
+                if emit_decision:
+                    if room:
+                        all_decisions.append(Decision(ts, s, "signal_taken", "queued", {}))
+                    else:
+                        all_decisions.append(Decision(ts, s, "signal_skipped", "slots", {}))
+                if has_next_bar:
+                    if room:
+                        track.pending_entry = True
+                        track.pending_entry_ts = ts
+                    else:
+                        # The portfolio is already fully invested, so this
+                        # signal never even gets a chance to compete at fill
+                        # time -- it would otherwise vanish from every count
+                        # below (fill-time `dropped_for_slots` only sees
+                        # signals that made it to `pending_entry`). Counted
+                        # here so a strategy that fires on 40 names while 2
+                        # slots are held does not look, from the warnings
+                        # alone, like it only ever saw 2 signals.
+                        dropped_for_slots += 1
+            elif emit_decision:
+                if not weekday_ok_bare:
+                    all_decisions.append(Decision(ts, s, "signal_skipped", "weekday", {}))
+                elif paused:
+                    all_decisions.append(Decision(ts, s, "signal_skipped", "paused", {}))
             if track.exit_signal is not None and bool(track.exit_signal.iloc[j]):
                 for pos in track.open_positions:
                     pos.pending_condition_exit = True
@@ -369,6 +419,7 @@ def run_basket_backtest(
         per_symbol=per_symbol,
         warnings=warnings,
         skipped=skipped,
+        decisions=all_decisions,
     )
 
 
@@ -381,6 +432,7 @@ def _close_position(
     slippage_pct: float,
     charge_fn,
     entry_reason: str,
+    ambiguous: bool = False,
 ) -> Trade:
     """Turn a `_check_exit` outcome into a `Trade`, exactly as `run_backtest` does.
 
@@ -412,6 +464,12 @@ def _close_position(
         bars_held=pos.bars_held + 1,
         entry_reason=entry_reason,
         symbol=symbol,
+        signal_time=pos.signal_time,
+        stop_level=pos.stop_level,
+        target_level=pos.target_level,
+        raw_entry_price=pos.raw_entry_price,
+        raw_exit_price=raw_price,
+        both_hit=bool(ambiguous),
     )
 
 

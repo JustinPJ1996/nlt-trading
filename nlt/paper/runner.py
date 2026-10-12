@@ -38,7 +38,6 @@ from nlt.data import kite
 from nlt.data.session import NSE_EQUITY, Session, session_date
 from nlt.engine.backtest import Trade, run_backtest
 from nlt.engine.basket import run_basket_backtest
-from nlt.engine.conditions import evaluate
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 
@@ -166,13 +165,20 @@ def _current_contract_from(
     return after[0] if after else None
 
 
-def _run_engine(spec, bars_by_symbol, *, capital, charge_fn, trade_from, now, listed=()):
-    """The same engine a backtest uses. Returns (trades, single-symbol result or None)."""
+def _run_engine(
+    spec, bars_by_symbol, *, capital, charge_fn, trade_from, now, listed=(), blocked_windows=()
+):
+    """The same engine a backtest uses. Returns (trades, single-symbol result or None, decisions)."""
     if spec.instrument.is_universe:
         result = run_basket_backtest(
-            spec, bars_by_symbol, capital=capital, charge_fn=charge_fn, trade_from=trade_from
+            spec,
+            bars_by_symbol,
+            capital=capital,
+            charge_fn=charge_fn,
+            trade_from=trade_from,
+            blocked_windows=blocked_windows,
         )
-        return result.trades, None
+        return result.trades, None, result.decisions
     (bars,) = bars_by_symbol.values()
     # The forming candle was already removed against the runner's own clock;
     # the engine's wall-clock check is turned off so a replayed past day is
@@ -187,8 +193,37 @@ def _run_engine(spec, bars_by_symbol, *, capital, charge_fn, trade_from, now, li
         final_session_in_progress=spec.instrument.timeframe != "1d"
         and _session_in_progress(bars, now, _session_of(spec)),
         listed_expiries=listed,
+        blocked_windows=blocked_windows,
     )
-    return result.trades, result
+    return result.trades, result, result.decisions
+
+
+def _parse_blocked_windows(params: dict) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Reads `params["blocked_windows"]`: a list of `[start, end]` ISO strings.
+
+    Not driven by any screen today -- nothing in `web/` or `app/api.py` writes
+    this key -- but a saved run's params can already carry it by hand (or from
+    a future scheduling feature) and have the engine honour it, which is the
+    whole point of `run_backtest`/`run_basket_backtest` taking the parameter
+    in the first place. Naive timestamps are read as IST, matching every other
+    time the paper runner handles (see `started_at` just above its own call
+    site).
+    """
+    windows = []
+    for pair in params.get("blocked_windows") or []:
+        start, end = pair
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+        if start_ts.tzinfo is None:
+            start_ts = start_ts.tz_localize(IST)
+        else:
+            start_ts = start_ts.tz_convert(IST)
+        if end_ts.tzinfo is None:
+            end_ts = end_ts.tz_localize(IST)
+        else:
+            end_ts = end_ts.tz_convert(IST)
+        windows.append((start_ts, end_ts))
+    return windows
 
 
 def _key(t: Trade, fallback_symbol: str) -> str:
@@ -209,8 +244,28 @@ def step(
     run_id = run["id"]
     params = json.loads(run["params_json"] or "{}")
 
+    _prior_status = store.paper_status(run_id)
+    _prior_health = _prior_status["health"] if _prior_status else None
+
+    def _set_status(health: str, message: str, last_bar_time=None, snapshot=None) -> None:
+        """`store.set_paper_status`, plus one `note` event the FIRST pass health
+        changes to `health` -- not on every pass it stays there. A paper run can
+        sit "feed_down" for hours; nobody wants sixty identical feed rows for it.
+        """
+        nonlocal _prior_health
+        if health != _prior_health:
+            store.record_paper_event(
+                run_id,
+                "note",
+                f"{health}|{_iso(now)}",
+                observed_at=_iso(now),
+                detail={"health": health, "message": message},
+            )
+            _prior_health = health
+        store.set_paper_status(run_id, health, message, last_bar_time, snapshot)
+
     if store.paper_kill_switch_engaged():
-        store.set_paper_status(run_id, "paused", "Paused: the paper kill switch is on.")
+        _set_status("paused", "Paused: the paper kill switch is on.")
         return StepResult("paused", "paper kill switch engaged")
 
     spec = store.load_spec(run["strategy_id"])
@@ -240,20 +295,20 @@ def step(
             raw = fetch(source_key, timeframe, fetch_start, now.date())
         except kite.KiteTokenExpired:
             msg = "Kite token has expired. Paste today's token to resume."
-            store.set_paper_status(run_id, "token_expired", msg)
+            _set_status("token_expired", msg)
             return StepResult("token_expired", msg)
         except kite.KiteNotConnected:
             msg = "Kite is not connected. Save your Kite login to start."
-            store.set_paper_status(run_id, "not_connected", msg)
+            _set_status("not_connected", msg)
             return StepResult("not_connected", msg)
         except kite.KiteLoginFailed as exc:
             msg = f"Could not log in to Kite. {exc}"
-            store.set_paper_status(run_id, "login_failed", msg)
+            _set_status("login_failed", msg)
             return StepResult("login_failed", msg)
         except kite.KiteError as exc:
             if len(_symbols(spec)) == 1:
                 msg = f"Could not get prices from Kite: {exc}"
-                store.set_paper_status(run_id, "feed_down", msg)
+                _set_status("feed_down", msg)
                 return StepResult("feed_down", msg)
             failures.append(symbol)
             continue
@@ -263,7 +318,7 @@ def step(
 
     if not bars_by_symbol:
         msg = "No finished candles yet."
-        store.set_paper_status(run_id, "waiting", msg)
+        _set_status("waiting", msg)
         return StepResult("waiting", msg)
 
     contract_from = None
@@ -272,7 +327,8 @@ def step(
     if contract_from is not None:
         trade_from = max(trade_from, contract_from)
 
-    trades, single = _run_engine(
+    blocked_windows = _parse_blocked_windows(params)
+    trades, single, decisions = _run_engine(
         spec,
         bars_by_symbol,
         capital=float(params.get("capital", 100_000.0)),
@@ -280,6 +336,7 @@ def step(
         trade_from=trade_from,
         now=now,
         listed=listed,
+        blocked_windows=blocked_windows,
     )
     fallback_symbol = spec.instrument.symbol
     observed = _iso(now)
@@ -319,7 +376,13 @@ def step(
                 direction=t.direction,
                 quantity=t.quantity,
                 price=t.entry_price,
-                detail={"reason": t.entry_reason},
+                detail={
+                    "reason": t.entry_reason,
+                    "signal_time": _iso(t.signal_time) if t.signal_time is not None else None,
+                    "stop_level": t.stop_level,
+                    "target_level": t.target_level,
+                    "raw_entry_price": t.raw_entry_price,
+                },
             ):
                 new.append(f"entry {key}")
         else:
@@ -370,6 +433,12 @@ def step(
                     "charges": t.charges,
                     "entry_time": _iso(t.entry_time),
                     "entry_price": t.entry_price,
+                    "signal_time": _iso(t.signal_time) if t.signal_time is not None else None,
+                    "stop_level": t.stop_level,
+                    "target_level": t.target_level,
+                    "raw_entry_price": t.raw_entry_price,
+                    "raw_exit_price": t.raw_exit_price,
+                    "both_hit": t.both_hit,
                 },
             ):
                 store.save_trades(run_id, [t], symbol)
@@ -404,23 +473,61 @@ def step(
     last_bar = max(df.index[-1] for df in bars_by_symbol.values())
     open_trades = [t for t in trades if t.exit_reason == "end_of_data"]
 
-    if single is not None and len(open_trades) < spec.risk.max_concurrent_positions:
-        entry_signal = evaluate(spec.entry, single.features)
-        bar_ts = single.features.index[-1]
-        if bar_ts >= trade_from and bool(entry_signal.iloc[-1]):
-            if store.record_paper_event(
-                run_id,
-                "signal",
-                f"{fallback_symbol}|{_iso(bar_ts)}",
-                observed_at=observed,
-                symbol=fallback_symbol,
-                bar_time=_iso(bar_ts),
-                price=float(single.features["close"].iloc[-1])
-                if "close" in single.features
-                else None,
-                detail={"note": "entry condition met; fills at the next candle's open"},
-            ):
-                new.append(f"signal {_iso(bar_ts)}")
+    # --- every decision the engine made, including every SKIPPED signal -----
+    # Recorded verbatim into `paper_decision` (the activity feed's source),
+    # idempotently exactly like `paper_event`. Only decisions from `trade_from`
+    # onward are the engine's own choices; earlier ones cannot occur (see
+    # `run_backtest`'s own gate on this), but the same floor is applied here
+    # too, in case a future engine change ever stopped enforcing it.
+    for d in decisions:
+        d_time = pd.Timestamp(d.time)
+        if d_time < trade_from:
+            continue
+        d_symbol = d.symbol or fallback_symbol
+        d_key = f"{d_symbol}|{_iso(d_time)}"
+        if store.record_paper_decision(
+            run_id,
+            d.kind,
+            d_key,
+            observed_at=observed,
+            symbol=d_symbol,
+            bar_time=_iso(d_time),
+            reason_code=d.reason_code,
+            detail=d.detail,
+        ):
+            new.append(f"{d.kind} {d.reason_code} {d_key}")
+
+    # --- the "signal" row: the engine's OWN signal_taken decision on each
+    # symbol's newest closed candle -- never a hand-rolled re-check of the
+    # entry rule. A re-check here, ignoring the engine's own concurrency,
+    # capital and expiry/boundary gates, is exactly how a feed row could end
+    # up saying "fills at the next open" for a signal the engine actually
+    # skipped -- the one mistake this file must never make again.
+    last_bar_per_symbol = {s: df.index[-1] for s, df in bars_by_symbol.items()}
+    for d in decisions:
+        if d.kind != "signal_taken":
+            continue
+        d_time = pd.Timestamp(d.time)
+        if d_time < trade_from:
+            continue
+        d_symbol = d.symbol or fallback_symbol
+        if last_bar_per_symbol.get(d_symbol) != d_time:
+            continue  # queued on an older candle, not the newest one
+        price = None
+        sym_bars = bars_by_symbol.get(d_symbol)
+        if sym_bars is not None and d_time in sym_bars.index:
+            price = float(sym_bars.loc[d_time, "close"])
+        if store.record_paper_event(
+            run_id,
+            "signal",
+            f"{d_symbol}|{_iso(d_time)}",
+            observed_at=observed,
+            symbol=d_symbol,
+            bar_time=_iso(d_time),
+            price=price,
+            detail={"note": "entry condition met; queued for the next candle's open"},
+        ):
+            new.append(f"signal {_iso(d_time)}")
 
     closed = [t for t in trades if t.exit_reason != "end_of_data"]
     capital = float(params.get("capital", 100_000.0))
@@ -449,7 +556,7 @@ def step(
     message = f"Up to date to the candle at {pd.Timestamp(last_bar):%d %b %H:%M}."
     if failures:
         message += f" Could not load {len(failures)} symbol(s)."
-    store.set_paper_status(run_id, "ok", message, _iso(last_bar), snapshot)
+    _set_status("ok", message, _iso(last_bar), snapshot)
     return StepResult("ok", message, new)
 
 
