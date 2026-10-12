@@ -911,3 +911,54 @@ _EXIT_WORDS = {
     "expiry": "contract expired",
     "end_of_data": "still open when the test ended",
 }
+
+
+# ------------------------------------------------------------------ CSV
+
+
+TRADE_CSV_COLUMNS = [
+    "symbol",
+    "direction",
+    "entered",
+    "entry_price",
+    "exited",
+    "exit_price",
+    "quantity",
+    "why_it_closed",
+    "profit_before_charges",
+    "charges",
+    "profit_after_charges",
+]
+
+
+def trades_csv(result: PipelineResult) -> str:
+    """Every trade of a run as CSV, for a spreadsheet (competitor review C4).
+
+    Plain numbers (no "Rs", no commas) so a spreadsheet can add them up; the
+    columns are the same trades the results screen lists, and the last column
+    adds up to the run's profit after charges.
+    """
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(TRADE_CSV_COLUMNS)
+    spec = result.backtest.spec
+    for t in result.backtest.trades:
+        writer.writerow(
+            [
+                t.symbol or spec.instrument.symbol,
+                "buy" if t.direction == "long" else "short",
+                t.entry_time.strftime("%Y-%m-%d %H:%M"),
+                round(float(t.entry_price), 2),
+                t.exit_time.strftime("%Y-%m-%d %H:%M"),
+                round(float(t.exit_price), 2),
+                int(t.quantity),
+                _EXIT_WORDS.get(t.exit_reason, t.exit_reason),
+                round(float(t.gross_pnl), 2),
+                round(float(t.charges), 2),
+                round(float(t.net_pnl), 2),
+            ]
+        )
+    return buf.getvalue()

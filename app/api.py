@@ -32,6 +32,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -560,6 +561,21 @@ async def save(request: Request) -> Response:
     return JSONResponse({"strategy_id": strategy_id, "name": result.spec.name})
 
 
+async def trades_csv(request: Request) -> Response:
+    cached = request.app.state.results.get(request.path_params["rid"])
+    if cached is None:
+        raise _BadRequest(
+            "That backtest is no longer in memory (the app was restarted). Run it again."
+        )
+    result, _params = cached
+    name = re.sub(r"[^A-Za-z0-9]+", "-", result.spec.name).strip("-").lower() or "trades"
+    return Response(
+        logic.trades_csv(result),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}-trades.csv"'},
+    )
+
+
 # ---------------------------------------------------------------- strategies
 
 
@@ -985,6 +1001,7 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/options", options),
         r("/api/translate", translate, ["POST"]),
         r("/api/backtest", backtest, ["POST"]),
+        r("/api/results/{rid}/trades.csv", trades_csv),
         r("/api/strategies", strategies),
         r("/api/strategies", save, ["POST"]),
         r("/api/strategies/{sid:int}/spec", strategy_spec),

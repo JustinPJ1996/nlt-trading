@@ -241,6 +241,17 @@ export function Results({
         <h2 className="section-title" id="trades">
           Every trade{result.trades.length ? ` (${result.trades.length})` : ""}
         </h2>
+        {result.trades.length > 0 && (
+          <p style={{ marginBottom: 12 }}>
+            <a
+              className="btn secondary"
+              href={`/api/results/${encodeURIComponent(result.result_id)}/trades.csv`}
+              download
+            >
+              Download trades (CSV)
+            </a>
+          </p>
+        )}
         {result.trades.length === 0 ? (
           <p className="muted">This strategy never took a trade in the period tested.</p>
         ) : (

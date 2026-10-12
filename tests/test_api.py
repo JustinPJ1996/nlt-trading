@@ -626,3 +626,36 @@ def test_the_report_carries_how_it_was_tested_and_says_nothing_twice(authed) -> 
     assert any("only sees survivors" in w for w in body["weak_spots"])
     assert body["assumptions"] and body["weak_spots"]
     assert not set(body["notes"]) & set(body["weak_spots"])
+
+
+# ------------------------------------------------------------------ CSV
+
+
+def test_trades_download_as_csv_that_adds_up(authed) -> None:
+    import csv
+    import io
+
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": _spec_json(RSI), "capital": 2500000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    r = authed.get(f"/api/results/{body['result_id']}/trades.csv")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    assert len(rows) == len(body["trades"])
+    assert rows[0]["symbol"] == "NIFTY"
+    net = sum(float(row["profit_after_charges"]) for row in rows)
+    assert net == pytest.approx(sum(t["pnl"] for t in body["trades"]), abs=0.05)
+    for row in rows:
+        gross, charges = float(row["profit_before_charges"]), float(row["charges"])
+        assert float(row["profit_after_charges"]) == pytest.approx(gross - charges, abs=0.02)
+
+
+def test_trades_csv_needs_a_login(client) -> None:
+    assert client.get("/api/results/anything/trades.csv").status_code == 401
+
+
+def test_an_unknown_result_has_no_csv(authed) -> None:
+    assert authed.get("/api/results/nope/trades.csv").status_code == 400
