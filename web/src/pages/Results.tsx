@@ -99,7 +99,11 @@ export function Results({
       </div>
       <p className="period">
         {headline.first} to {headline.last}, starting with {params.capital_text}, charged{" "}
-        {params.cost_model.charAt(0).toLowerCase() + params.cost_model.slice(1)} costs.
+        {(() => {
+          const charged = params.charges_applied ?? params.cost_model;
+          return charged.charAt(0).toLowerCase() + charged.slice(1);
+        })()}{" "}
+        costs.
       </p>
 
       {verdict.flags.length > 0 && (

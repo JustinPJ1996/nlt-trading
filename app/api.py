@@ -537,6 +537,8 @@ async def backtest(request: Request) -> Response:
         "capital": capital,
         "capital_text": format_inr(capital),
         "cost_model": cost_label,
+        # What was really charged: shares and futures use their own charges.
+        "charges_applied": logic.applied_charges_label(spec, cost_label),
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
     }

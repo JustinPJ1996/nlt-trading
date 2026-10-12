@@ -758,3 +758,22 @@ def test_made_up_labels_are_refused(authed) -> None:
         json={"spec": u["spec"], "sources": {"exit.stop": "certain"}, "edits": {"stop_pct": "2"}},
     )
     assert r.status_code == 400
+
+
+def test_the_results_line_names_the_charges_really_applied(authed) -> None:
+    stock = _spec_json("buy reliance when rsi cracks 30, target 5%, stop loss 2%")
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": stock, "capital": 2500000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    assert body["params"]["cost_model"] == "Index futures"
+    assert body["params"]["charges_applied"] == "Equity delivery"
+
+
+def test_daily_trades_download_without_a_made_up_time(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": _spec_json(RSI), "capital": 2500000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    text = authed.get(f"/api/results/{body['result_id']}/trades.csv").text
+    assert "00:00" not in text

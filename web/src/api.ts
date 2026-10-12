@@ -129,6 +129,7 @@ export type BacktestParams = {
   capital: number;
   capital_text: string;
   cost_model: string;
+  charges_applied?: string;
   start: string | null;
   end: string | null;
 };

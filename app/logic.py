@@ -127,6 +127,16 @@ COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
 }
 
 
+def applied_charges_label(spec: StrategySpec, label: str) -> str:
+    """The name of the charges a run really used, which for shares and futures is
+    not the dropdown's (see `charge_model_for_spec`)."""
+    model, _note = charge_model_for_spec(spec, label)
+    for name, candidate in COST_MODEL_LABELS.items():
+        if type(candidate) is type(model):
+            return name
+    return {McxFuturesCharges: "MCX commodity futures"}.get(type(model), label)
+
+
 def charge_model_for_label(label: str) -> ChargeModel:
     """Looks up a cost model by its dropdown label, defaulting to index futures costs."""
     return COST_MODEL_LABELS.get(label, NseFuturesCharges())
@@ -945,14 +955,16 @@ def trades_csv(result: PipelineResult) -> str:
     writer = csv.writer(buf)
     writer.writerow(TRADE_CSV_COLUMNS)
     spec = result.backtest.spec
+    # A daily candle has no time of day; printing 00:00 would suggest one.
+    when = "%Y-%m-%d" if spec.instrument.timeframe == "1d" else "%Y-%m-%d %H:%M"
     for t in result.backtest.trades:
         writer.writerow(
             [
                 t.symbol or spec.instrument.symbol,
                 "buy" if t.direction == "long" else "short",
-                t.entry_time.strftime("%Y-%m-%d %H:%M"),
+                t.entry_time.strftime(when),
                 round(float(t.entry_price), 2),
-                t.exit_time.strftime("%Y-%m-%d %H:%M"),
+                t.exit_time.strftime(when),
                 round(float(t.exit_price), 2),
                 int(t.quantity),
                 _EXIT_WORDS.get(t.exit_reason, t.exit_reason),
