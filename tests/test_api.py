@@ -497,3 +497,23 @@ def test_period_dates_never_start_before_trusted_history() -> None:
     assert logic.period_dates(BacktestPeriod(words="2027", year=2027), today) is None
     months = logic.period_dates(BacktestPeriod(words="6 months", last=6, unit="months"), today)
     assert months["start"] == "2026-04-12"
+
+
+# ------------------------------------------------------------ readback labels
+
+
+def test_translate_labels_every_readback_line(authed) -> None:
+    body = authed.post("/api/translate", json={"text": RSI}).json()["understood"]
+    body_lines = [r for r in body["readback"].splitlines() if r.startswith("  ")]
+    assert len(body["readback_labels"]) == len(body_lines)
+    assert set(body["readback_labels"]) <= {"said", "worked_out", "default"}
+
+
+def test_a_saved_strategy_has_no_guessed_labels(authed) -> None:
+    from nlt.translate.readback import describe_lines
+
+    spec = logic.translate_text(RSI).spec
+    assert api._spec_payload(spec)["readback_labels"] is None
+    assert [label for *_x, label in describe_lines(spec, None)] == [None] * len(
+        describe_lines(spec, None)
+    )

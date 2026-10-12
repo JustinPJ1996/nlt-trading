@@ -660,6 +660,41 @@ textarea:focus {
   margin: 0;
 }
 
+.readback-label {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-family: var(--sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: 0.15em;
+  white-space: nowrap;
+}
+
+.readback-label.said {
+  background: var(--good-wash);
+  color: var(--good);
+}
+
+.readback-label.worked_out {
+  background: var(--info-wash);
+  color: var(--ink-2);
+}
+
+.readback-label.default {
+  background: var(--warning-wash);
+  color: var(--warning);
+}
+
+.readback-legend {
+  margin-top: 16px;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+
 .readback.compact {
   font-size: 1.05rem;
   padding: 16px 20px;

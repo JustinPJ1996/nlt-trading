@@ -884,4 +884,13 @@ def parse_llm(
             notes=notes,
         )
 
-    return TranslationResult(spec=spec, questions=[], notes=notes, source="llm", period=period)
+    sources = rules.recipe_sources(
+        spec,
+        symbol_said=bool(rules_kwargs.get("symbol") or by_field.get("instrument")),
+        timeframe_said=bool(timeframe),
+        sizing_said=draft.sizing is not None,
+        schedule_said=square_off is not None or overnight,
+    )
+    return TranslationResult(
+        spec=spec, questions=[], notes=notes, source="llm", period=period, sources=sources
+    )

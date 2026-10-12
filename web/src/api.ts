@@ -42,9 +42,14 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 
 // ------------------------------------------------------------------- shapes
 
+// Where a readback line came from. Null when unknown (a saved strategy).
+export type ReadbackLabel = "said" | "worked_out" | "default";
+
 export type Understood = {
   spec: unknown;
   readback: string;
+  // One per body line of `readback`, in order; null when not known.
+  readback_labels?: (ReadbackLabel | null)[] | null;
   name: string;
   symbol: string;
   timeframe: string;

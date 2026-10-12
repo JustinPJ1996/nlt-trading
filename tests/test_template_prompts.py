@@ -127,3 +127,17 @@ def test_ai_path_template_periods_become_the_test_period() -> None:
         if result.spec is not None:
             assert result.period is not None, case["name"]
             assert result.period.words in case["text"].lower(), case["name"]
+
+
+def test_ai_path_labels_for_a_template() -> None:
+    """INFY, hourly, hold overnight, stop 2%: all typed. The Bollinger 20/2 is ours."""
+    from nlt.translate.readback import SAID, WORKED_OUT, describe_lines
+
+    case, result = next((c, r) for c, r in _replayed() if c["name"] == "Bollinger Band Bounce")
+    labels = {line: label for _h, line, label in describe_lines(result.spec, result.sources)}
+    assert labels["INFY (NSE)"] == SAID
+    assert labels["Hourly candles"] == SAID
+    assert labels["Stop loss at -2%"] == SAID
+    assert labels["Hold overnight: no square-off before the close"] == SAID
+    entry = next(line for line in labels if line.startswith("When "))
+    assert labels[entry] == WORKED_OUT

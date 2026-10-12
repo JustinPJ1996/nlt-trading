@@ -102,6 +102,9 @@ class TranslationResult:
     notes: list[str] = field(default_factory=list)
     unparsed: list[str] = field(default_factory=list)
     source: str = "rules"
+    # Where each part of the recipe came from, for the readback's labels:
+    # part name -> readback.SAID / WORKED_OUT / DEFAULT. Only set with a spec.
+    sources: dict[str, str] = field(default_factory=dict)
     # The test period the user asked for ("backtest the last 2 years"), kept
     # off the spec on purpose -- it belongs to a run, not to the strategy.
     period: BacktestPeriod | None = None
@@ -1827,6 +1830,11 @@ def _extract_sizing(text: str, instrument_kwargs: dict | None = None) -> tuple[s
     return text, _default_sizing(instrument_kwargs or {})
 
 
+def _sizing_said(text: str) -> bool:
+    """Whether `_extract_sizing` would read a size the user stated."""
+    return any(p.search(text) for p in (_RISK_PCT_PATTERN, _LOTS_PATTERN, _VALUE_PATTERN))
+
+
 # --------------------------------------------------------------------- unparsed
 
 
@@ -2039,6 +2047,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     text = re.sub(r"\bclose_price\b", "close", text)
 
     text, instrument_kwargs, instrument_question = _extract_instrument(text)
+    symbol_said = bool(instrument_kwargs and "symbol" in instrument_kwargs)
     if instrument_question is not None:
         return TranslationResult(
             spec=None, questions=[instrument_question], notes=notes, source="rules"
@@ -2112,6 +2121,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
     notes.extend(exit_cond_notes)
 
+    sizing_said = _sizing_said(text)
     text, sizing = _extract_sizing(text, instrument_kwargs)
 
     entry_condition, entry_inds, entry_notes, entry_leftover, entry_refusal = _parse_condition_text(
@@ -2251,9 +2261,65 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules"
         )
 
-    return TranslationResult(
-        spec=spec, questions=[], notes=notes, unparsed=unparsed, source="rules", period=period
+    sources = recipe_sources(
+        spec,
+        symbol_said=symbol_said,
+        timeframe_said=bool(timeframe),
+        sizing_said=sizing_said,
+        schedule_said=bool(
+            rest_exits.get("_square_off") or rest_exits.get("_intraday") or overnight
+        ),
     )
+    return TranslationResult(
+        spec=spec,
+        questions=[],
+        notes=notes,
+        unparsed=unparsed,
+        source="rules",
+        period=period,
+        sources=sources,
+    )
+
+
+def recipe_sources(
+    spec: StrategySpec,
+    *,
+    symbol_said: bool,
+    timeframe_said: bool,
+    sizing_said: bool,
+    schedule_said: bool,
+) -> dict[str, str]:
+    """Where each readback part came from, for both readers.
+
+    Entry and exit rules are always the user's: neither reader invents one
+    (a stop given as an answer to our question is still theirs). Everything
+    else is theirs only when the reader saw them say it.
+    """
+    from nlt.data.futures import is_commodity
+    from nlt.translate.readback import DEFAULT, SAID, WORKED_OUT
+
+    out = {"entry": SAID}
+    e = spec.exit
+    for part, value in [
+        ("exit.target", e.target_pct),
+        ("exit.stop", e.stop_pct),
+        ("exit.trailing_stop", e.trailing_stop_pct),
+        ("exit.atr_stop", e.stop_atr_mult),
+        ("exit.condition", e.condition),
+        ("exit.max_bars_held", e.max_bars_held),
+    ]:
+        if value is not None:
+            out[part] = SAID
+    out["instrument"] = SAID if symbol_said else DEFAULT
+    out["timeframe"] = SAID if timeframe_said else DEFAULT
+    out["sizing"] = SAID if sizing_said else DEFAULT
+    if schedule_said:
+        out["schedule"] = SAID
+    elif spec.instrument.is_future and is_commodity(spec.instrument.symbol):
+        out["schedule"] = WORKED_OUT  # from the market's own closing time
+    else:
+        out["schedule"] = DEFAULT
+    return out
 
 
 def _float_answer(answers: dict[str, str], field_name: str) -> float | None:

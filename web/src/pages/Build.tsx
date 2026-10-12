@@ -248,7 +248,7 @@ export function Build({
                   ) : (
                     <p className="muted">Read this carefully. If anything is not what you meant, change your description.</p>
                   )}
-                  <Readback text={understood.readback} />
+                  <Readback text={understood.readback} labels={understood.readback_labels} />
                   {tr.read_by_ai && (
                     <p className="ai-note">
                       An AI model helped read your sentence. The description above is written by the

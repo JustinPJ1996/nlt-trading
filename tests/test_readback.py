@@ -367,11 +367,13 @@ def test_index_instrument_unchanged_by_the_stock_work() -> None:
         indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
         exit=ExitRules(stop_pct=1.0, target_pct=2.0),
     )
-    text = describe(spec)
-    assert "NIFTY, on daily bars" in text
+    lines = describe(spec).splitlines()
+    assert "  NIFTY index" in lines
+    assert "  Daily candles" in lines
 
 
-def test_daily_timeframe_produces_no_redundant_candle_suffix_for_a_stock() -> None:
+def test_the_bar_size_is_its_own_line_even_when_daily() -> None:
+    """Its own line so it can be labelled: daily is usually assumed, not said."""
     spec = StrategySpec(
         name="Single Stock",
         description="test",
@@ -380,9 +382,8 @@ def test_daily_timeframe_produces_no_redundant_candle_suffix_for_a_stock() -> No
         indicators=[IndicatorSpec(id="rsi14", type="rsi", params={"length": 14})],
         exit=ExitRules(stop_pct=1.0, target_pct=2.0),
     )
-    text = describe(spec)
-    assert "TCS (NSE)" in text
-    assert "candles" not in text.lower()
+    lines = describe(spec).splitlines()
+    assert lines[3:5] == ["  TCS (NSE)", "  Daily candles"]
 
 
 STOCK_ROUND_TRIP_CASES = [
@@ -396,7 +397,7 @@ STOCK_ROUND_TRIP_CASES = [
     ),
     (
         "Buy NIFTY when RSI cracks 30, target 2%, stop 1%",
-        ["NIFTY, on daily bars", "RSI(14)", "crosses below", "30", "+2%", "-1%"],
+        ["NIFTY index", "Daily candles", "RSI(14)", "crosses below", "30", "+2%", "-1%"],
     ),
     (
         "Buy ITC when RSI drops below 30, stop 1%, target 2%. use 5-minute candles.",
@@ -617,3 +618,97 @@ def test_risk_limits_default_to_no_quantity_cap():
         "a cap counted in lots means nothing for a stock, where one lot is one "
         "share -- the default must not silently bound every position"
     )
+
+
+# ------------------------------------------- you said / we worked out / default
+
+from nlt.translate.readback import DEFAULT, SAID, WORKED_OUT, describe_lines  # noqa: E402
+
+
+def _labels(text: str, answers: dict | None = None) -> dict[str, str]:
+    result = parse(text, answers=answers)
+    assert result.spec is not None, result.questions
+    return {line: label for _h, line, label in describe_lines(result.spec, result.sources, answers)}
+
+
+def _body_lines(spec) -> list[str]:
+    rows = describe(spec).splitlines()
+    return [r.strip() for r in rows[1:] if r.startswith("  ")]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "buy nifty when rsi cracks 30, target 2%, stop loss 1%",
+        "buy crude oil futures when rsi cracks 30 on 15 minute candles, target 2%, stop 1%",
+        "buy nifty 100 stocks when ema8 crosses above ema21, target 3%, stop 1.5%",
+        "buy RELIANCE when rsi crosses below 30 on 15 minute candles, stop loss 1%, hold overnight",
+        "short banknifty on death cross, target 2%, stop 1%, 2 lots",
+    ],
+)
+def test_labelled_lines_are_exactly_the_readback(text) -> None:
+    """The labels sit beside the readback; they must never change a word of it."""
+    result = parse(text)
+    labelled = [line for _h, line, _l in describe_lines(result.spec, result.sources)]
+    assert labelled == _body_lines(result.spec)
+
+
+def test_no_record_never_reads_as_you_said() -> None:
+    """The safety rule: "You said" is a claim; without a record it is never made."""
+    spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    labels = {label for _h, _l, label in describe_lines(spec, {})}
+    assert SAID not in labels
+    assert {label for _h, _l, label in describe_lines(spec, None)} == {None}
+
+
+def test_what_the_user_typed_is_you_said_and_the_rest_is_not() -> None:
+    labels = _labels("buy nifty when rsi cracks 30, target 2%, stop loss 1%")
+    assert labels["NIFTY index"] == SAID
+    assert labels["Take profit at +2%"] == SAID
+    assert labels["Stop loss at -1%"] == SAID
+    assert labels["Daily candles"] == DEFAULT
+    assert labels["Risk 1% of capital per trade"] == DEFAULT
+    assert labels["Never risk more than Rs 5,000 on one trade"] == DEFAULT
+
+
+def test_an_assumed_instrument_is_default() -> None:
+    assert _labels("buy when rsi cracks 30, target 2%, stop 1%")["NIFTY index"] == DEFAULT
+
+
+def test_a_number_we_filled_in_is_worked_out() -> None:
+    """They typed "rsi"; the 14 is ours."""
+    assert _labels("buy tcs when rsi cracks 30, stop 1%")["When RSI(14) crosses below 30"] == (
+        WORKED_OUT
+    )
+    assert _labels("buy tcs when rsi(14) cracks 30, stop 1%")["When RSI(14) crosses below 30"] == (
+        SAID
+    )
+
+
+def test_an_answer_to_our_question_is_you_said() -> None:
+    labels = _labels("buy tcs when rsi(14) cracks 30, target 2%", {"exit.stop_pct": "1.5%"})
+    assert labels["Stop loss at -1.5%"] == SAID
+
+
+def test_stated_size_bar_and_overnight_are_you_said() -> None:
+    labels = _labels(
+        "buy RELIANCE when rsi(14) crosses below 30 on hourly candles, stop loss 1%, "
+        "risk 2% per trade, hold overnight"
+    )
+    assert labels["Hourly candles"] == SAID
+    assert labels["Risk 2% of capital per trade"] == SAID
+    assert labels["Hold overnight: no square-off before the close"] == SAID
+
+
+def test_a_default_square_off_is_default() -> None:
+    labels = _labels("buy RELIANCE when rsi(14) crosses below 30 on 15 minute candles, stop 1%")
+    assert labels["Square off at 15:15 if still open"] == DEFAULT
+
+
+def test_futures_contract_facts_are_worked_out() -> None:
+    labels = _labels("buy crude oil futures when rsi(14) cracks 30 on 15 minute candles, stop 1%")
+    assert labels["Crude Oil futures (MCX)"] == SAID
+    contract = next(line for line in labels if line.startswith("Nearest-month contract"))
+    assert labels[contract] == WORKED_OUT
+    assert labels["Square off at 23:15 if still open"] == WORKED_OUT
+    assert labels["Close at the end of the contract's expiry day if still open"] == WORKED_OUT

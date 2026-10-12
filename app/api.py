@@ -52,7 +52,7 @@ from starlette.staticfiles import StaticFiles
 from app import auth, logic, orders_view
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
-from nlt.translate.readback import format_inr
+from nlt.translate.readback import describe_lines, format_inr
 
 logger = logging.getLogger(__name__)
 
@@ -265,10 +265,22 @@ async def options(request: Request) -> Response:
     )
 
 
-def _spec_payload(spec: StrategySpec) -> dict:
+def _spec_payload(
+    spec: StrategySpec,
+    sources: dict[str, str] | None = None,
+    answers: dict[str, str] | None = None,
+) -> dict:
+    """The spec and its readback. `sources` (from the reader) adds a label per
+    readback line -- you said / we worked out / default. Without them, as for a
+    saved strategy, there are no labels rather than guessed ones."""
     return {
         "spec": spec.model_dump(mode="json"),
         "readback": logic.describe_spec(spec),
+        "readback_labels": (
+            [label for _h, _line, label in describe_lines(spec, sources, answers)]
+            if sources
+            else None
+        ),
         "name": spec.name,
         "symbol": spec.instrument.symbol,
         "timeframe": spec.instrument.timeframe,
@@ -287,7 +299,9 @@ async def translate(request: Request) -> Response:
     tr = await _run(logic.translate_text, text, answers)
     return JSONResponse(
         {
-            "understood": _spec_payload(tr.spec) if tr.spec is not None else None,
+            "understood": (
+                _spec_payload(tr.spec, tr.sources, answers) if tr.spec is not None else None
+            ),
             "questions": [
                 {"field": q.field, "text": q.text, "why": q.why, "suggestion": q.suggestion}
                 for q in tr.questions
