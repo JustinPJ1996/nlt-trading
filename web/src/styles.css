@@ -1367,3 +1367,26 @@ details[open] > summary::before {
     grid-template-columns: 1fr;
   }
 }
+
+/* ------------------------------------------------------ adjust before testing */
+
+.adjust {
+  margin-top: 14px;
+  padding: 12px 16px;
+  background: var(--sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+}
+
+.adjust summary {
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.adjust-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 12px 0 8px;
+}

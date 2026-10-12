@@ -50,6 +50,8 @@ export type Understood = {
   readback: string;
   // One per body line of `readback`, in order; null when not known.
   readback_labels?: (ReadbackLabel | null)[] | null;
+  // Where each part came from, kept so form edits can keep the labels.
+  sources?: Record<string, ReadbackLabel> | null;
   name: string;
   symbol: string;
   timeframe: string;
@@ -261,6 +263,12 @@ export const api = {
   options: () => call<Options>("/api/options"),
   translate: (text: string, answers: Record<string, string>) =>
     call<Translation>("/api/translate", { text, answers }),
+  adjust: (body: {
+    spec: unknown;
+    sources: Record<string, ReadbackLabel> | null | undefined;
+    answers: Record<string, string>;
+    edits: Record<string, string>;
+  }) => call<Understood>("/api/adjust", body),
   backtest: (body: {
     spec: unknown;
     capital: number;

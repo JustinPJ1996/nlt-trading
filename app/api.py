@@ -282,6 +282,8 @@ def _spec_payload(
             if sources
             else None
         ),
+        # Sent back with form edits so the labels can be kept (see /api/adjust).
+        "sources": sources or None,
         "name": spec.name,
         "symbol": spec.instrument.symbol,
         "timeframe": spec.instrument.timeframe,
@@ -574,6 +576,33 @@ async def trades_csv(request: Request) -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{name}-trades.csv"'},
     )
+
+
+async def adjust(request: Request) -> Response:
+    """The confirmed strategy with the form's boxes applied, and its new readback.
+
+    Always applied to the strategy as first read, so the boxes can be changed
+    any number of times without drifting. The readback comes from the result,
+    never from the boxes, so it says what will really be tested.
+    """
+    body = await _json_body(request)
+    spec = _parse_spec(body.get("spec"))
+    edits = body.get("edits") or {}
+    answers = body.get("answers") or {}
+    sources = body.get("sources")
+    if not isinstance(edits, dict) or not isinstance(answers, dict):
+        raise _BadRequest("Those changes could not be read.")
+    if sources is not None and not (
+        isinstance(sources, dict)
+        and all(v in {"said", "worked_out", "default"} for v in sources.values())
+    ):
+        raise _BadRequest("Those changes could not be read.")
+    try:
+        adjusted, new_sources, typed = logic.adjust_spec(spec, edits, sources)
+    except logic.AdjustError as exc:
+        raise _BadRequest(str(exc)) from None
+    answers = {str(k): str(v) for k, v in answers.items()}
+    return JSONResponse(_spec_payload(adjusted, new_sources, {**answers, **typed}))
 
 
 # ---------------------------------------------------------------- strategies
@@ -1001,6 +1030,7 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/options", options),
         r("/api/translate", translate, ["POST"]),
         r("/api/backtest", backtest, ["POST"]),
+        r("/api/adjust", adjust, ["POST"]),
         r("/api/results/{rid}/trades.csv", trades_csv),
         r("/api/strategies", strategies),
         r("/api/strategies", save, ["POST"]),

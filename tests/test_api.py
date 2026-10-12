@@ -659,3 +659,102 @@ def test_trades_csv_needs_a_login(client) -> None:
 
 def test_an_unknown_result_has_no_csv(authed) -> None:
     assert authed.get("/api/results/nope/trades.csv").status_code == 400
+
+
+# ------------------------------------------------- change the numbers before testing
+
+
+def _understood(authed, text):
+    return authed.post("/api/translate", json={"text": text}).json()["understood"]
+
+
+def _adjust(authed, understood, edits, answers=None):
+    return authed.post(
+        "/api/adjust",
+        json={
+            "spec": understood["spec"],
+            "sources": understood["sources"],
+            "answers": answers or {},
+            "edits": edits,
+        },
+    )
+
+
+def _labels(body) -> dict[str, str]:
+    lines = [r.strip() for r in body["readback"].splitlines() if r.startswith("  ")]
+    return dict(zip(lines, body["readback_labels"], strict=True))
+
+
+def test_moving_the_stop_redraws_the_readback_from_the_result(authed) -> None:
+    u = _understood(authed, RSI)
+    body = _adjust(authed, u, {"stop_pct": "1.5"}).json()
+    spec = StrategySpec.model_validate(body["spec"])
+    assert spec.exit.stop_pct == 1.5
+    assert body["readback"] == describe(spec)
+    assert _labels(body)["Stop loss at -1.5%"] == "said"  # typed in the box, not the sentence
+
+
+def test_a_stop_loss_can_be_moved_but_never_removed(authed) -> None:
+    r = _adjust(authed, _understood(authed, RSI), {"stop_pct": ""})
+    assert r.status_code == 400
+    assert "always needs one" in r.json()["error"]
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "abc", "60"])
+def test_a_box_that_cannot_run_says_why(authed, bad) -> None:
+    r = _adjust(authed, _understood(authed, RSI), {"stop_pct": bad})
+    assert r.status_code == 400
+
+
+def test_the_target_can_be_removed_or_added(authed) -> None:
+    removed = _adjust(authed, _understood(authed, RSI), {"target_pct": ""}).json()
+    assert StrategySpec.model_validate(removed["spec"]).exit.target_pct is None
+    assert "Take profit" not in removed["readback"]
+    no_target = _understood(authed, "buy nifty when rsi cracks 30, stop loss 1%")
+    added = _adjust(authed, no_target, {"target_pct": "3"}).json()
+    assert "Take profit at +3%" in added["readback"]
+
+
+def test_changing_the_candles_shows_what_that_brings(authed) -> None:
+    body = _adjust(authed, _understood(authed, RSI), {"timeframe": "15m"}).json()
+    assert "15-minute candles" in body["readback"]
+    assert "Square off at 15:15 if still open" in body["readback"]
+    assert _labels(body)["15-minute candles"] == "said"
+
+
+def test_vwap_cannot_be_moved_to_daily_candles(authed) -> None:
+    u = _understood(authed, "buy tcs when close > vwap, stop 1%, target 2%, use 15-minute candles")
+    r = _adjust(authed, u, {"timeframe": "1d"})
+    assert r.status_code == 400
+    assert "VWAP" in r.json()["error"]
+
+
+def test_a_basket_stays_on_daily_candles(authed) -> None:
+    u = _understood(authed, "buy nifty 50 stocks when rsi cracks 30, target 3%, stop loss 1.5%")
+    assert _adjust(authed, u, {"timeframe": "15m"}).status_code == 400
+
+
+def test_the_form_edits_the_strategy_it_does_not_rewrite_it(authed) -> None:
+    """A trailing-stop strategy has no fixed stop box; sending one adds nothing."""
+    u = _understood(authed, "buy tcs when close is above 200 ema, target 5%, trailing stop 2%")
+    body = _adjust(authed, u, {"stop_pct": "1"}).json()
+    spec = StrategySpec.model_validate(body["spec"])
+    assert spec.exit.stop_pct is None
+    assert spec.exit.trailing_stop_pct == 2.0
+
+
+def test_edits_always_start_from_the_strategy_as_first_read(authed) -> None:
+    u = _understood(authed, RSI)
+    _adjust(authed, u, {"stop_pct": "3"})
+    body = _adjust(authed, u, {"target_pct": "4"}).json()
+    spec = StrategySpec.model_validate(body["spec"])
+    assert (spec.exit.stop_pct, spec.exit.target_pct) == (1.0, 4.0)
+
+
+def test_made_up_labels_are_refused(authed) -> None:
+    u = _understood(authed, RSI)
+    r = authed.post(
+        "/api/adjust",
+        json={"spec": u["spec"], "sources": {"exit.stop": "certain"}, "edits": {"stop_pct": "2"}},
+    )
+    assert r.status_code == 400

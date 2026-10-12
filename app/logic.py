@@ -962,3 +962,104 @@ def trades_csv(result: PipelineResult) -> str:
             ]
         )
     return buf.getvalue()
+
+
+# ------------------------------------------------------- adjust before running
+
+
+TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "1d"]
+
+# Which readback part each box sets, so the labels can say "You said".
+_EDIT_PARTS = {
+    "stop_pct": "exit.stop",
+    "trailing_stop_pct": "exit.trailing_stop",
+    "target_pct": "exit.target",
+    "timeframe": "timeframe",
+}
+
+
+class AdjustError(ValueError):
+    """A box holds something the strategy cannot run with; the text says why."""
+
+
+def _percent(raw, label: str, *, optional: bool) -> float | None:
+    text = str(raw if raw is not None else "").strip().removesuffix("%").strip()
+    if not text:
+        if optional:
+            return None
+        raise AdjustError(f"The {label} cannot be empty: a strategy always needs one.")
+    try:
+        value = float(text)
+    except ValueError:
+        raise AdjustError(f"The {label} must be a number, like 1.5.") from None
+    if not 0 < value <= 50:
+        raise AdjustError(f"The {label} must be more than 0% and at most 50%.")
+    return value
+
+
+def adjust_spec(
+    spec: StrategySpec, edits: dict, sources: dict[str, str] | None
+) -> tuple[StrategySpec, dict[str, str] | None, dict[str, str]]:
+    """The confirmed strategy with the form's boxes applied (competitor review A4).
+
+    Returns (spec, sources, the boxes as typed). Only the boxes the strategy
+    already has can change: a stop loss can be moved but never removed, and a
+    trailing stop stays a trailing stop -- the form edits the strategy, it does
+    not rewrite it. Every change is checked by the same rules the reader uses,
+    and the readback is regenerated from the result, so it always says what
+    will be tested. A box the user set is labelled "You said".
+    """
+    from nlt.translate.readback import SAID
+    from nlt.translate.rules import _vwap_refusal
+
+    exit_updates: dict = {}
+    typed: dict[str, str] = {}
+    if "stop_pct" in edits and spec.exit.stop_pct is not None:
+        exit_updates["stop_pct"] = _percent(edits["stop_pct"], "stop loss", optional=False)
+    if "trailing_stop_pct" in edits and spec.exit.trailing_stop_pct is not None:
+        exit_updates["trailing_stop_pct"] = _percent(
+            edits["trailing_stop_pct"], "trailing stop", optional=False
+        )
+    if "target_pct" in edits:
+        exit_updates["target_pct"] = _percent(edits["target_pct"], "target", optional=True)
+
+    instrument = spec.instrument
+    if "timeframe" in edits:
+        timeframe = str(edits["timeframe"])
+        if timeframe not in TIMEFRAMES:
+            raise AdjustError("That candle size is not one this platform runs.")
+        if timeframe != "1d" and instrument.is_universe:
+            raise AdjustError("A basket of stocks can only be tested on daily candles.")
+        instrument = instrument.model_copy(update={"timeframe": timeframe})
+        indicators = [{"type": i.type} for i in spec.indicators]
+        refusal = _vwap_refusal(
+            indicators,
+            {"symbol": instrument.symbol, "trade_as": instrument.trade_as, "timeframe": timeframe},
+        )
+        if refusal is not None:
+            raise AdjustError(refusal.text)
+
+    for key in _EDIT_PARTS:
+        if key in edits and (key in exit_updates or key == "timeframe"):
+            typed[f"form.{key}"] = str(edits[key])
+
+    try:
+        adjusted = StrategySpec.model_validate(
+            {
+                **spec.model_dump(),
+                "instrument": instrument.model_dump(),
+                "exit": {**spec.exit.model_dump(), **exit_updates},
+            }
+        )
+    except Exception as exc:  # pydantic's message, which names the rule broken
+        raise AdjustError(f"That does not make a valid strategy: {exc}") from None
+
+    if sources is not None:
+        sources = dict(sources)
+        for key, part in _EDIT_PARTS.items():
+            if f"form.{key}" in typed:
+                if key == "target_pct" and exit_updates.get("target_pct") is None:
+                    sources.pop(part, None)
+                else:
+                    sources[part] = SAID
+    return adjusted, sources, typed
