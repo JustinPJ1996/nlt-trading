@@ -192,7 +192,7 @@ def test_mcx_strategies_count_sessions_in_mcx_hours():
     result = run_backtest(
         spec, bars, capital=1_000_000, charge_fn=_zero, drop_partial_last_bar=False
     )
-    assert any("at 60 bars/session" in w for w in result.warnings)
+    assert any("at 60 candles a day" in w for w in result.warnings)
 
 
 def test_a_position_that_outlived_its_contract_stops_the_backtest(monkeypatch):

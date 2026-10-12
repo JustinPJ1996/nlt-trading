@@ -101,7 +101,7 @@ def test_shared_capital_caps_concurrent_exposure_and_counts_the_shortfall():
     exposure = sum(t.entry_price * t.quantity for t in res.trades)
     assert exposure <= 350.0
 
-    assert any("3" in w and "capital" in w for w in res.warnings)
+    assert any("3" in w and "spare money" in w for w in res.warnings)
 
 
 def test_portfolio_concurrency_never_exceeds_the_limit():
@@ -116,7 +116,7 @@ def test_portfolio_concurrency_never_exceeds_the_limit():
     assert _max_concurrent(res.trades) <= 2
     filled_symbols = {t.symbol for t in res.trades}
     assert len(filled_symbols) == 2  # only the first two in contention order filled
-    assert any("max_concurrent_positions" in w for w in res.warnings)
+    assert any("the most allowed at once" in w for w in res.warnings)
 
 
 # --------------------------------------------------------- deterministic contention

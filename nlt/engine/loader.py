@@ -32,6 +32,8 @@ def load_for_spec(
     spec: StrategySpec,
     start: dt.date | None = None,
     end: dt.date | None = None,
+    *,
+    tested_from: dt.date | None = None,
 ) -> tuple[dict[str, pd.DataFrame], list[str]]:
     """Resolve `spec.instrument.symbol` to bars, plus every data-quality note.
 
@@ -91,8 +93,11 @@ def load_for_spec(
     if spec.instrument.is_universe:
         universe = get_universe(symbol)
         members = resolve_symbols(universe.name)
-        if start is not None:
-            msg = survivorship_warning(universe, start)
+        # Notes speak of the test the user chose, not of the extra history
+        # loaded before it to warm indicators up.
+        since = tested_from or start
+        if since is not None:
+            msg = survivorship_warning(universe, since)
             if msg:
                 notes.append(msg)
         bars_by_symbol = source.bars_many(

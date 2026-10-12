@@ -96,6 +96,10 @@ BARS_PER_YEAR = {"1d": 252}
 _DEFAULT_INTRADAY_BARS_PER_YEAR = 252 * 75  # rough fallback; only 1d is exercised today
 
 
+# Said when a run was given no charges to deduct; the verdict looks for it.
+NO_CHARGES_NOTE = "No charges were deducted from these results."
+
+
 def _zero_charges(price: float, quantity: int, side: str) -> float:
     return 0.0
 
@@ -269,7 +273,7 @@ def run_backtest(
         lot_size = _default_lot_size(spec)
     if charge_fn is None:
         charge_fn = _zero_charges
-        warnings.append("no charge_fn supplied; results exclude transaction costs")
+        warnings.append(NO_CHARGES_NOTE)
 
     note = lot_size_note(spec.instrument.symbol, spec.instrument.trade_as)
     if note:
@@ -312,9 +316,9 @@ def run_backtest(
             partial = False
         if partial:
             warnings.append(
-                f"dropped the final bar ({bars.index[-1]}) as still-forming: its close "
-                "time has not arrived yet, so signalling on it would be trading a candle "
-                "that has not finished printing"
+                f"The last candle ({bars.index[-1]:%d %b %Y %H:%M}) was still forming, so it "
+                "was left out: acting on it would mean trading on a candle that had not "
+                "finished."
             )
             bars = bars.iloc[:-1]
 
@@ -369,8 +373,8 @@ def run_backtest(
         _warn_on_cross_session_lookback(spec, session_bar_count, warnings)
     elif is_intraday_tf and spec.indicators and session_bar_count is None:
         warnings.append(
-            f"cannot determine bars-per-session for timeframe {spec.instrument.timeframe!r}; "
-            "the cross-session indicator-lookback warning was skipped for it"
+            f"For {spec.instrument.timeframe} candles we could not check whether the "
+            "indicators reach back across market closes."
         )
 
     max_concurrent = spec.risk.max_concurrent_positions
@@ -579,24 +583,23 @@ def run_backtest(
 
     if stop_beat_target_count:
         warnings.append(
-            f"{stop_beat_target_count} trade(s) had both stop and target reachable in the "
-            "same bar; the stop was assumed to have filled first (pessimistic tie-break)"
+            f"{stop_beat_target_count} trade(s) could have hit both the stop loss and the "
+            "target within one candle; the stop was assumed to come first, the cautious choice."
         )
     if risk_fallback_count:
         warnings.append(
-            f"{risk_fallback_count} trade(s) used risk_based sizing with no stop distance "
-            "available; sized as 1 lot instead"
+            f"{risk_fallback_count} trade(s) had no stop-loss distance to size the risk from, "
+            "so the smallest size (one lot, or one share) was bought instead."
         )
     if dropped_for_concurrency:
         warnings.append(
-            f"{dropped_for_concurrency} entry signal(s) skipped: max_concurrent_positions "
-            f"({max_concurrent}) already reached"
+            f"{dropped_for_concurrency} signal(s) to open a trade skipped: {max_concurrent} "
+            "position(s) were already open, the most allowed at once."
         )
     if affordability_capped_count:
         warnings.append(
-            f"{affordability_capped_count} entr{'y' if affordability_capped_count == 1 else 'ies'} "
-            "sized down: the requested position value exceeded spare capital, so it was reduced "
-            "to what the account could actually fund"
+            f"{affordability_capped_count} trade(s) sized down: the full size needed more "
+            "spare money than the account had, so it was cut to what the account could fund."
         )
     if affordability_skipped_count:
         # Distinguish "you are out of money" from "the concentration rail stopped
@@ -614,7 +617,9 @@ def run_backtest(
             )
         else:
             reason = "not enough spare capital to fund even a single lot"
-        warnings.append(f"{affordability_skipped_count} entry signal(s) skipped: {reason}")
+        warnings.append(
+            f"{affordability_skipped_count} signal(s) to open a trade skipped: {reason}"
+        )
     if expiry_exit_count:
         warnings.append(
             f"{expiry_exit_count} position(s) closed at the close of their contract's expiry "
@@ -742,10 +747,10 @@ def _warn_on_cross_session_lookback(
     sessions_spanned = math.ceil(longest / session_bar_count)
     if sessions_spanned > 1:
         warnings.append(
-            f"the longest indicator lookback ({longest} bars) spans roughly "
-            f"{sessions_spanned} trading session(s) at {session_bar_count} bars/session on "
-            f"{spec.instrument.timeframe} bars -- it will smooth straight across the "
-            "overnight/weekend gap as though those bars were consecutive trading minutes"
+            f"The slowest indicator looks back {longest} candles: about {sessions_spanned} "
+            f"trading days at {session_bar_count} candles a day on "
+            f"{spec.instrument.timeframe} candles. It runs straight across each overnight "
+            "and weekend gap as if the candles either side were back to back."
         )
 
 

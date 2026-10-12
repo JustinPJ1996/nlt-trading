@@ -614,3 +614,15 @@ def test_a_basket_is_also_run_again_with_no_charges() -> None:
     assert result.error is None, result.error
     assert result.backtest.metrics["total_charges"] > 0
     assert sum(t.charges for t in result.before_charges.trades) == 0
+
+
+def test_the_report_carries_how_it_was_tested_and_says_nothing_twice(authed) -> None:
+    # A basket: its engine and its loader both warn about survivors.
+    basket = _spec_json("buy nifty 50 stocks when rsi cracks 30, target 3%, stop loss 1.5%")
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": basket, "capital": 2500000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    assert any("only sees survivors" in w for w in body["weak_spots"])
+    assert body["assumptions"] and body["weak_spots"]
+    assert not set(body["notes"]) & set(body["weak_spots"])

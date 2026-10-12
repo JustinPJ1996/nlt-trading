@@ -1335,3 +1335,35 @@ details[open] > summary::before {
     border-radius: var(--radius-m);
   }
 }
+
+/* ------------------------------------------------- how this was tested */
+
+.method-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+
+.method-title {
+  font-size: 0.95rem;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+
+.method-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.method-list li + li {
+  margin-top: 6px;
+}
+
+@media (max-width: 760px) {
+  .method-grid {
+    grid-template-columns: 1fr;
+  }
+}

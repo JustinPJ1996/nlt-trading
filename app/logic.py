@@ -175,9 +175,8 @@ def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, 
     if spec.instrument.trade_as == "stock" and not isinstance(chosen, NseEquityDeliveryCharges):
         return NseEquityDeliveryCharges(), (
             f"Costs: this strategy buys and sells shares, so equity delivery charges "
-            f"were applied instead of '{label}'. Share trades are not taxed the way "
-            f"index options are, and using the option figures would have overstated "
-            f"what this strategy costs to run."
+            f"were applied instead of '{label}'. Shares are taxed and charged differently, "
+            f"and those figures would have misstated what this strategy costs to run."
         )
 
     return chosen, None
@@ -348,6 +347,9 @@ class PipelineResult:
     # The same run again with charges switched off, for the before/after
     # comparison. Exact: a second run, not charges added back to one number.
     before_charges: BacktestResult | None = None
+    # How the test was done, in plain words (nlt.report.method).
+    assumptions: list[str] = field(default_factory=list)
+    weak_spots: list[str] = field(default_factory=list)
     data_notes: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -498,7 +500,9 @@ def backtest_spec(
         # Load extra history before `start` so indicators are ready on it; the
         # runs below may not trade before it, and are cut back to it after.
         load_from = warmup.padded_start(load_spec, start) if start else None
-        bars_by_symbol, data_notes = load_for_spec(load_spec, start=load_from, end=end)
+        bars_by_symbol, data_notes = load_for_spec(
+            load_spec, start=load_from, end=end, tested_from=start
+        )
         if cost_note:
             data_notes = [cost_note, *data_notes]
         if not bars_by_symbol or all(df.empty for df in bars_by_symbol.values()):
@@ -601,6 +605,21 @@ def backtest_spec(
             benchmark = buy_and_hold(bars, capital, charge_fn=cf, name=benchmark_name)
         comparison = compare(backtest, benchmark, bars)
         verdict = assess(backtest, comparison)
+        from nlt.report import method
+
+        equity_index = backtest.equity.index
+        stated = (
+            method.assumptions(
+                load_spec,
+                capital=capital,
+                charge_model=model,
+                first=equity_index[0].date(),
+                last=equity_index[-1].date(),
+            )
+            if len(equity_index)
+            else []
+        )
+        spots, data_notes = method.weak_spots(load_spec, data_notes)
 
         return PipelineResult(
             translation=translation,
@@ -612,6 +631,8 @@ def backtest_spec(
             verdict=verdict,
             basket=basket,
             before_charges=before_charges,
+            assumptions=stated,
+            weak_spots=spots,
             data_notes=data_notes,
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad; this is the UI's last line of defence

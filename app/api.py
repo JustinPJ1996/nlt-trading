@@ -419,7 +419,8 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
     spec = bt.spec
     m = bt.metrics
     tf = spec.instrument.timeframe
-    notes = list(dict.fromkeys([*result.data_notes, *bt.warnings]))
+    spotted = set(result.weak_spots)
+    notes = [n for n in dict.fromkeys([*result.data_notes, *bt.warnings]) if n not in spotted]
     return {
         "result_id": result_id,
         "tested": _spec_payload(result.spec),
@@ -474,6 +475,8 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
             },
         ],
         "before_after_charges": _before_after(m, result.before_charges),
+        "assumptions": list(result.assumptions),
+        "weak_spots": list(result.weak_spots),
         "all_metrics": {
             k: (None if v is None or (isinstance(v, float) and pd.isna(v)) else v)
             for k, v in m.items()

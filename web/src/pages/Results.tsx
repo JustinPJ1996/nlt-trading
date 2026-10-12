@@ -211,6 +211,32 @@ export function Results({
         </section>
       )}
 
+      {(result.assumptions.length > 0 || result.weak_spots.length > 0) && (
+        <section className="section method" aria-labelledby="method">
+          <h2 className="section-title" id="method">
+            How this was tested
+          </h2>
+          <div className="method-grid">
+            <div>
+              <h3 className="method-title">What it assumed</h3>
+              <ul className="method-list">
+                {result.assumptions.map((a, i) => (
+                  <li key={i}>{a}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className="method-title">Weak spots of this test</h3>
+              <ul className="method-list">
+                {result.weak_spots.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="section" aria-labelledby="trades">
         <h2 className="section-title" id="trades">
           Every trade{result.trades.length ? ` (${result.trades.length})` : ""}

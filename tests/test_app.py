@@ -401,7 +401,8 @@ def test_basket_strategy_runs_end_to_end_and_reports_its_caveats() -> None:
     assert result.basket is not None, "a universe must take the basket path"
     assert result.backtest.metrics["total_trades"] > 0
 
-    notes = " ".join(result.data_notes).lower()
+    # Moved from the notes into the report's weak spots, where it is still said.
+    notes = " ".join(result.weak_spots).lower()
     assert "survivorship" in notes or "membership is a snapshot" in notes, (
         "a basket backtest on today's constituents is systematically flattered "
         "and the user must be told"

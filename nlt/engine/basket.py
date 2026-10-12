@@ -39,6 +39,7 @@ import pandas as pd
 from nlt.engine.backtest import (
     _DEFAULT_INTRADAY_BARS_PER_YEAR,
     BARS_PER_YEAR,
+    NO_CHARGES_NOTE,
     Trade,
     _apply_slippage,
     _assert_equity_floor,
@@ -132,7 +133,7 @@ def run_basket_backtest(
     skipped: dict[str, str] = {}
     if charge_fn is None:
         charge_fn = _zero_charges
-        warnings.append("no charge_fn supplied; results exclude transaction costs")
+        warnings.append(NO_CHARGES_NOTE)
 
     lot_size = _default_lot_size(spec)
     is_intraday_tf = spec.instrument.timeframe != "1d"
@@ -140,7 +141,7 @@ def run_basket_backtest(
     entry_reason = _describe(spec.entry)
 
     if spec.instrument.is_universe:
-        _add_survivorship_warning(spec, bars_by_symbol, warnings)
+        _add_survivorship_warning(spec, bars_by_symbol, warnings, trade_from)
 
     tracks: dict[str, _SymbolTrack] = {}
     for symbol, bars in bars_by_symbol.items():
@@ -337,24 +338,23 @@ def run_basket_backtest(
 
     if dropped_for_slots:
         warnings.append(
-            f"{dropped_for_slots} entry signal(s) dropped: max_concurrent_positions "
-            f"({max_concurrent}) already reached across the basket"
+            f"{dropped_for_slots} signal(s) to open a trade skipped: {max_concurrent} "
+            "positions were already open across the basket, the most allowed at once."
         )
     if dropped_for_capital:
         warnings.append(
-            f"{dropped_for_capital} entry signal(s) dropped: not enough spare capital "
-            "to fund even a single lot at the time they fired"
+            f"{dropped_for_capital} signal(s) to open a trade skipped: the account had too "
+            "little spare money for even one share or lot when they came."
         )
     if risk_fallback_count:
         warnings.append(
-            f"{risk_fallback_count} trade(s) used risk_based sizing with no stop distance "
-            "available; sized as 1 lot instead"
+            f"{risk_fallback_count} trade(s) had no stop-loss distance to size the risk from, "
+            "so the smallest size (one lot, or one share) was bought instead."
         )
     if capped_count:
         warnings.append(
-            f"{capped_count} entr{'y' if capped_count == 1 else 'ies'} sized down: the "
-            "requested position value exceeded spare capital, so it was reduced to what "
-            "the account could actually fund"
+            f"{capped_count} trade(s) sized down: the full size needed more spare money "
+            "than the account had, so it was cut to what the account could fund."
         )
 
     equity_series = pd.Series(equity, index=all_days, name="equity")
@@ -501,7 +501,10 @@ def _per_symbol_summary(trades: list[Trade]) -> dict:
 
 
 def _add_survivorship_warning(
-    spec: StrategySpec, bars_by_symbol: dict[str, pd.DataFrame], warnings: list[str]
+    spec: StrategySpec,
+    bars_by_symbol: dict[str, pd.DataFrame],
+    warnings: list[str],
+    trade_from: pd.Timestamp | None = None,
 ) -> None:
     """A universe backtest only ever sees today's survivors (see `nlt.data.universe`'s
     module docstring); this makes that impossible to miss in `BasketResult.warnings`
@@ -516,6 +519,10 @@ def _add_survivorship_warning(
     starts = [df.index[0].date() for df in bars_by_symbol.values() if df is not None and len(df)]
     if not starts:
         return
-    msg = survivorship_warning(universe, min(starts))
+    # Bars before `trade_from` only warm indicators up; the test starts there.
+    first = min(starts)
+    if trade_from is not None:
+        first = max(first, trade_from.date())
+    msg = survivorship_warning(universe, first)
     if msg:
         warnings.append(msg)

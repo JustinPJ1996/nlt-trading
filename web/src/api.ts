@@ -130,6 +130,9 @@ export type Result = {
   // The same strategy run again with charges switched off. Null when no
   // charges were paid, so there is nothing to compare.
   before_after_charges: { label: string; before: string; after: string }[] | null;
+  // How the test was done (plain words, from the engine's own rules).
+  assumptions: string[];
+  weak_spots: string[];
   all_metrics: Record<string, number | null>;
   chart: ChartPoint[];
   trades: Trade[];
