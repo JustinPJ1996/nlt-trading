@@ -71,7 +71,7 @@ ignore = ["E501"]  # line length is enforced by the formatter, not the linter
 # the whole tree takes hours and buries the signal; `app/` is layout, and
 # `nlt/translate/` is better served by the 70-sentence corpus, which is a
 # stronger test than any mutant.
-source_paths = ["nlt/engine", "nlt/costs", "nlt/spec"]
+source_paths = ["nlt/engine", "nlt/costs", "nlt/spec", "nlt/options"]
 
 # mutmut runs the suite against a rewritten copy of the tree, and copies only
 # what it mutates. Without this the copy has no `app/`, no `nlt/data/`, and no
