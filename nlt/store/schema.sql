@@ -300,3 +300,56 @@ CREATE TABLE IF NOT EXISTS one_off_book (
 );
 
 INSERT OR IGNORE INTO one_off_book (id) VALUES (1);
+
+-- The inbox. One row per notification ever sent, through `nlt.notify.notify`
+-- alone -- the one place anything is ever written here, so a second delivery
+-- channel (email, one day) only has to change that one function.
+--
+-- `dedupe_key` is UNIQUE and is the whole of the idempotency guarantee: a
+-- one-off alert can only fire once (its order finishes the same moment), and
+-- an alert-only strategy's signal/exit keys are each derived once per
+-- decision, exactly like `paper_decision.event_key`. Calling `notify` again
+-- with a key already used is a silent no-op, never a second row.
+--
+-- Append-only, like every other event table in this app, and more strictly:
+-- only `read_at` may ever change, enforced by the trigger below rather than
+-- by convention -- an inbox that could be edited after the fact would not be
+-- trustworthy evidence of what was actually said.
+CREATE TABLE IF NOT EXISTS notification (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL,
+    source          TEXT    NOT NULL CHECK (source IN ('one_off_alert', 'strategy_alert')),
+    source_id       INTEGER NOT NULL,
+    dedupe_key      TEXT    NOT NULL UNIQUE,
+    text            TEXT    NOT NULL,
+    read_at         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_created ON notification(created_at);
+
+CREATE TRIGGER IF NOT EXISTS notification_only_read_at_changes
+BEFORE UPDATE ON notification
+WHEN NEW.created_at IS NOT OLD.created_at
+  OR NEW.source IS NOT OLD.source
+  OR NEW.source_id IS NOT OLD.source_id
+  OR NEW.dedupe_key IS NOT OLD.dedupe_key
+  OR NEW.text IS NOT OLD.text
+BEGIN
+    SELECT RAISE(ABORT, 'only read_at may be updated on notification');
+END;
+
+CREATE TRIGGER IF NOT EXISTS notification_no_delete
+BEFORE DELETE ON notification
+BEGIN
+    SELECT RAISE(ABORT, 'notification rows cannot be deleted');
+END;
+
+-- Marks a paper run as "alert-only": it runs exactly like paper trading, but
+-- records no paper money and never counts toward the proving gate (see
+-- `Store.is_proven`). A separate table rather than a new value in `run.mode`
+-- so that CHECK constraint, and everything that already reads `mode`, is
+-- untouched. A row's absence means an ordinary paper run.
+CREATE TABLE IF NOT EXISTS paper_run_option (
+    run_id          INTEGER PRIMARY KEY REFERENCES run(id),
+    alert_only      INTEGER NOT NULL DEFAULT 0
+);

@@ -171,12 +171,16 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
             {run.name} <span className="item-meta">version {run.version}</span>
           </h3>
           <p className="muted small">
-            Started {run.started} with {run.capital_text}. Last checked {run.checked || "not yet"}.
+            Started {run.started}
+            {run.alert_only ? "" : ` with ${run.capital_text}`}. Last checked {run.checked || "not yet"}.
           </p>
         </div>
-        <span className={`tag ${HEALTH_TONE[run.health] === "good" ? "good" : HEALTH_TONE[run.health] === "critical" ? "critical" : HEALTH_TONE[run.health] === "warning" ? "warning" : ""}`}>
-          {run.health_label}
-        </span>
+        <div className="btn-row" style={{ gap: 8 }}>
+          {run.alert_only && <span className="tag">Alerts only</span>}
+          <span className={`tag ${HEALTH_TONE[run.health] === "good" ? "good" : HEALTH_TONE[run.health] === "critical" ? "critical" : HEALTH_TONE[run.health] === "warning" ? "warning" : ""}`}>
+            {run.health_label}
+          </span>
+        </div>
       </div>
       {run.paused && (
         <p className="muted small" style={{ marginTop: 4 }}>
@@ -323,23 +327,28 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
   const chosen = state.startable.find((s) => s.id === pick) ?? state.startable[0];
   const money = parseRupees(capital);
 
-  async function start(e: FormEvent) {
-    e.preventDefault();
+  async function start(alertOnly: boolean) {
     if (money === null) return;
     setBusy(true);
     setError(null);
     try {
-      await api.paperStart(chosen.id, money, cost);
+      await api.paperStart(chosen.id, money, cost, alertOnly);
       reload();
     } catch (err) {
-      setError(message(err, "Could not start paper trading."));
+      setError(message(err, alertOnly ? "Could not start alerts only." : "Could not start paper trading."));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form className="panel" onSubmit={start}>
+    <form
+      className="panel"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(false);
+      }}
+    >
       <label className="field">
         <span className="label">Strategy</span>
         <select value={chosen.id} onChange={(e) => setPick(Number(e.target.value))}>
@@ -383,9 +392,21 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
             No real orders are placed. From the moment you press Start, the app follows live Kite prices
             and records every decision as it happens.
           </p>
+          <p className="hint" style={{ marginTop: 8 }}>
+            Alerts only: the strategy runs exactly the same, but only tells you what it would have bought
+            or sold. No paper money is tracked, and it never counts as a proving run.
+          </p>
           <div className="btn-row" style={{ marginTop: 16 }}>
             <button className="btn" type="submit" disabled={busy || money === null || money < 1000}>
               Start paper trading
+            </button>
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={() => start(true)}
+              disabled={busy || money === null || money < 1000}
+            >
+              Start as alerts only
             </button>
             {busy && <Working>Starting...</Working>}
           </div>

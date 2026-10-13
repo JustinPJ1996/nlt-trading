@@ -125,7 +125,19 @@ class ExitAction(Base):
     positions: tuple[int, ...] = ()
 
 
-Action = Annotated[TradeAction | ExitAction, Field(discriminator="kind")]
+class AlertAction(Base):
+    """Tell the person once, on this website. Never buys, sells or closes anything.
+
+    `positions` is only used alongside a P&L trigger, to say whose combined
+    P&L to watch -- the same choice an exit's P&L trigger needs. Empty for
+    every other trigger.
+    """
+
+    kind: Literal["alert"] = "alert"
+    positions: tuple[int, ...] = ()
+
+
+Action = Annotated[TradeAction | ExitAction | AlertAction, Field(discriminator="kind")]
 
 
 class ConditionalOrder(Base):
@@ -134,12 +146,16 @@ class ConditionalOrder(Base):
 
     @model_validator(mode="after")
     def _sensible(self) -> ConditionalOrder:
-        if self.trigger.kind in ("pnl", "now") and self.action.kind != "exit":
-            raise ValueError("a P&L limit can only close positions, not open new ones")
+        if self.trigger.kind == "now" and self.action.kind != "exit":
+            raise ValueError("'now' can only close positions, not open new ones or alert")
+        if self.trigger.kind == "pnl" and self.action.kind not in ("exit", "alert"):
+            raise ValueError("a P&L limit can only close positions or send an alert")
         return self
 
     def problem(self) -> str | None:
         """Why this order cannot be saved yet, in words, or None if it can."""
         if self.action.kind == "exit" and not self.action.positions:
             return "Choose which positions to close."
+        if self.action.kind == "alert" and self.trigger.kind == "pnl" and not self.action.positions:
+            return "Choose which positions to watch."
         return None

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from nlt.data import kite
+from nlt.notify import notify
 from nlt.orders.engine import (
     IST,
     MINUTE,
@@ -31,7 +32,14 @@ from nlt.orders.engine import (
     advance,
     book_from_record,
 )
-from nlt.orders.models import ConditionalOrder, PriceTrigger, StreakTrigger, TradeAction
+from nlt.orders.models import (
+    AlertAction,
+    ConditionalOrder,
+    PriceTrigger,
+    StreakTrigger,
+    TradeAction,
+)
+from nlt.orders.readback import alert_fired_text
 from nlt.store.db import Store
 
 # How far back minute candles are fetched before the cursor, so the last price of
@@ -171,10 +179,11 @@ def step(
         return _problem(store, "feed_down", f"Could not get prices from Kite: {exc}")
 
     events, new_cursor = advance(book, market, cursor=cursor, now=now, charges=charges)
+    orders_by_id = {o.id: o for o in book.orders}
     observed = _iso(now)
     new: list[str] = []
     for e in events:
-        if store.record_one_off_event(
+        recorded = store.record_one_off_event(
             e.order_id,
             e.kind,
             e.key,
@@ -185,8 +194,24 @@ def step(
             quantity=e.quantity,
             price=e.price,
             detail=e.detail,
-        ):
+        )
+        if recorded:
             new.append(f"{e.kind} #{e.order_id}")
+            # An alert's own "triggered" event IS the moment it fires -- see
+            # `engine.advance`'s `trigger()`, which always follows it with
+            # "finished" for an AlertAction and never with a fill. Delivering
+            # the notification here, keyed off that same recorded event,
+            # means it is sent exactly once, however many passes re-derive it.
+            if e.kind == "triggered":
+                saved = orders_by_id.get(e.order_id)
+                if saved is not None and isinstance(saved.order.action, AlertAction):
+                    notify(
+                        store,
+                        "one_off_alert",
+                        e.order_id,
+                        f"one_off_alert:{e.order_id}",
+                        alert_fired_text(saved.order),
+                    )
 
     prices = {}
     for key, df in market.minute.items():

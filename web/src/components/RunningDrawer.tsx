@@ -90,7 +90,7 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
         <div>
           <div className="item-name">{item.name}</div>
           <div className="muted small">
-            {item.kind === "strategy" && "Paper strategy"}
+            {item.kind === "strategy" && (item.alert_only ? "Strategy, alerts only" : "Paper strategy")}
             {item.kind === "one_off_order" && (
               <>
                 One-off order &middot; <a href="#/orders">see on Orders</a>
@@ -103,9 +103,14 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
             )}
           </div>
         </div>
-        <span className={`tag ${HEALTH_CLASS[item.health] ?? ""}`}>{item.health_label}</span>
+        <div className="btn-row" style={{ gap: 8 }}>
+          {item.alert_only && <span className="tag">Alerts only</span>}
+          <span className={`tag ${HEALTH_CLASS[item.health] ?? ""}`}>{item.health_label}</span>
+        </div>
       </div>
-      {item.paused && item.kind === "strategy" && <p className="muted small">Paused</p>}
+      {item.alert_only ? (
+        <p className="muted small">Tells you when it would buy or sell. No paper money.</p>
+      ) : (
       <div className="running-money">
         <div>
           <div className="muted small">Closed today</div>
@@ -120,6 +125,7 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
           <div className={moneyClass(item.total_value)}>{item.total}</div>
         </div>
       </div>
+      )}
       {item.kind === "strategy" && <StrategyActions item={item} onChanged={onChanged} />}
     </li>
   );

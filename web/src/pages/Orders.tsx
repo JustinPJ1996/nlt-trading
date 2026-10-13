@@ -26,6 +26,7 @@ const STATUS_TAG: Record<SavedOrder["status"], string> = {
   open: "good",
   done: "",
   cancelled: "",
+  alerted: "good",
 };
 
 const CHECKER_TONE: Record<string, Tone> = {

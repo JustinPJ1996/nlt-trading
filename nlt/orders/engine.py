@@ -44,6 +44,7 @@ import pandas as pd
 
 from nlt.data.session import NSE_EQUITY, Session, session_date
 from nlt.orders.models import (
+    AlertAction,
     ConditionalOrder,
     ExitAction,
     NowTrigger,
@@ -308,6 +309,11 @@ def advance(
     def trigger(o: SavedOrder, at: pd.Timestamp, detail: dict) -> None:
         book.triggered[o.id] = at
         emit(Event(o.id, "triggered", _iso(at), bar_time=at, detail=detail))
+        # An alert never fills and never opens a position: it is done the
+        # instant its condition is met. No candle is needed after this one.
+        if isinstance(o.order.action, AlertAction):
+            book.finished.add(o.id)
+            emit(Event(o.id, "finished", "done", bar_time=at, detail={"note": "alert sent"}))
 
     # Conditions that do not depend on minute candles.
     for o in list(waiting):

@@ -9,6 +9,7 @@ exactly what the engine will do -- including the things it will not do.
 from __future__ import annotations
 
 from nlt.orders.models import (
+    AlertAction,
     ConditionalOrder,
     ExitAction,
     NowTrigger,
@@ -88,6 +89,8 @@ def action_line(a, position_names: dict[int, str] | None = None) -> str:
         names = position_names or {}
         listed = ", ".join(names.get(p, f"position #{p}") for p in a.positions)
         return f"Close {listed}, at the market price"
+    if isinstance(a, AlertAction):
+        return "Tell you once, on this website. Nothing is bought or sold."
     raise TypeError(a)
 
 
@@ -126,20 +129,56 @@ def describe(order: ConditionalOrder, position_names: dict[int, str] | None = No
             "for the chosen positions that are still open."
         )
 
-    lines.append("Once only: when this goes through, the order is finished.")
-
+    is_alert = isinstance(a, AlertAction)
+    lines.append(
+        "Once only: after it tells you, the alert is finished."
+        if is_alert
+        else "Once only: when this goes through, the order is finished."
+    )
     if isinstance(t, StreakTrigger):
         unit = "week" if t.candle == "week" else "day"
+        when = (
+            "You are told on this website about an hour after that candle ends."
+            if is_alert
+            else "It goes through at the next session's opening price."
+        )
         lines.append(
             f"Judged when each {unit}'s candle has finished, counting only "
             f"{'weeks' if unit == 'week' else 'days'} that end after you save this. "
-            "It goes through at the next session's opening price."
+            f"{when}"
         )
     elif isinstance(t, (PriceTrigger, PnlTrigger)):
+        when = (
+            "You are told on this website about a minute after that candle ends, "
+            "while the app is checking (weekdays, 8:30 AM to 12:30 AM)."
+            if is_alert
+            else "It goes through at the next minute's opening price."
+        )
         lines.append(
             "Checked on each finished 1-minute candle, from the next full minute after you "
-            "save this. It goes through at the next minute's opening price."
+            f"save this. {when}"
         )
 
     lines.append("Paper only: nothing is sent to Zerodha.")
     return lines
+
+
+def alert_fired_text(order: ConditionalOrder) -> str:
+    """What the notification says once an alert's condition is met. Mechanical,
+    built from the order's own recipe -- never from the candle that fired it,
+    so it cannot say anything the order itself did not already promise.
+    """
+    t = order.trigger
+    if isinstance(t, PriceTrigger):
+        body = f"{watched_name(t.watch)} has traded {t.direction} {_level(t.level)}."
+    elif isinstance(t, StreakTrigger):
+        body = f"{_streak_words(t)}."
+    elif isinstance(t, PnlTrigger):
+        if t.threshold < 0:
+            what = f"a loss of {_rupees(t.threshold)} or more"
+        else:
+            what = f"{_rupees(t.threshold)} profit or less"
+        body = f"The combined P&L of the chosen positions has reached {what}."
+    else:
+        body = "The condition you set has been met."
+    return f"{body} Nothing was bought or sold."

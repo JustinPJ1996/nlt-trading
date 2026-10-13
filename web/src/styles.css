@@ -144,7 +144,7 @@ a {
   padding: 0 24px;
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: 20px;
   min-height: 60px;
 }
 
@@ -156,17 +156,28 @@ a {
   white-space: nowrap;
 }
 
+/* The menu has its own row under the wordmark and the header buttons, so
+   adding a page never pushes one out of sight. */
+.topbar-inner {
+  flex-wrap: wrap;
+}
+
+.wordmark {
+  flex: 1;
+}
+
 .nav {
   display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  flex: 1;
+  flex-wrap: wrap;
+  gap: 0 2px;
+  order: 3;
+  flex-basis: 100%;
+  margin: -8px 0 0 -9px;
 }
 
 .nav a {
   display: block;
-  padding: 18px 12px 16px;
+  padding: 18px 9px 16px;
   text-decoration: none;
   color: var(--ink-2);
   font-weight: 500;
@@ -182,6 +193,44 @@ a {
 .nav a[aria-current="page"] {
   color: var(--ink);
   border-bottom-color: var(--ink);
+}
+
+.bell-btn {
+  position: relative;
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--ink-2);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.bell-btn:hover {
+  color: var(--ink);
+}
+
+.bell-btn[aria-current="page"] {
+  color: var(--ink);
+}
+
+.bell-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--critical);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
 }
 
 .signout {

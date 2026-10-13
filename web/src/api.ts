@@ -194,6 +194,9 @@ export type PaperRun = {
   health_label: string;
   message: string;
   started: string;
+  // True for a run started with "Start as alerts only": it trades nothing,
+  // so capital_text is "" and snapshot is always null.
+  alert_only: boolean;
   capital_text: string;
   checked: string;
   daily: boolean;
@@ -258,7 +261,7 @@ export type SavedOrder = {
   sentence: string;
   readback: string[];
   saved: string;
-  status: "waiting" | "filling" | "open" | "done" | "cancelled";
+  status: "waiting" | "filling" | "open" | "done" | "cancelled" | "alerted";
   status_label: string;
   can_cancel: boolean;
   result: number | null;
@@ -302,6 +305,10 @@ export type RunningItem = {
   health: "success" | "info" | "warning" | "error";
   health_label: string;
   paused: boolean;
+  // True only for a "strategy" item started as alerts only: open_now and
+  // total read "Alerts only" instead of a rupee figure, and are never part
+  // of the drawer's totals.
+  alert_only?: boolean;
   closed_today: string;
   closed_today_value: number;
   open_now: string;
@@ -315,6 +322,18 @@ export type RunningState = {
   items: RunningItem[];
   totals: { closed_today: string; open_now: string; total: string; label: string };
 };
+
+// The inbox: a one-off alert firing, or an alert-only strategy's signal/exit.
+export type Notification = {
+  id: number;
+  when: string;
+  source: "one_off_alert" | "strategy_alert";
+  source_id: number;
+  text: string;
+  read: boolean;
+};
+
+export type NotificationsState = { unread_count: number; items: Notification[] };
 
 // -------------------------------------------------------------------- calls
 
@@ -346,8 +365,12 @@ export const api = {
   savedSpec: (id: number) =>
     call<{ description: string; understood: Understood }>(`/api/strategies/${id}/spec`),
   paper: () => call<PaperState>("/api/paper"),
-  paperStart: (strategy_id: number, capital: number, cost_model: string) =>
-    call<{ run_id: number }>("/api/paper/start", { strategy_id, capital, cost_model }),
+  paperStart: (
+    strategy_id: number,
+    capital: number,
+    cost_model: string,
+    alert_only = false,
+  ) => call<{ run_id: number }>("/api/paper/start", { strategy_id, capital, cost_model, alert_only }),
   paperCheck: (id: number) => call<{ message: string }>(`/api/paper/${id}/check`, {}),
   paperStop: (id: number) => call<{ ok: boolean }>(`/api/paper/${id}/stop`, {}),
   paperPause: (id: number) => call<{ run: PaperRun }>(`/api/paper/${id}/pause`, {}),
@@ -380,4 +403,8 @@ export const api = {
   paperTrade: (runId: number, tradeKey: string) =>
     call<{ steps: string[] }>(`/api/paper/${runId}/trade/${encodeURIComponent(tradeKey)}`),
   orderTimeline: (orderId: number) => call<{ steps: string[] }>(`/api/orders/${orderId}/timeline`),
+  notifications: () => call<NotificationsState>("/api/notifications"),
+  notificationRead: (id: number) =>
+    call<NotificationsState>(`/api/notifications/${id}/read`, {}),
+  notificationReadAll: () => call<NotificationsState>("/api/notifications/read-all", {}),
 };

@@ -776,7 +776,19 @@ def paper_problem(spec: StrategySpec) -> str | None:
     return None
 
 
-def start_paper(store: Store, strategy_id: int, *, capital: float, cost_model_label: str) -> int:
+def start_paper(
+    store: Store,
+    strategy_id: int,
+    *,
+    capital: float,
+    cost_model_label: str,
+    alert_only: bool = False,
+) -> int:
+    """Starts a paper run, or -- with `alert_only` -- an alert-only run: the same
+    engine and runner, but one that only ever tells you what it would have
+    done. It records no paper money and never counts toward the proving gate
+    (`Store.is_proven` excludes it at the database level, not just here).
+    """
     spec = store.load_spec(strategy_id)
     problem = paper_problem(spec)
     if problem:
@@ -791,9 +803,12 @@ def start_paper(store: Store, strategy_id: int, *, capital: float, cost_model_la
             "capital": capital,
             "cost_model_label": cost_model_label,
             "started_at": started_at.isoformat(),
+            "alert_only": alert_only,
         },
+        alert_only=alert_only,
     )
-    store.set_state(strategy_id, "paper")
+    if not alert_only:
+        store.set_state(strategy_id, "paper")
     store.set_paper_status(run_id, "waiting", "Started. Waiting for the next finished candle.")
     return run_id
 
@@ -868,11 +883,24 @@ def stop_paper(store: Store, run_id: int) -> None:
     """Ends a paper run. A completed paper run is what the proving gate counts,
     even one that spent time paused -- but the result says so, including how
     many entries it missed because of it (see `paper_pause_summary`).
+
+    An alert-only run never traded, so its stored metrics must not read as if
+    it had: no equity, no P&L, no positions -- only how many alerts it sent.
+    It is also never allowed to satisfy the proving gate (enforced again, at
+    the database level, in `Store.is_proven`).
     """
     status = store.paper_status(run_id) or {}
     events = store.paper_events(run_id)
     run = store.get_run(run_id)
-    metrics = json.loads(status.get("snapshot_json") or "{}")
+    alert_only = store.is_alert_only(run_id)
+    if alert_only:
+        metrics = {
+            "alert_only": True,
+            "signals_notified": sum(1 for e in events if e["kind"] == "signal"),
+            "exits_notified": sum(1 for e in events if e["kind"] == "exit"),
+        }
+    else:
+        metrics = json.loads(status.get("snapshot_json") or "{}")
     metrics["drift_events"] = sum(e["kind"] == "drift" for e in events)
     stopped_at = pd.Timestamp.now(tz="Asia/Kolkata")
     metrics["stopped_at"] = stopped_at.isoformat()
@@ -925,20 +953,36 @@ def quantity_words(spec: StrategySpec | None, quantity: float | None) -> str:
     return f"{quantity:g} "
 
 
-def describe_paper_event(event: dict, spec: StrategySpec | None = None) -> str:
-    """One line of the activity log, written from the recorded event alone."""
+def describe_paper_event(
+    event: dict, spec: StrategySpec | None = None, *, alert_only: bool = False
+) -> str:
+    """One line of the activity log, written from the recorded event alone.
+
+    `alert_only` is for a strategy run that only ever tells you what it would
+    have done (see `app.logic.start_paper`): the wording moves to "would buy"
+    / "would sell" and drops every money figure, so this line can never be
+    read as a fill or a result that happened.
+    """
     detail = json.loads(event.get("detail_json") or "{}")
     kind = event["kind"]
     qty_text = quantity_words(spec, event.get("quantity"))
     if spec is not None and spec.instrument.is_future:
         event = {**event, "symbol": ""}  # the quantity words already name it
     if kind == "signal":
-        return (
-            f"Signal: the entry rule was met on the {when(event['bar_time'])} candle. "
-            "It is queued for the next candle's open, where the money and "
+        return f"Signal: the entry rule was met on the {when(event['bar_time'])} candle. " + (
+            "You were told it would buy at the next candle's open."
+            if alert_only
+            else "It is queued for the next candle's open, where the money and "
             "position-size checks are made."
         )
     if kind == "entry":
+        if alert_only:
+            verb = "Would buy" if event["direction"] == "long" else "Would sell short"
+            return (
+                f"{verb} {qty_text}{event['symbol']}".rstrip()
+                + f" at the open of the {when(event['bar_time'])} candle "
+                "(a simulated position -- nothing is bought or sold)."
+            )
         verb = "Bought" if event["direction"] == "long" else "Sold short"
         return (
             f"{verb} {qty_text}{event['symbol']}".rstrip() + f" at {format_inr(event['price'])} "
@@ -946,6 +990,13 @@ def describe_paper_event(event: dict, spec: StrategySpec | None = None) -> str:
         )
     if kind == "exit":
         reason = _EXIT_WORDS.get(detail.get("reason"), detail.get("reason", "exit"))
+        if alert_only:
+            verb = "Would sell" if event["direction"] == "long" else "Would buy back"
+            return (
+                f"{verb} {qty_text}{event['symbol']}".rstrip()
+                + f" on the {when(event['bar_time'])} candle -- {reason} "
+                "(the simulated position it would have held)."
+            )
         pnl = detail.get("net_pnl")
         pnl_text = (
             f" Result: {'+' if pnl >= 0 else '-'}{format_inr(abs(pnl))}." if pnl is not None else ""
@@ -1146,6 +1197,7 @@ def activity_feed(store: Store) -> list[dict]:
         strategy = store.get_strategy(run["strategy_id"])
         name = strategy["name"] if strategy else ""
         spec = store.load_spec(run["strategy_id"])
+        alert_only = store.is_alert_only(run["id"])
         for e in store.paper_events(run["id"]):
             items.append(
                 {
@@ -1154,7 +1206,7 @@ def activity_feed(store: Store) -> list[dict]:
                     "source_name": name,
                     "source_id": run["id"],
                     "kind": e["kind"],
-                    "text": describe_paper_event(e, spec),
+                    "text": describe_paper_event(e, spec, alert_only=alert_only),
                     "skip": False,
                     "trade_key": e["event_key"] if e["kind"] in ("entry", "exit") else None,
                 }

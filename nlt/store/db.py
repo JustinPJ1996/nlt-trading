@@ -179,7 +179,8 @@ class Store:
             modes = {
                 r["mode"]
                 for r in conn.execute(
-                    "SELECT DISTINCT mode FROM run WHERE strategy_id = ? AND status = 'complete'",
+                    "SELECT DISTINCT mode FROM run WHERE strategy_id = ? AND status = 'complete' "
+                    "AND id NOT IN (SELECT run_id FROM paper_run_option WHERE alert_only = 1)",
                     (strategy_id,),
                 )
             }
@@ -202,13 +203,22 @@ class Store:
 
     # ------------------------------------------------------------------ runs
 
-    def start_run(self, strategy_id: int, mode: str, params: dict | None = None) -> int:
+    def start_run(
+        self, strategy_id: int, mode: str, params: dict | None = None, *, alert_only: bool = False
+    ) -> int:
         with self.tx() as conn:
             cur = conn.execute(
                 "INSERT INTO run (strategy_id, mode, started_at, params_json) VALUES (?, ?, ?, ?)",
                 (strategy_id, mode, now(), json.dumps(params or {})),
             )
             run_id = int(cur.lastrowid)
+            if alert_only:
+                # Same transaction as the run itself: the every-minute paper job
+                # must never see this run before it is marked alert-only, or it
+                # would record paper money for it.
+                conn.execute(
+                    "INSERT INTO paper_run_option (run_id, alert_only) VALUES (?, 1)", (run_id,)
+                )
             self._audit(conn, "run_started", strategy_id, run_id, {"mode": mode})
             return run_id
 
@@ -590,6 +600,18 @@ class Store:
             conn.close()
         return float(row["realised_pnl"]) if row else 0.0
 
+    # --------------------------------------------------------- alert-only runs
+
+    def is_alert_only(self, run_id: int) -> bool:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT alert_only FROM paper_run_option WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            return bool(row and row["alert_only"])
+        finally:
+            conn.close()
+
     # --------------------------------------------------------------- audit
 
     def _audit(self, conn, event: str, strategy_id, run_id, detail: dict) -> None:
@@ -731,3 +753,57 @@ class Store:
                     json.dumps(prices or {}, default=str),
                 ),
             )
+
+    # ------------------------------------------------------------- notifications
+
+    def create_notification(self, source: str, source_id: int, dedupe_key: str, text: str) -> bool:
+        """Writes one notification, unless `dedupe_key` has already been used.
+
+        This is the only way a row is ever added to `notification` -- see
+        `nlt.notify.notify`, which is in turn the only caller of this method.
+        """
+        with self.tx() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO notification (created_at, source, source_id,
+                   dedupe_key, text) VALUES (?,?,?,?,?)""",
+                (now(), source, source_id, dedupe_key, text),
+            )
+            return cur.rowcount == 1
+
+    def notifications(self, limit: int = 200) -> list[dict]:
+        """Newest first."""
+        conn = self._connect()
+        try:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM notification ORDER BY id DESC LIMIT ?", (limit,)
+                )
+            ]
+        finally:
+            conn.close()
+
+    def unread_notification_count(self) -> int:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM notification WHERE read_at IS NULL"
+            ).fetchone()
+            return int(row["n"])
+        finally:
+            conn.close()
+
+    def mark_notification_read(self, notification_id: int) -> bool:
+        with self.tx() as conn:
+            cur = conn.execute(
+                "UPDATE notification SET read_at = ? WHERE id = ? AND read_at IS NULL",
+                (now(), notification_id),
+            )
+            return cur.rowcount == 1
+
+    def mark_all_notifications_read(self) -> int:
+        with self.tx() as conn:
+            cur = conn.execute(
+                "UPDATE notification SET read_at = ? WHERE read_at IS NULL", (now(),)
+            )
+            return cur.rowcount

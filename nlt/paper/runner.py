@@ -38,6 +38,7 @@ from nlt.data import kite
 from nlt.data.session import NSE_EQUITY, Session, session_date
 from nlt.engine.backtest import Trade, run_backtest
 from nlt.engine.basket import run_basket_backtest
+from nlt.notify import notify
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 
@@ -69,6 +70,36 @@ bare symbol, which for NIFTY would be the index."""
 
 ListedExpiries = Callable[[str], list[dt.date]]
 """symbol -> expiries the exchange has published. `kite.listed_expiries` in real use."""
+
+
+# Mirrors `app.logic._EXIT_WORDS`, kept separate rather than imported: `app`
+# depends on this module, not the other way round. Only used to word an
+# alert-only run's notification text.
+_EXIT_WORDS_FOR_ALERT = {
+    "stop": "the stop loss was hit",
+    "trailing_stop": "the trailing stop was hit",
+    "target": "the target was reached",
+    "condition": "the exit rule was met",
+    "max_bars": "the time limit was reached",
+    "square_off": "of the end-of-day square-off",
+    "expiry": "the contract expired",
+}
+
+
+def _entry_rule_text(spec: StrategySpec) -> str:
+    """The entry rule in the readback's own words ("RSI(14) crosses below 30"),
+    so an alert says exactly what the user confirmed -- never the engine's
+    internal names."""
+    from nlt.translate.readback import _describe_condition
+
+    indicators = {i.id: i for i in spec.indicators}
+    return _describe_condition(spec.entry, indicators, spec.instrument.timeframe)
+
+
+def _candle_words(ts: pd.Timestamp, timeframe: str) -> str:
+    """A daily candle is a day, not midnight: "the 03 Jul candle"."""
+    ts = pd.Timestamp(ts).tz_convert("Asia/Kolkata")
+    return f"{ts:%d %b}" if timeframe == "1d" else f"{ts:%d %b %H:%M}"
 
 
 def _session_of(spec: StrategySpec) -> Session:
@@ -309,6 +340,11 @@ def step(
     now = now or _now()
     run_id = run["id"]
     params = json.loads(run["params_json"] or "{}")
+    alert_only = store.is_alert_only(run_id)
+    strategy_name = ""
+    if alert_only:
+        strategy_row = store.get_strategy(run["strategy_id"])
+        strategy_name = strategy_row["name"] if strategy_row else "This strategy"
 
     _prior_status = store.paper_status(run_id)
     _prior_health = _prior_status["health"] if _prior_status else None
@@ -521,8 +557,21 @@ def step(
                     "both_hit": t.both_hit,
                 },
             ):
-                store.save_trades(run_id, [t], symbol)
+                if not alert_only:
+                    store.save_trades(run_id, [t], symbol)
                 new.append(f"exit {key}")
+                if alert_only:
+                    reason_text = _EXIT_WORDS_FOR_ALERT.get(t.exit_reason, t.exit_reason or "exit")
+                    verb = "sell" if t.direction == "long" else "buy back"
+                    notify(
+                        store,
+                        "strategy_alert",
+                        run_id,
+                        f"paper_exit:{run_id}:{key}",
+                        f"Your strategy '{strategy_name}' would {verb} {symbol} because "
+                        f"{reason_text} (the simulated position it would have held). "
+                        "Nothing is bought or sold.",
+                    )
         else:
             was = {
                 "exit_time": prior["bar_time"],
@@ -576,6 +625,18 @@ def step(
             detail=d.detail,
         ):
             new.append(f"{d.kind} {d.reason_code} {d_key}")
+            if alert_only and d.kind == "signal_taken":
+                notify(
+                    store,
+                    "strategy_alert",
+                    run_id,
+                    f"paper_signal:{run_id}:{d_key}",
+                    f"Your strategy '{strategy_name}' would "
+                    f"{'buy' if spec.direction == 'long' else 'sell short'} {d_symbol} at the next "
+                    f"candle's open: {_entry_rule_text(spec)} on the "
+                    f"{_candle_words(d_time, spec.instrument.timeframe)} candle. "
+                    "Nothing is bought or sold.",
+                )
 
     # --- the "signal" row: the engine's OWN signal_taken decision on each
     # symbol's newest closed candle -- never a hand-rolled re-check of the

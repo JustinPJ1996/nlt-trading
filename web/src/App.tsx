@@ -3,6 +3,7 @@ import { api, whenLoggedOut, type Options, type Result } from "./api";
 import { Working } from "./components/Callout";
 import { RunningDrawer } from "./components/RunningDrawer";
 import { Activity } from "./pages/Activity";
+import { Alerts } from "./pages/Alerts";
 import { Build, emptyBuild, type BuildState } from "./pages/Build";
 import { Login } from "./pages/Login";
 import { Orders } from "./pages/Orders";
@@ -21,11 +22,17 @@ const PAGES = [
   { id: "safety", label: "Safety" },
 ] as const;
 
-type PageId = (typeof PAGES)[number]["id"];
+type PageId = (typeof PAGES)[number]["id"] | "alerts";
 
 function pageFromHash(): PageId {
   const id = window.location.hash.replace(/^#\/?/, "");
+  if (id === "alerts") return "alerts";
   return (PAGES.find((p) => p.id === id)?.id ?? "build") as PageId;
+}
+
+function pageTitle(page: PageId): string {
+  if (page === "alerts") return "Alerts";
+  return PAGES.find((p) => p.id === page)?.label ?? "";
 }
 
 export function App() {
@@ -37,6 +44,7 @@ export function App() {
   const [killed, setKilled] = useState(false);
   const [runningCount, setRunningCount] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     whenLoggedOut(() => setUser(null));
@@ -54,17 +62,26 @@ export function App() {
     api.running().then((s) => setRunningCount(s.items.length), () => {});
   }, []);
 
+  const refreshUnreadCount = useCallback(() => {
+    api.notifications().then((s) => setUnreadCount(s.unread_count), () => {});
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     api.options().then(setOptions, () => {});
     refreshKill();
     refreshRunningCount();
+    refreshUnreadCount();
     const id = window.setInterval(refreshRunningCount, 30_000);
-    return () => window.clearInterval(id);
-  }, [user, refreshKill, refreshRunningCount]);
+    const id2 = window.setInterval(refreshUnreadCount, 30_000);
+    return () => {
+      window.clearInterval(id);
+      window.clearInterval(id2);
+    };
+  }, [user, refreshKill, refreshRunningCount, refreshUnreadCount]);
 
   useEffect(() => {
-    document.title = `${PAGES.find((p) => p.id === page)?.label} - Strategy Desk`;
+    document.title = `${pageTitle(page)} - Strategy Desk`;
     window.scrollTo(0, 0);
   }, [page]);
 
@@ -95,6 +112,15 @@ export function App() {
           </nav>
           <button className="btn secondary small" onClick={() => setDrawerOpen(true)}>
             Running &middot; {runningCount}
+          </button>
+          <button
+            className="bell-btn"
+            aria-label={unreadCount > 0 ? `Alerts, ${unreadCount} unread` : "Alerts"}
+            aria-current={page === "alerts" ? "page" : undefined}
+            onClick={() => (window.location.hash = "/alerts")}
+          >
+            <span aria-hidden="true">&#128276;</span>
+            {unreadCount > 0 && <span className="bell-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
           </button>
           <button
             className="signout"
@@ -160,6 +186,7 @@ export function App() {
         {page === "orders" && <Orders />}
         {page === "activity" && <Activity />}
         {page === "safety" && <Safety onChange={(s) => setKilled(s.live || s.paper)} />}
+        {page === "alerts" && <Alerts onChanged={refreshUnreadCount} />}
       </main>
     </>
   );
