@@ -189,6 +189,7 @@ export type PaperRun = {
   name: string;
   version: number;
   readback: string;
+  paused: boolean;
   health: "success" | "info" | "warning" | "error";
   health_label: string;
   message: string;
@@ -290,6 +291,31 @@ export type ActivityState = { items: ActivityItem[] };
 
 export type ActivityFilter = { source_id?: number; skips_only?: boolean; limit?: number };
 
+// The header "Running" drawer: every strategy run, every waiting one-off
+// order, and every open one-off position, in one list.
+export type RunningItem = {
+  kind: "strategy" | "one_off_order" | "one_off_position";
+  run_id?: number;
+  order_id?: number;
+  position_id?: number;
+  name: string;
+  health: "success" | "info" | "warning" | "error";
+  health_label: string;
+  paused: boolean;
+  closed_today: string;
+  closed_today_value: number;
+  open_now: string;
+  open_now_value: number;
+  open_now_as_of: string;
+  total: string;
+  total_value: number;
+};
+
+export type RunningState = {
+  items: RunningItem[];
+  totals: { closed_today: string; open_now: string; total: string; label: string };
+};
+
 // -------------------------------------------------------------------- calls
 
 export const api = {
@@ -324,6 +350,9 @@ export const api = {
     call<{ run_id: number }>("/api/paper/start", { strategy_id, capital, cost_model }),
   paperCheck: (id: number) => call<{ message: string }>(`/api/paper/${id}/check`, {}),
   paperStop: (id: number) => call<{ ok: boolean }>(`/api/paper/${id}/stop`, {}),
+  paperPause: (id: number) => call<{ run: PaperRun }>(`/api/paper/${id}/pause`, {}),
+  paperResume: (id: number) => call<{ run: PaperRun }>(`/api/paper/${id}/resume`, {}),
+  running: () => call<RunningState>("/api/running"),
   kiteLogin: (user_id: string, password: string, secret: string) =>
     call<{ ok: boolean }>("/api/kite/login", { user_id, password, secret }),
   kiteForget: () => call<{ ok: boolean }>("/api/kite/forget", {}),

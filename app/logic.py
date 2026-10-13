@@ -820,13 +820,65 @@ def check_paper_now(store: Store, run_id: int) -> str:
     return result.message
 
 
+def pause_paper(store: Store, run_id: int, reason: str = "paused from web dashboard") -> None:
+    store.pause_paper_run(run_id, reason)
+
+
+def resume_paper(store: Store, run_id: int, reason: str = "resumed from web dashboard") -> None:
+    store.resume_paper_run(run_id, reason)
+
+
+def paper_pause_summary(store: Store, run_id: int, run: dict, as_of: pd.Timestamp) -> dict:
+    """How long this run has been paused in total (its own pause/resume history
+    plus any overlapping global paper-kill-switch windows -- both produce the
+    same `paused` skip decision, so both count as "paused" here) and how many
+    signals that skipped. Plain numbers for `stop_paper`'s final result; the
+    wording lives in `paused_summary_text`.
+    """
+    from nlt.paper.runner import pause_windows_for_run
+
+    params = json.loads(run["params_json"] or "{}")
+    started_at = pd.Timestamp(params["started_at"]).tz_convert("Asia/Kolkata")
+    windows = pause_windows_for_run(store, run_id, params, started_at, as_of)
+    seconds = sum(max((end - start).total_seconds(), 0) for start, end in windows)
+    skipped = sum(
+        1
+        for d in store.paper_decisions(run_id)
+        if d["kind"] == "signal_skipped" and d["reason_code"] == "paused"
+    )
+    return {"paused_seconds": seconds, "paused_signal_count": skipped}
+
+
+def paused_summary_text(paused_seconds: float, paused_signal_count: int) -> str:
+    if paused_seconds <= 0 and paused_signal_count == 0:
+        return ""
+    hours = paused_seconds / 3600
+    if hours < 1:
+        duration = f"{int(round(paused_seconds / 60))} minute(s)"
+    else:
+        duration = f"{hours:.1f} hour(s)"
+    plural = "signal" if paused_signal_count == 1 else "signals"
+    return (
+        f"Paused for a total of {duration}. {paused_signal_count} entry {plural} "
+        "became known while paused and were skipped, never queued for later."
+    )
+
+
 def stop_paper(store: Store, run_id: int) -> None:
-    """Ends a paper run. A completed paper run is what the proving gate counts."""
+    """Ends a paper run. A completed paper run is what the proving gate counts,
+    even one that spent time paused -- but the result says so, including how
+    many entries it missed because of it (see `paper_pause_summary`).
+    """
     status = store.paper_status(run_id) or {}
     events = store.paper_events(run_id)
+    run = store.get_run(run_id)
     metrics = json.loads(status.get("snapshot_json") or "{}")
     metrics["drift_events"] = sum(e["kind"] == "drift" for e in events)
-    metrics["stopped_at"] = pd.Timestamp.now(tz="Asia/Kolkata").isoformat()
+    stopped_at = pd.Timestamp.now(tz="Asia/Kolkata")
+    metrics["stopped_at"] = stopped_at.isoformat()
+    pause_info = paper_pause_summary(store, run_id, run, stopped_at)
+    metrics.update(pause_info)
+    metrics["paused_summary"] = paused_summary_text(**pause_info)
     store.finish_run(run_id, metrics, status="complete")
 
 
