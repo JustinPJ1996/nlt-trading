@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.data import kite
 from nlt.data.session import NSE_EQUITY, Session, session_date
 from nlt.engine.backtest import Trade, run_backtest
@@ -197,7 +199,16 @@ def _current_contract_from(
 
 
 def _run_engine(
-    spec, bars_by_symbol, *, capital, charge_fn, trade_from, now, listed=(), blocked_windows=()
+    spec,
+    bars_by_symbol,
+    *,
+    capital,
+    charge_fn,
+    trade_from,
+    now,
+    listed=(),
+    blocked_windows=(),
+    slippage: Slippage = LEGACY_SLIPPAGE,
 ):
     """The same engine a backtest uses. Returns (trades, single-symbol result or None, decisions)."""
     if spec.instrument.is_universe:
@@ -208,6 +219,7 @@ def _run_engine(
             charge_fn=charge_fn,
             trade_from=trade_from,
             blocked_windows=blocked_windows,
+            slippage=slippage,
         )
         return result.trades, None, result.decisions
     (bars,) = bars_by_symbol.values()
@@ -221,6 +233,7 @@ def _run_engine(
         charge_fn=charge_fn,
         drop_partial_last_bar=False,
         trade_from=trade_from,
+        slippage=slippage,
         final_session_in_progress=spec.instrument.timeframe != "1d"
         and _session_in_progress(bars, now, _session_of(spec)),
         listed_expiries=listed,
@@ -444,6 +457,11 @@ def step(
 
     wall_clock_windows = pause_windows_for_run(store, run_id, params, started_at, now)
     blocked_windows = blocked_windows_for_engine(wall_clock_windows, timeframe, session)
+    # A run saved before 2026-10-13 has no "slippage" key at all -- it is still
+    # filled at the old hidden 0.02%, never silently switched to the new zero
+    # default. A run started since then always has the key, whatever its value
+    # (including zero), because `logic.start_paper` always stores it.
+    slippage = Slippage.from_dict(params["slippage"]) if "slippage" in params else LEGACY_SLIPPAGE
     trades, single, decisions = _run_engine(
         spec,
         bars_by_symbol,
@@ -453,6 +471,7 @@ def step(
         now=now,
         listed=listed,
         blocked_windows=blocked_windows,
+        slippage=slippage,
     )
     fallback_symbol = spec.instrument.symbol
     observed = _iso(now)

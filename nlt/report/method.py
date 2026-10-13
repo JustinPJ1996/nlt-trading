@@ -18,12 +18,8 @@ from nlt.costs.charges import (
     NseOptionsCharges,
     ZeroCharges,
 )
-
-# Every engine run in this app uses the engine's default slippage.
-from nlt.engine.backtest import run_backtest as _run_backtest
+from nlt.costs.slippage import Slippage
 from nlt.spec.models import StrategySpec
-
-SLIPPAGE_PCT: float = _run_backtest.__kwdefaults__["slippage_pct"]
 
 _CHARGE_WORDS = {
     NseFuturesCharges: "NSE index futures charges",
@@ -51,18 +47,49 @@ def assumptions(
     charge_model,
     first: dt.date,
     last: dt.date,
+    slippage: Slippage,
 ) -> list[str]:
     """What this test took as given, in the order a trade happens."""
     from nlt.translate.readback import _sizing_desc
 
+    if slippage.is_zero:
+        fill_line = (
+            "Decisions use only finished candles. A trade is placed at the next candle's open. "
+            + slippage.describe()
+        )
+    else:
+        fill_line = (
+            "Decisions use only finished candles. A trade is placed at the next candle's open, "
+            f"with {slippage.describe()} on the way in and on the way out."
+        )
     out = [
         f"Tested from {first:%d %b %Y} to {last:%d %b %Y}, starting with {_inr(capital)}.",
         f"Size of each trade: {_sizing_desc(spec)[0].lower()}{_sizing_desc(spec)[1:]}, "
         "within the safety limits shown with the strategy.",
-        "Decisions use only finished candles. A trade is placed at the next candle's open, "
-        f"{SLIPPAGE_PCT:g}% worse than that price, on the way in and on the way out.",
+        fill_line,
     ]
-    if spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
+    if spec.instrument.is_option:
+        out.append(
+            f"The signal is judged on {spec.instrument.symbol}'s own candles. The option is "
+            "chosen at that moment: the listed strike nearest the index's close on the signal "
+            "candle, and the expiry the strategy names."
+        )
+        out.append(
+            "Option prices come from real trades only, minute by minute. If the chosen option "
+            "did not trade in the candle a trade would be placed in, that signal is skipped -- "
+            "another strike is never used."
+        )
+        if spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
+            out.append(
+                "Stop loss and target are percentages of the option's price at the close of "
+                "the candle that gave the signal, not of the index and not of the price paid."
+            )
+        out.append(
+            f"A same-day square-off sells at the {spec.schedule.square_off:%H:%M} price itself. "
+            "A position still open on its expiry day is closed then too, so no option is "
+            "ever held to settlement."
+        )
+    elif spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
         out.append(
             "Stop loss and target are measured from the close of the candle that gave the "
             "signal, not from the price paid."
@@ -92,7 +119,9 @@ _WEAK_SPOT_NOTE_STARTS = (
 _WEAK_SPOT_NOTE_CONTAINS = ("the backtest only sees survivors",)
 
 
-def weak_spots(spec: StrategySpec, notes: list[str]) -> tuple[list[str], list[str]]:
+def weak_spots(
+    spec: StrategySpec, notes: list[str], *, slippage: Slippage
+) -> tuple[list[str], list[str]]:
     """(weak spots, the notes left over), moving matching notes into the weak spots."""
     notes = list(dict.fromkeys(notes))
     moved = [
@@ -106,12 +135,18 @@ def weak_spots(spec: StrategySpec, notes: list[str]) -> tuple[list[str], list[st
     survivors = [n for n in moved if any(c in n for c in _WEAK_SPOT_NOTE_CONTAINS)]
     moved = [n for n in moved if n not in survivors[:-1]]
 
+    if slippage.is_zero:
+        slippage_spot = f"Fills are modelled, not real. {slippage.describe()}"
+    else:
+        slippage_spot = (
+            f"Fills are modelled, not real: {slippage.describe()} Large "
+            "orders, or thinly traded stocks, would usually fill worse."
+        )
     spots = [
         "Candles cannot show what happened inside them. When one candle touched both the "
         "stop loss and the target, the stop was assumed to come first -- this can only make "
         "the result look worse, never better.",
-        f"Fills are modelled, not real: {SLIPPAGE_PCT:g}% slippage on every order. Large "
-        "orders, or thinly traded stocks, would usually fill worse.",
+        slippage_spot,
     ]
     trade_as = spec.instrument.trade_as
     if trade_as in ("stock", "index"):
@@ -128,6 +163,26 @@ def weak_spots(spec: StrategySpec, notes: list[str]) -> tuple[list[str], list[st
             spots.append(
                 "Shares squared off the same day are charged as delivery trades, which pay "
                 "more transaction tax than intraday trades really do."
+            )
+    if spec.instrument.is_option:
+        spots.append(
+            "The gap between the price buyers offer and sellers ask is not charged on top: "
+            "only the slippage set for this test stands in for it, and thinly traded strikes "
+            "would usually cost more."
+        )
+        spots.append(
+            "A stop or target can only fill in a candle where the option actually traded; "
+            "between trades the position waits, and the next real trade may be well past "
+            "the level."
+        )
+        spots.append(
+            "Charges use today's tax rates for every year tested; the tax on selling an "
+            "option was lower in the years tested than it is today."
+        )
+        if spec.instrument.symbol == "SENSEX":
+            spots.append(
+                "SENSEX trades on BSE, but is charged here at NSE's rates; BSE's exchange "
+                "fees differ slightly."
             )
     if spec.instrument.is_future and spec.instrument.timeframe != "1d":
         spots.append(

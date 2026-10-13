@@ -62,7 +62,7 @@ from nlt.spec.models import (
     Sizing,
     StrategySpec,
 )
-from nlt.translate import rules
+from nlt.translate import options_words, rules
 from nlt.translate import spelling as rules_spelling
 from nlt.translate.rules import Question, TranslationResult
 
@@ -220,11 +220,13 @@ _REFUSALS: dict[str, tuple[str, str]] = {
         "Leaving the event part out would test a different strategy from the one you described.",
     ),
     "options": (
-        "I can't test option strategies yet -- option price history is being wired in now. "
-        "Try the same idea on the index itself, e.g. 'buy NIFTY when RSI crosses below 30, "
-        "target 2%, stop 1%'.",
-        "Testing an option strategy against the index's own price would give a "
-        "confident-looking number for a completely different trade.",
+        "Selling options and trades with more than one option (straddles, spreads, condors) "
+        "are coming in the next update. Today you can test buying one call or one put, e.g. "
+        "'On NIFTY 15-minute bars, buy the weekly ATM call when RSI crosses above 60. "
+        "Stop 30%, target 60% on the premium.'",
+        "Selling or combining options needs margin and risk rules this platform does not "
+        "model yet -- testing it as a single bought option would be a different trade with a "
+        "different, misleadingly confident-looking result.",
     ),
     "unsupported_instrument": (
         "That trades something this platform can't test yet (for example stock futures, "
@@ -344,7 +346,13 @@ approximated. Leaving out part of the sentence is the worst mistake you can make
 - "robo": asks to invest/manage money for them with no explicit rules
 - "fundamental": uses P/E, ROE, EPS, revenue, debt, promoter holding or any fundamental data
 - "event": depends on news, dividends, board meetings, deals, tariffs, announcements
-- "options": trades options (calls, puts, straddles, premiums, strikes)
+- "options": SELLS (writes) an option, or uses more than one option leg (straddle, strangle,
+  condor, butterfly, spread, "call and put", a credit, a hedge). Buying a single call or put is
+  NOT refused here -- by the time you see a sentence like that, the instrument has already been
+  read as an option by other code, so do set "symbol" as usual (NIFTY/BANKNIFTY/SENSEX, whichever
+  the sentence names, defaulting to NIFTY if it names none) with its own evidence quote exactly as
+  you would for a non-option sentence; just never try to say which strike, expiry or side (call vs
+  put) it is -- leave that entirely to the other code, which does not read anything you say about it.
 - "unsupported_instrument": stock futures, commodities other than those listed below, VIX,
   currencies, anything not listed below
 - "vague": no precise entry rule ("buy dips", "sell rallies")
@@ -356,11 +364,16 @@ For refusals, fill only kind, refuse_category and (optionally) unsupported_quote
 ## Instruments (field "symbol")
 "NIFTY" (the index), "BANKNIFTY", "NIFTY 50" / "NIFTY 100" / "NIFTY 500" (baskets of stocks,
 only when the sentence says stocks of that index), or a single NSE ticker in capitals such as
-"RELIANCE", "TCS", "HDFCBANK". Futures: "NIFTY" or "BANKNIFTY" when the sentence says futures,
+"RELIANCE", "TCS", "HDFCBANK". "SENSEX" is valid ONLY when the sentence is buying a SENSEX
+option -- the SENSEX index itself and SENSEX futures are not supported. Futures: "NIFTY" or
+"BANKNIFTY" when the sentence says futures,
 and the MCX contracts "CRUDEOIL", "CRUDEOILM" (crude oil mini), "NATURALGAS", "NATGASMINI"
 (natural gas mini), "GOLD", "GOLDM" (gold mini), "SILVER", "SILVERM" (silver mini). Quote the
 words that name the contract, including "futures", as evidence for "instrument". Never pick an
-instrument the sentence does not name.
+instrument the sentence does not name. For an option (buying a single call or put), quote the
+whole phrase that names it -- e.g. "weekly ATM call", "monthly put 1 strike OTM" -- as evidence
+for "instrument" too; which option it actually is (strike, expiry, side) is decided by other
+code, not by you, but every one of those words still needs a quote or it will look unread.
 
 ## Indicators (the ONLY ones available)
 {vocabulary()}
@@ -652,13 +665,22 @@ def parse_llm(
 
     # Deterministic policy first, on the raw sentence. These are the rules'
     # own refusals; the model is never consulted past them.
-    _, rules_kwargs, instrument_question = rules._extract_instrument(lowered)
+    _, rules_kwargs, instrument_question = rules._extract_instrument(lowered, answers)
     if instrument_question is not None:
         return TranslationResult(spec=None, questions=[instrument_question], source="rules")
     # The rules refuse futures on anything they have no contract for; this is
     # the backstop if a futures word ever got past them without a contract.
     if rules_kwargs.get("trade_as") != "future" and re.search(r"\bfutures?\b|\bfut\b", lowered):
         return _refusal("unsupported_instrument")
+    # Same backstop for options: the rules reader (`options_words.read`) always
+    # either tags a sentence as `trade_as="option"` or raises a question for
+    # it. If an option word is still here and neither happened, something in
+    # that reader missed it -- refuse rather than let the model invent a
+    # strike, expiry or side the rules never checked.
+    if rules_kwargs.get("trade_as") != "option" and options_words.OPTION_TRIGGER_FOR_LLM.search(
+        lowered
+    ):
+        return _refusal("options")
 
     masked, timeframe, timeframe_refusal = rules._extract_timeframe(lowered)
     if timeframe_refusal:
@@ -862,6 +884,14 @@ def parse_llm(
     }
     if timeframe:
         instrument_kwargs["timeframe"] = timeframe
+    if instrument_kwargs["trade_as"] == "option":
+        # Option fields never come from the model -- only from the same rules
+        # extractor that already resolved them before the model was ever asked
+        # (`_extract_instrument` raises a question of its own for anything it
+        # could not resolve, which `should_ask_llm` never lets this path see).
+        for key in ("option_type", "strike_offset", "expiry"):
+            if key in rules_kwargs:
+                instrument_kwargs[key] = rules_kwargs[key]
 
     indicator_dicts = [
         {"id": i.id, "type": i.type, "params": dict(i.params)} for i in draft.indicators
@@ -906,6 +936,7 @@ def parse_llm(
         timeframe_said=bool(timeframe),
         sizing_said=draft.sizing is not None,
         schedule_said=square_off is not None or overnight,
+        premium_said=options_words.premium_mentioned(lowered),
     )
     return TranslationResult(
         spec=spec, questions=[], notes=notes, source="llm", period=period, sources=sources

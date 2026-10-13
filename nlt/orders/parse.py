@@ -726,9 +726,10 @@ def parse_order(text: str, answers: dict[str, str] | None = None) -> OrderReadin
             None,
             [
                 _refusal(
-                    "One-off orders can't trade options yet -- only futures.",
-                    "Options need a strike and an expiry chosen, and their prices modelled; "
-                    "that part of the app is not built.",
+                    "One-off orders for options aren't available yet -- only futures. You can "
+                    "backtest buying a single call or put as a strategy on the Build page.",
+                    "A one-off order needs the same strike and expiry choice backtested "
+                    "strategies now have, and that wiring doesn't exist for one-off orders yet.",
                     field_name="trade.symbol",
                 )
             ],

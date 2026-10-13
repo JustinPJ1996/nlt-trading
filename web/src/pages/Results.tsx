@@ -69,6 +69,11 @@ export function Results({
 
   return (
     <div>
+      {(result.window_notes ?? []).map((n, i) => (
+        <p key={i} className="period">
+          <strong>{n}</strong>
+        </p>
+      ))}
       <section className={`verdict${verdict.passed ? " passed" : ""}`} aria-labelledby="verdict">
         {/* `passed` means only that no *serious* warning sign fired -- a low bar
             a losing strategy can clear -- so it is never shown as a green "pass". */}
@@ -105,6 +110,7 @@ export function Results({
         })()}{" "}
         costs.
       </p>
+      {params.slippage_text && <p className="period">{params.slippage_text}</p>}
 
       {verdict.flags.length > 0 && (
         <section className="section" aria-labelledby="flags" style={{ marginTop: 32 }}>
@@ -283,6 +289,7 @@ export function Results({
                         <div className="muted small">
                           {t.direction} {t.symbol}
                         </div>
+                        {t.why && <div className="muted small">{t.why}</div>}
                       </td>
                       <td>{t.exited}</td>
                       <td className="num">

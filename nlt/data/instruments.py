@@ -27,6 +27,11 @@ LOT_SIZES: dict[str, int] = {
     "BANKNIFTY": 30,
     "FINNIFTY": 60,
     "MIDCPNIFTY": 120,
+    # Verified 2026-10-13 from the latest (Dec 2025) rows of the historical
+    # options dataset (`~/fno-data/`, imported by `nlt/data/fno_import.py`):
+    # every live SENSEX option/future on the last trading day of 2025 carries
+    # `lot_size == 20`. Matches Zerodha/NSE references for the current series.
+    "SENSEX": 20,
 }
 
 LOT_SIZES_AS_OF = "January 2026 series (NSE circular 28-Nov-2025)"

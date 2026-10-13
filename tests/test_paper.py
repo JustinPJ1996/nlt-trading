@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
 from nlt.data import kite
 from nlt.engine.backtest import run_backtest
 from nlt.paper import runner
@@ -164,6 +165,10 @@ def test_replayed_paper_trades_match_the_backtest_exactly(request, which):
         charge_fn=_zero,
         drop_partial_last_bar=False,
         trade_from=runner.trade_from_for(r.started_at, r.timeframe),
+        # `_start` builds this run's params with no "slippage" key -- exactly
+        # a run started before 2026-10-13 -- so the runner fills it at the old
+        # hidden 0.02%, not the new zero default.
+        slippage=LEGACY_SLIPPAGE,
     ).trades
     closed = [t for t in expected if t.exit_reason != "end_of_data"]
     assert len(closed) >= 3, "the scenario must actually trade for this test to mean anything"
@@ -444,6 +449,35 @@ def test_saving_records_the_backtest_and_paper_then_earns_proven(store):
     assert not store.is_proven(sid)  # a paper run still going does not count
     logic.stop_paper(store, run_id)
     assert store.is_proven(sid)
+
+
+def test_a_new_paper_run_stores_and_uses_its_own_slippage(store):
+    """A run started through `logic.start_paper` always records a "slippage"
+    key -- including when it is zero -- so a later pass never mistakes a
+    deliberate zero for a pre-2026-10-13 run with nothing recorded at all.
+    """
+    from app import logic
+    from nlt.costs.slippage import Slippage
+
+    sid = _saved_with_backtest(store)
+    run_id = logic.start_paper(
+        store,
+        sid,
+        capital=CAPITAL,
+        cost_model_label="Index futures",
+        slippage=Slippage("pct", 0.5),
+    )
+    run = store.get_run(run_id)
+    params = json.loads(run["params_json"])
+    assert params["slippage"] == {"kind": "pct", "value": 0.5}
+    logic.stop_paper(store, run_id)
+
+    # A fresh run with no slippage given stores zero explicitly -- the key is
+    # always present, never simply absent the way a pre-2026-10-13 run is.
+    zero_run_id = logic.start_paper(store, sid, capital=CAPITAL, cost_model_label="Index futures")
+    zero_params = json.loads(store.get_run(zero_run_id)["params_json"])
+    assert "slippage" in zero_params
+    assert zero_params["slippage"] == {"kind": "pct", "value": 0.0}
 
 
 def test_a_strategy_cannot_be_paper_traded_twice_at_once(store):

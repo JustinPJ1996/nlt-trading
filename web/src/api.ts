@@ -121,15 +121,27 @@ export type Trade = {
   exited: string;
   exit_price: string;
   reason: string;
+  // Options only: why this contract was chosen, in words.
+  why: string | null;
   pnl: number;
   pnl_text: string;
 };
+
+// A run's slippage setting: either a percentage of the price or a fixed
+// rupee amount per unit. Zero (the default everywhere) means no slippage is
+// assumed at all -- see `slippage_text` on `BacktestParams` for how that is
+// said out loud.
+export type Slippage = { kind: "pct" | "rs"; value: number };
+
+export const ZERO_SLIPPAGE: Slippage = { kind: "pct", value: 0 };
 
 export type BacktestParams = {
   capital: number;
   capital_text: string;
   cost_model: string;
   charges_applied?: string;
+  slippage: Slippage;
+  slippage_text: string;
   start: string | null;
   end: string | null;
 };
@@ -159,6 +171,9 @@ export type Result = {
   chart: ChartPoint[];
   trades: Trade[];
   notes: string[];
+  // The test covered different dates from the ones asked for (option prices
+  // exist only for some); said at the very top.
+  window_notes: string[];
 };
 
 export type RunSummary = {
@@ -358,6 +373,7 @@ export const api = {
     cost_model: string;
     start: string;
     end: string;
+    slippage?: Slippage;
   }) => call<Result>("/api/backtest", body),
   save: (result_id: string) =>
     call<{ strategy_id: number; name: string }>("/api/strategies", { result_id }),
@@ -370,7 +386,15 @@ export const api = {
     capital: number,
     cost_model: string,
     alert_only = false,
-  ) => call<{ run_id: number }>("/api/paper/start", { strategy_id, capital, cost_model, alert_only }),
+    slippage?: Slippage,
+  ) =>
+    call<{ run_id: number }>("/api/paper/start", {
+      strategy_id,
+      capital,
+      cost_model,
+      alert_only,
+      slippage,
+    }),
   paperCheck: (id: number) => call<{ message: string }>(`/api/paper/${id}/check`, {}),
   paperStop: (id: number) => call<{ ok: boolean }>(`/api/paper/${id}/stop`, {}),
   paperPause: (id: number) => call<{ run: PaperRun }>(`/api/paper/${id}/pause`, {}),
@@ -383,8 +407,13 @@ export const api = {
   orders: () => call<OrdersState>("/api/orders"),
   orderRead: (text: string, answers: Record<string, string>) =>
     call<OrderReading>("/api/orders/read", { text, answers }),
-  orderCreate: (text: string, answers: Record<string, string>, order: unknown, positions: number[]) =>
-    call<{ order_id: number }>("/api/orders/create", { text, answers, order, positions }),
+  orderCreate: (
+    text: string,
+    answers: Record<string, string>,
+    order: unknown,
+    positions: number[],
+    slippage?: Slippage,
+  ) => call<{ order_id: number }>("/api/orders/create", { text, answers, order, positions, slippage }),
   orderCancel: (id: number) => call<{ ok: boolean }>(`/api/orders/${id}/cancel`, {}),
   orderClose: (positionId: number) =>
     call<{ order_id: number }>(`/api/orders/positions/${positionId}/close`, {}),

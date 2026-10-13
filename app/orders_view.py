@@ -14,6 +14,8 @@ from collections.abc import Callable
 import pandas as pd
 from pydantic import ValidationError
 
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.orders import runner
 from nlt.orders.engine import IST, streak_status
 from nlt.orders.models import (
@@ -187,11 +189,25 @@ def read(store: Store, text: str, answers: dict[str, str], *, daily: Daily | Non
 # -------------------------------------------------------------------- saving
 
 
-def create(store: Store, text: str, answers: dict[str, str], raw_order, positions) -> int:
+def create(
+    store: Store,
+    text: str,
+    answers: dict[str, str],
+    raw_order,
+    positions,
+    *,
+    slippage: Slippage = ZERO_SLIPPAGE,
+) -> int:
     """Saves exactly the order that was read back and confirmed.
 
     The sentence is read again here and must give the same order, so what is
     stored beside the sentence is always what that sentence means.
+
+    `slippage` is a run setting, like a backtest's -- not part of the order
+    itself -- and defaults to zero for every order saved from here on. Nothing
+    reaches here for an order saved before 2026-10-13: those rows have no
+    slippage recorded at all, which `nlt.orders.runner.saved_orders` treats as
+    the old hidden 0.02%, never as zero.
     """
     try:
         order = ConditionalOrder.model_validate(raw_order)
@@ -226,7 +242,11 @@ def create(store: Store, text: str, answers: dict[str, str], raw_order, position
         names = {p: open_now[p]["name"] for p in chosen}
     readback = "\n".join(describe(order, names))
     return store.save_one_off_order(
-        text.strip(), order.model_dump_json(), readback, _now().isoformat()
+        text.strip(),
+        order.model_dump_json(),
+        readback,
+        _now().isoformat(),
+        slippage=slippage.to_dict(),
     )
 
 
@@ -256,6 +276,7 @@ def close_now(store: Store, position_id: int) -> int:
         order.model_dump_json(),
         "\n".join(describe(order, {position_id: name})),
         _now().isoformat(),
+        slippage=ZERO_SLIPPAGE.to_dict(),
     )
 
 
@@ -333,10 +354,17 @@ def describe_event(
     if kind == "filled":
         verb = "Bought" if e["side"] == "buy" else "Sold short"
         lots = int(d["lots"])
+        raw_price = d["raw_price"]
+        # Only claim slippage was applied when it actually moved the price --
+        # at zero slippage the fill price and the opening price are the same,
+        # and saying "plus slippage" there would be untrue.
+        price_note = (
+            f", {_level(raw_price)}, plus slippage)" if abs(e["price"] - raw_price) > 1e-9 else ")"
+        )
         return (
             f"{verb} {lots} lot{'s' if lots != 1 else ''} of {d['contract']} at "
-            f"{_level(e['price'])} (the {_when(e['bar_time'])} opening price, {_level(d['raw_price'])}, "
-            f"plus slippage). Charges {format_inr(d['charges'])}."
+            f"{_level(e['price'])} (the {_when(e['bar_time'])} opening price{price_note}. "
+            f"Charges {format_inr(d['charges'])}."
         )
     if kind == "exited":
         why = _EXIT_REASON.get(d.get("reason"), d.get("reason", "Closed"))

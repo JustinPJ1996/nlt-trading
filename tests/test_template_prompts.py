@@ -24,10 +24,12 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TEMPLATES = json.loads((FIXTURES / "template_prompts.json").read_text())
 _REPLIES_PATH = FIXTURES / "llm_template_replies.json"
 
-# Never a strategy: a screen is a list of stocks, options wait for Phase 2, a
-# prompt without a stop must get the stop-loss question, and a stop at "the
-# opening range low" is not something the engine can hold yet.
-_NEVER_A_STRATEGY = {"screen", "options", "no-stop", "unsupported-stop"}
+# Never a strategy: a screen is a list of stocks, selling/multi-leg options
+# (and the one single-leg prompt with a time trigger rules can't express, #26)
+# are refused with the "coming in the next update" question, a prompt without
+# a stop must get the stop-loss question, and a stop at "the opening range
+# low" is not something the engine can hold yet.
+_NEVER_A_STRATEGY = {"screen", "options-later", "no-stop", "unsupported-stop"}
 
 # Pinned so coverage cannot drift silently. Raise it deliberately, after reading
 # each new readback against its sentence by hand.
@@ -36,17 +38,30 @@ _EXPECTED_RULES_SPECS: list[int] = []
 # (2026-10-12). Each readback was checked against its sentence by hand.
 # 29 joined when the daily average on an intraday chart was built (A6), its
 # readback checked by hand: it says "the previous day's close" out loud.
-_EXPECTED_AI_SPECS = [22, 23, 29, 30, 38, 39, 42]
+# 31, 36, 41 joined with options (Phase 2 batch 1): each is a single-leg
+# option buy the rules reader cannot read on its own ("On X bars, buy..." puts
+# the verb after the instrument clause), but the AI path reads the indicator
+# condition and `options_words` resolves the option fields; each readback
+# checked by hand against its sentence.
+_EXPECTED_AI_SPECS = [22, 23, 29, 30, 31, 36, 38, 39, 41, 42]
 
 
 def _facts(spec) -> dict:
-    return {
+    facts = {
         "symbol": spec.instrument.symbol,
         "timeframe": spec.instrument.timeframe,
         "stop_pct": spec.exit.stop_pct,
         "target_pct": spec.exit.target_pct,
         "intraday": spec.schedule.intraday,
     }
+    if spec.instrument.trade_as == "option":
+        # A different strike, expiry or side is just as wrong as a different
+        # stop -- it is a different contract, bought or sold at a different
+        # price, however similar the rest of the recipe looks.
+        facts["option_type"] = spec.instrument.option_type
+        facts["strike_offset"] = spec.instrument.strike_offset
+        facts["expiry"] = spec.instrument.expiry
+    return facts
 
 
 def _wrong(case, result) -> str | None:

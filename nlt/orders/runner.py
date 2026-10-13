@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.data import kite
 from nlt.notify import notify
 from nlt.orders.engine import (
@@ -95,11 +97,23 @@ def _ts(raw: str) -> pd.Timestamp:
     return ts.tz_convert(IST)
 
 
+def _order_slippage(row: dict) -> Slippage:
+    """What this order's fills use: what was recorded for it, or -- for an order
+    saved before 2026-10-13, which recorded nothing -- the old hidden 0.02%.
+    """
+    if row.get("slippage_kind") is None:
+        return LEGACY_SLIPPAGE
+    return Slippage(kind=row["slippage_kind"], value=row["slippage_value"])
+
+
 def saved_orders(store: Store) -> list[SavedOrder]:
     """Every order not cancelled, oldest first."""
     return [
         SavedOrder(
-            r["id"], ConditionalOrder.model_validate_json(r["order_json"]), _ts(r["created_at"])
+            r["id"],
+            ConditionalOrder.model_validate_json(r["order_json"]),
+            _ts(r["created_at"]),
+            slippage=_order_slippage(r),
         )
         for r in store.one_off_orders()
         if r["cancelled_at"] is None

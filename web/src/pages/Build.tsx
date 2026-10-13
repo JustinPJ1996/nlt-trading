@@ -11,10 +11,11 @@
 // reason the engine never invents a stop loss.
 
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import { api, ApiError, type Options, type Result, type Translation, type Understood } from "../api";
+import { api, ApiError, type Options, type Result, type Slippage, type Translation, type Understood, ZERO_SLIPPAGE } from "../api";
 import { Callout, ErrorLine, Working } from "../components/Callout";
 import { Library } from "../components/Library";
 import { Readback } from "../components/Readback";
+import { SlippageInput } from "../components/SlippageInput";
 import { parseRupees } from "../format";
 
 export type BuildState = {
@@ -27,6 +28,7 @@ export type BuildState = {
   fromSaved: boolean;
   capital: string;
   costModel: string;
+  slippage: Slippage;
   start: string;
   end: string;
   // The form's boxes (A4), as typed, and the strategy the server made of them.
@@ -45,6 +47,7 @@ export function emptyBuild(): BuildState {
     fromSaved: false,
     capital: "",
     costModel: "",
+    slippage: ZERO_SLIPPAGE,
     start: "",
     end: "",
     edits: {},
@@ -297,10 +300,14 @@ export function Build({
   const capitalProblem =
     capital === null ? "Enter an amount." : capital < 1000 ? "Use at least Rs 1,000." : null;
   const dateProblem = state.start && state.end && state.start >= state.end ? "The start date must be before the end date." : null;
+  const slippageProblem =
+    state.slippage.value < 0 ||
+    (state.slippage.kind === "pct" && state.slippage.value > 5) ||
+    (state.slippage.kind === "rs" && state.slippage.value > 100);
 
   async function run(e: FormEvent) {
     e.preventDefault();
-    if (!understood || capitalProblem || dateProblem) return;
+    if (!understood || capitalProblem || dateProblem || slippageProblem) return;
     setRunning(true);
     setRunError(null);
     try {
@@ -310,6 +317,7 @@ export function Build({
         cost_model: state.costModel,
         start: state.start,
         end: state.end,
+        slippage: state.slippage,
       });
       onResult(r);
     } catch (err) {
@@ -528,8 +536,9 @@ export function Build({
                       <option key={c}>{c}</option>
                     ))}
                   </select>
-                  <span className="hint">Shares and futures always use their own real charges.</span>
+                  <span className="hint">Shares, futures and options always use their own real charges.</span>
                 </label>
+                <SlippageInput value={state.slippage} onChange={(slippage) => set({ slippage })} />
                 <label className="field" style={{ marginTop: 0 }}>
                   <span className="label">From</span>
                   <input type="date" value={state.start} onChange={(e) => set({ start: e.target.value })} />
@@ -555,7 +564,7 @@ export function Build({
                 promise.
               </p>
               <div className="btn-row" style={{ marginTop: 20 }}>
-                <button className="btn" type="submit" disabled={running || !!capitalProblem || !!dateProblem}>
+                <button className="btn" type="submit" disabled={running || !!capitalProblem || !!dateProblem || slippageProblem}>
                   Run backtest
                 </button>
                 {running && <Working>Testing on past prices. This can take a minute...</Working>}

@@ -70,11 +70,15 @@ def load_for_spec(
     #
     # Removed when the F&O source lands and this function can resolve a real
     # contract. See the plan's Phase 4.
+    #
+    # Now that the F&O data exists, an option strategy is loaded by
+    # `load_option_bars` and run by `nlt.engine.options_backtest`; this
+    # function still refuses one, so nothing can reach the index-bars path.
     if spec.instrument.trade_as == "option":
         raise NotImplementedError(
-            "options cannot be backtested yet -- there is no option price data "
-            "wired in, and testing an option strategy against the index's own "
-            "price would produce a confident, wrong answer. This is being built."
+            "An option strategy is tested on the option's own price data, not the "
+            "index's -- testing it against the index's price would produce a "
+            "confident, wrong answer."
         )
 
     if spec.instrument.is_future:
@@ -197,3 +201,81 @@ def _load_futures(
         *source.last_notes,
     ]
     return {symbol: bars}, notes
+
+
+# --------------------------------------------------------------------- options
+
+# Index timeframes the F&O dataset holds directly, and what the others are
+# built from. Unlike an option's, the index's own candles carry no stale
+# forward-filled prices (an index ticks every minute), so every row counts.
+_OPTION_INDEX_NATIVE = ("1m", "15m", "1d")
+_OPTION_INDEX_RESAMPLE = {"3m": ("1m", 3), "5m": ("1m", 5), "30m": ("15m", 30), "1h": ("15m", 60)}
+
+
+def load_option_bars(spec: StrategySpec, start: dt.date, end: dt.date, source=None) -> pd.DataFrame:
+    """The underlying index's candles for an option strategy's signals.
+
+    Read from the same F&O dataset as the option prices, so the index and the
+    option share one clock -- and SENSEX, which has no other source here, works.
+    """
+    from nlt.options.data import ParquetSource
+    from nlt.options.execution import _bucket_start
+
+    source = source or ParquetSource()
+    symbol, timeframe = spec.instrument.symbol, spec.instrument.timeframe
+    if timeframe in _OPTION_INDEX_NATIVE:
+        return source.underlying_bars(symbol, timeframe, start, end)
+    base, minutes = _OPTION_INDEX_RESAMPLE[timeframe]
+    raw = source.underlying_bars(symbol, base, start, end)
+    if raw.empty:
+        return raw
+    grouped = raw.groupby(_bucket_start(raw.index, minutes))
+    out = pd.DataFrame(
+        {
+            "open": grouped["open"].first(),
+            "high": grouped["high"].max(),
+            "low": grouped["low"].min(),
+            "close": grouped["close"].last(),
+            "volume": grouped["volume"].sum(),
+        }
+    )
+    out.index.name = raw.index.name
+    return out
+
+
+def option_window(
+    spec: StrategySpec, start: dt.date | None, end: dt.date | None, source=None
+) -> tuple[dt.date, dt.date, list[str]]:
+    """Clamp a test window to the days with real option prices, saying so.
+
+    Option prices exist only for the dataset's dates (measured from the
+    1-minute files, never typed in). A test asking for more is cut back to
+    them, and the note says exactly what was tested -- never silently.
+    """
+    from nlt.options.data import ParquetSource
+
+    source = source or ParquetSource()
+    symbol = spec.instrument.symbol
+    cover = source.coverage(symbol, spec.instrument.timeframe)
+    if cover is None:
+        raise ValueError(f"There are no option prices for {symbol} to test against.")
+    first, last = cover
+    notes: list[str] = []
+    start = start or first
+    end = end or last
+    if end > last:
+        notes.append(
+            f"Option prices are only available up to {last:%d %b %Y}, so this test ends there."
+        )
+        end = last
+    if start < first:
+        notes.append(
+            f"{symbol} option prices start on {first:%d %b %Y}, so this test starts there."
+        )
+        start = first
+    if start > end:
+        raise ValueError(
+            f"There are no {symbol} option prices for those dates: they cover "
+            f"{first:%d %b %Y} to {last:%d %b %Y}."
+        )
+    return start, end, notes

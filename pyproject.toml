@@ -47,7 +47,8 @@ target-version = "py312"
 # approach this project deliberately moved away from. Linting it produced ten of
 # the eleven errors in the repo and none of them were ever going to be fixed,
 # which is how a tool teaches you to ignore its output.
-exclude = ["legacy"]
+# `.claude/worktrees/` holds agents' in-progress copies of this repo.
+exclude = ["legacy", ".claude"]
 
 [tool.ruff.lint]
 # Pyflakes and pycodestyle catch real mistakes; isort keeps imports tidy;
@@ -71,7 +72,7 @@ ignore = ["E501"]  # line length is enforced by the formatter, not the linter
 # the whole tree takes hours and buries the signal; `app/` is layout, and
 # `nlt/translate/` is better served by the 70-sentence corpus, which is a
 # stronger test than any mutant.
-source_paths = ["nlt/engine", "nlt/costs", "nlt/spec"]
+source_paths = ["nlt/engine", "nlt/costs", "nlt/spec", "nlt/options"]
 
 # mutmut runs the suite against a rewritten copy of the tree, and copies only
 # what it mutates. Without this the copy has no `app/`, no `nlt/data/`, and no

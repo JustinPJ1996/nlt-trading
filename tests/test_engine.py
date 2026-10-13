@@ -18,6 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.data.session import NSE_EQUITY, session_date
 from nlt.engine.backtest import NO_CHARGES_NOTE, Trade, run_backtest
 from nlt.engine.conditions import evaluate
@@ -110,7 +112,9 @@ def test_entry_fills_on_bar_after_signal_at_that_bars_open():
     )
 
     slippage_pct = 1.0
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=slippage_pct)
+    res = run_backtest(
+        spec, bars, capital=1_000_000.0, lot_size=1, slippage=Slippage("pct", slippage_pct)
+    )
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -177,7 +181,7 @@ def test_stop_beats_target_when_both_hit_same_bar():
         entry=_signal_once(bars, at=0),
         exit_rules=ExitRules(stop_pct=1.0, target_pct=2.0),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -209,7 +213,7 @@ def test_trailing_stop_ratchets_and_never_moves_down():
         entry=_always_true_entry(),
         exit_rules=ExitRules(trailing_stop_pct=5.0),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -256,7 +260,7 @@ def test_short_direction_profits_when_price_falls():
         exit_rules=ExitRules(max_bars_held=2),
         direction="short",
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -302,7 +306,7 @@ def test_fixed_lots_sizing_uses_lots_times_lot_size():
         exit_rules=ExitRules(stop_pct=50.0),
         sizing=Sizing(mode="fixed_lots", lots=3),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=10, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=10, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     assert res.trades[0].quantity == 30
@@ -321,7 +325,7 @@ def test_fixed_value_sizing_never_exceeds_value():
         exit_rules=ExitRules(stop_pct=50.0),
         sizing=Sizing(mode="fixed_value", value=value),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=10, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=10, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -347,7 +351,7 @@ def test_risk_based_sizing_targets_risk_pct_of_capital():
         exit_rules=ExitRules(stop_pct=stop_pct),
         sizing=Sizing(mode="risk_based", risk_pct=risk_pct),
     )
-    res = run_backtest(spec, bars, capital=capital, lot_size=lot_size, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=capital, lot_size=lot_size, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -377,7 +381,7 @@ def test_unaffordable_position_is_not_opened():
         exit_rules=ExitRules(stop_pct=50.0),
         sizing=Sizing(mode="fixed_lots", lots=1),
     )
-    res = run_backtest(spec, bars, capital=100_000.0, lot_size=1000, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=100_000.0, lot_size=1000, slippage=ZERO_SLIPPAGE)
 
     assert res.trades == []
     assert any("too little spare money" in w or "spare capital" in w for w in res.warnings)
@@ -399,7 +403,7 @@ def test_unaffordable_position_is_capped_to_what_capital_allows():
         sizing=Sizing(mode="fixed_lots", lots=8),
         risk=RiskLimits(max_lots=100),
     )
-    res = run_backtest(spec, bars, capital=100_000.0, lot_size=100, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=100_000.0, lot_size=100, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -686,7 +690,7 @@ def test_stop_is_measured_from_entry_price_not_the_entry_bars_close():
         spec = _spec(
             entry=_signal_once(bars, at=0), exit_rules=ExitRules(stop_pct=1.0, target_pct=50.0)
         )
-        res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+        res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
         assert res.trades and res.trades[0].exit_reason == "stop"
         stops.append(res.trades[0].exit_price)
 
@@ -712,7 +716,7 @@ def test_stop_and_target_are_measured_from_the_signal_close():
     spec = _spec(
         entry=_signal_once(bars, at=0), exit_rules=ExitRules(stop_pct=10.0, target_pct=20.0)
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     trade = res.trades[0]
     signal_close = 100.0
@@ -742,7 +746,7 @@ def test_stop_basis_is_the_signal_close_not_the_fill():
         spec = _spec(
             entry=_signal_once(bars, at=0), exit_rules=ExitRules(stop_pct=10.0, target_pct=90.0)
         )
-        res = run_backtest(spec, bars, capital=10_000_000.0, lot_size=1, slippage_pct=0.0)
+        res = run_backtest(spec, bars, capital=10_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
         trade = res.trades[0]
         assert trade.exit_reason == "stop"
         distances.append(trade.entry_price - trade.exit_price)
@@ -796,7 +800,7 @@ def test_gap_down_through_stop_fills_at_the_open_not_the_stop():
         [99.5, 99.5, 89.0, 89.0],
         [100.0, 100.0, 90.0, 90.0],
     )
-    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     trade = res.trades[0]
     assert trade.exit_reason == "stop"
@@ -816,7 +820,7 @@ def test_stop_inside_the_bar_still_fills_at_the_stop_level():
         [99.5, 98.0, 99.0, 99.0],
         [100.0, 99.5, 99.5, 99.5],
     )
-    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     trade = res.trades[0]
     assert trade.exit_reason == "stop"
@@ -831,7 +835,7 @@ def test_gap_up_past_target_fills_at_the_open_in_our_favour():
         [99.5, 99.9, 119.0, 119.0],
         [100.0, 100.0, 120.0, 120.0],
     )
-    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(_gap_spec(), bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     trade = res.trades[0]
     assert trade.exit_reason == "target"
@@ -850,7 +854,7 @@ def test_short_gap_up_through_stop_fills_at_the_open():
         [100.0, 100.0, 115.0, 115.0],
     )
     spec = _gap_spec().model_copy(update={"direction": "short"})
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     trade = res.trades[0]
     assert trade.exit_reason == "stop"
@@ -954,7 +958,7 @@ def test_square_off_fires_and_beats_a_reachable_target():
         exit_rules=ExitRules(target_pct=5.0),
         schedule=Schedule(),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -981,7 +985,7 @@ def test_square_off_on_short_session_fires_on_its_last_bar():
         exit_rules=ExitRules(stop_pct=50.0),  # never reachable; only square-off can close this
         schedule=Schedule(),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) == 1
     trade = res.trades[0]
@@ -1008,7 +1012,7 @@ def test_no_entry_after_cutoff_blocks_a_signal_at_the_cutoff():
         exit_rules=ExitRules(stop_pct=50.0),
         schedule=Schedule(),  # default no_entry_after == 15:00
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert res.trades == []
 
@@ -1024,7 +1028,7 @@ def test_no_overnight_carry_across_multiple_sessions():
         exit_rules=ExitRules(max_bars_held=3),
         schedule=Schedule(),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert len(res.trades) > 1, "test is vacuous with too few trades"
     for trade in res.trades:
@@ -1061,7 +1065,7 @@ def test_signal_on_last_bar_of_session_does_not_fill_at_next_mornings_open():
         exit_rules=ExitRules(stop_pct=50.0),
         schedule=Schedule(),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert res.trades == []
     assert any("last bar of a trading session" in w for w in res.warnings)
@@ -1089,7 +1093,7 @@ def test_weekend_gap_not_treated_as_adjacent_bars():
         exit_rules=ExitRules(stop_pct=50.0),
         schedule=Schedule(),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     # If the engine treated row `n1` as simply "the next bar" without regard
     # for the 3-calendar-day gap behind it, this would open a Monday-morning
@@ -1113,7 +1117,7 @@ def test_partial_last_bar_is_dropped_and_warned_about():
         bars,
         capital=1_000_000.0,
         lot_size=1,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
         drop_partial_last_bar=True,
     )
     assert len(res_dropped.equity) == 2, "the 3rd (still-forming) bar should have been dropped"
@@ -1124,7 +1128,7 @@ def test_partial_last_bar_is_dropped_and_warned_about():
         bars,
         capital=1_000_000.0,
         lot_size=1,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
         drop_partial_last_bar=False,
     )
     assert len(res_kept.equity) == 3, "with the guard off, all 3 bars should remain"
@@ -1149,7 +1153,15 @@ def test_daily_nifty_rsi_regression_pinned(nifty_bars):
     res = run_backtest(spec, nifty_bars, capital=100_000.0)
 
     assert res.metrics["total_trades"] == 56
-    assert res.metrics["total_return_pct"] == pytest.approx(-2.1177329341105504)
+    # Re-pinned 2026-10-13 for the Slippage change: `run_backtest`'s default
+    # moved from the old hidden 0.02% to zero, and this call takes the
+    # default rather than naming one. Verified independently, not just copied
+    # from a failing run's output: calling `run_backtest` with
+    # `slippage=nlt.costs.slippage.LEGACY` on this exact fixture reproduces
+    # the old pinned figure (-2.1177329341105504) to full precision, and with
+    # `slippage=ZERO` (now the default) it gives this one -- so the whole
+    # difference is the removed slippage, not a real regression.
+    assert res.metrics["total_return_pct"] == pytest.approx(-1.709201726074214)
 
 
 def test_long_lookback_indicator_warns_how_many_sessions_it_spans():
@@ -1170,7 +1182,7 @@ def test_long_lookback_indicator_warns_how_many_sessions_it_spans():
         indicators=[IndicatorSpec(id="sma200", type="sma", params={"length": 200})],
         schedule=Schedule(),
     )
-    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+    res = run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
     assert any("200 candles" in w and "8 trading days" in w for w in res.warnings)
 
@@ -1281,7 +1293,7 @@ def test_engine_actually_calls_the_overnight_carry_invariant(monkeypatch):
     monkeypatch.setattr(bt, "_check_exit", no_square_off)
 
     with pytest.raises(RuntimeError, match="session boundary"):
-        run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage_pct=0.0)
+        run_backtest(spec, bars, capital=1_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE)
 
 
 # ---------------------------------------------------------------------------
@@ -1332,7 +1344,7 @@ def test_concentration_rail_caps_an_explicitly_requested_size():
     # Rs 500 a share and 100 lots asks for Rs 50,000, well past the Rs 20,000 rail.
     bars = _flat_price_bars(500.0)
     result = run_backtest(
-        _capped_spec(20.0, lots=100), bars, capital=100_000.0, lot_size=1, slippage_pct=0.0
+        _capped_spec(20.0, lots=100), bars, capital=100_000.0, lot_size=1, slippage=ZERO_SLIPPAGE
     )
 
     biggest = max(t.quantity * t.entry_price for t in result.trades)
@@ -1345,7 +1357,7 @@ def test_without_the_rail_the_same_request_is_honoured():
     """The mirror -- proves the cap, not something else, is doing the work."""
     bars = _flat_price_bars(500.0)
     result = run_backtest(
-        _capped_spec(None, lots=100), bars, capital=100_000.0, lot_size=1, slippage_pct=0.0
+        _capped_spec(None, lots=100), bars, capital=100_000.0, lot_size=1, slippage=ZERO_SLIPPAGE
     )
 
     biggest = max(t.quantity * t.entry_price for t in result.trades)
@@ -1361,7 +1373,7 @@ def test_rail_rounds_down_to_a_whole_lot():
         bars,
         capital=100_000.0,
         lot_size=75,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
     )
     assert result.trades == []
 
@@ -1374,7 +1386,7 @@ def test_a_blocked_trade_says_it_was_the_rail_not_a_shortage_of_money():
         bars,
         capital=100_000.0,
         lot_size=75,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
     )
 
     skipped = [w for w in result.warnings if "skipped" in w and "signal" in w]
@@ -1390,7 +1402,7 @@ def test_rail_is_proportional_to_capital():
     sizes = []
     for capital in (100_000.0, 500_000.0):
         result = run_backtest(
-            _capped_spec(20.0, lots=100), bars, capital=capital, lot_size=1, slippage_pct=0.0
+            _capped_spec(20.0, lots=100), bars, capital=capital, lot_size=1, slippage=ZERO_SLIPPAGE
         )
         sizes.append(max(t.quantity * t.entry_price for t in result.trades))
 
@@ -1402,10 +1414,10 @@ def test_options_on_a_small_account_are_warned_about():
     bars = _flat_price_bars(100.0)
     spec = _capped_spec(10.0, lots=1, trade_as="option")
 
-    small = run_backtest(spec, bars, capital=100_000.0, lot_size=75, slippage_pct=0.0)
+    small = run_backtest(spec, bars, capital=100_000.0, lot_size=75, slippage=ZERO_SLIPPAGE)
     assert any("SMALL ACCOUNT" in w for w in small.warnings)
 
-    large = run_backtest(spec, bars, capital=2_000_000.0, lot_size=75, slippage_pct=0.0)
+    large = run_backtest(spec, bars, capital=2_000_000.0, lot_size=75, slippage=ZERO_SLIPPAGE)
     assert not any("SMALL ACCOUNT" in w for w in large.warnings), (
         "an account well above the threshold must not be warned"
     )
@@ -1419,7 +1431,7 @@ def test_stocks_on_a_small_account_are_not_warned_about():
         bars,
         capital=50_000.0,
         lot_size=1,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
     )
     assert not any("SMALL ACCOUNT" in w for w in result.warnings)
 
@@ -1463,7 +1475,7 @@ def test_options_backtest_reports_which_lot_size_it_used():
     spec = _capped_spec(10.0, lots=1, trade_as="option").model_copy(
         update={"instrument": Instrument(symbol="NIFTY", trade_as="option")}
     )
-    result = run_backtest(spec, bars, capital=5_000_000.0, slippage_pct=0.0)
+    result = run_backtest(spec, bars, capital=5_000_000.0, slippage=ZERO_SLIPPAGE)
 
     assert any("65 units" in w for w in result.warnings), result.warnings
     assert result.trades and result.trades[0].quantity % 65 == 0

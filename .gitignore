@@ -68,3 +68,6 @@ logs/
 # by `make web`; anchored for the same reason as every directory above.
 /web/node_modules/
 /web/dist/
+
+# Claude Code agent worktrees: in-progress copies of this repo.
+/.claude/worktrees/

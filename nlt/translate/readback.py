@@ -309,10 +309,15 @@ def _exit_lines(
     """(line, the part of the strategy it states) for each exit rule."""
     lines: list[tuple[str, str]] = []
     e = spec.exit
+    # On an option, a percentage stop/target is read against the option's own
+    # price (the premium), never the index -- a 30% move in NIFTY and a 30%
+    # move in a premium are nothing alike, so the line has to say which one
+    # this is measuring.
+    pct_suffix = " of the option's premium" if spec.instrument.is_option else ""
     if e.target_pct:
-        lines.append((f"Take profit at +{_num(e.target_pct)}%", "exit.target"))
+        lines.append((f"Take profit at +{_num(e.target_pct)}%{pct_suffix}", "exit.target"))
     if e.stop_pct:
-        lines.append((f"Stop loss at -{_num(e.stop_pct)}%", "exit.stop"))
+        lines.append((f"Stop loss at -{_num(e.stop_pct)}%{pct_suffix}", "exit.stop"))
     if e.trailing_stop_pct:
         lines.append((f"Trailing stop of {_num(e.trailing_stop_pct)}%", "exit.trailing_stop"))
     if e.stop_atr_mult:
@@ -339,6 +344,27 @@ def _exit_lines(
         lines.append(("Hold overnight: no square-off before the close", "schedule"))
     if spec.instrument.is_future:
         lines.append(("Close at the end of the contract's expiry day if still open", "expiry"))
+    if spec.instrument.is_option:
+        square_off = spec.schedule.square_off.strftime("%H:%M")
+        # Overnight holding is allowed on an option (unlike a future, which is
+        # closed at that day's *close*), but never into settlement: the
+        # exchange guarantees an exit, at the square-off candle's opening
+        # price -- not its close -- so the wording has to say "opening price"
+        # for this not to overstate what actually gets paid.
+        lines.append(
+            (
+                f"If still open on expiry day, closed at {square_off} "
+                "(the opening price of that candle, never held to settlement)",
+                "option.expiry_close",
+            )
+        )
+        lines.append(
+            (
+                "If the chosen option didn't trade in the candle we'd buy in, "
+                "that signal is skipped -- never a different strike",
+                "option.skip_if_no_trade",
+            )
+        )
     return lines
 
 
@@ -374,8 +400,11 @@ def _sizing_desc(spec: StrategySpec) -> str:
         quantity = s.lots * lot_size
         if lot_size > 1:
             # Say both: the quantity is what gets ordered, the lot count is what
-            # the user typed and what an F&O trader thinks in.
-            return f"Quantity {quantity:,} per trade ({_plural(s.lots, 'lot')} of {lot_size})"
+            # the user typed and what an F&O trader thinks in. For an option,
+            # also say the lot used is *today's* -- the exchange has changed it
+            # before, and every past year in the test is sized by it regardless.
+            today_note = ", today's lot" if spec.instrument.is_option else ""
+            return f"Quantity {quantity:,} per trade ({_plural(s.lots, 'lot')} of {lot_size}{today_note})"
         return f"Quantity {quantity:,} per trade"
     if s.mode == "fixed_value":
         return f"About {format_inr(s.value)} per trade"
@@ -426,7 +455,14 @@ WORKED_OUT = "worked_out"  # our reasoning from what they said
 DEFAULT = "default"  # filled in because they did not say
 
 # Parts no sentence can set: always ours.
-_FIXED_SOURCES = {"contract": WORKED_OUT, "expiry": WORKED_OUT, "risk": DEFAULT}
+_FIXED_SOURCES = {
+    "contract": WORKED_OUT,
+    "expiry": WORKED_OUT,
+    "risk": DEFAULT,
+    "option.expiry_close": WORKED_OUT,
+    "option.skip_if_no_trade": WORKED_OUT,
+    "option.banknifty_weekly_note": WORKED_OUT,
+}
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
@@ -445,6 +481,21 @@ def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
     trades = [(_instrument_desc(spec), "instrument")]
     if spec.instrument.is_future:
         trades.append((_contract_desc(spec), "contract"))
+    if (
+        spec.instrument.is_option
+        and spec.instrument.symbol == "BANKNIFTY"
+        and spec.instrument.expiry != "monthly"
+    ):
+        from nlt.translate.options_words import BANKNIFTY_WEEKLY_LAST_EXPIRY
+
+        trades.append(
+            (
+                "BANKNIFTY weekly options stopped trading after "
+                f"{BANKNIFTY_WEEKLY_LAST_EXPIRY:%d %b %Y} -- a weekly expiry won't find a real "
+                "contract after that date.",
+                "option.banknifty_weekly_note",
+            )
+        )
     trades.append((_timeframe_desc(spec), "timeframe"))
     return [
         ("WHAT IT TRADES", trades),

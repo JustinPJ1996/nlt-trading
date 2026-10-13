@@ -357,3 +357,92 @@ def test_real_liquid_rows_are_never_crossed(tmp_path):
     liquid = df[df["liquid"]]
     crossed = liquid[liquid["best_sell_price"] < liquid["best_buy_price"]]
     assert crossed.empty, f"{len(crossed)} liquid rows have bid above ask"
+
+
+# The 1-minute file goes through a monthly staging step (see `stage_1m`).
+# Rows: scrip 2 (the CE) trades at
+# 2024-01-31 03:45 UTC (09:15 IST) and is forward-filled the next minute
+# (volume 0, same price), then trades again on 2024-02-01. Two UTC months,
+# so staging must produce two files and the import must place each row in
+# its own IST month folder.
+_QUOTES_1M_SQL = """
+SELECT * FROM (
+    SELECT toInt32(2) AS scrip_code, toDateTime('2024-01-31 03:45:00') AS time_stamp,
+           toInt64(10000) AS open, toInt64(12000) AS high, toInt64(9000) AS low,
+           toInt64(11000) AS close, toUInt64(100) AS oi, toUInt64(40) AS volume,
+           toInt64(10900) AS best_buy_price, toUInt32(1) AS best_buy_qty,
+           toInt64(11100) AS best_sell_price, toUInt32(1) AS best_sell_qty
+    UNION ALL
+    SELECT toInt32(2), toDateTime('2024-01-31 03:46:00'),
+           toInt64(11000), toInt64(11000), toInt64(11000),
+           toInt64(11000), toUInt64(100), toUInt64(0),
+           toInt64(10900), toUInt32(1),
+           toInt64(11100), toUInt32(1)
+    UNION ALL
+    SELECT toInt32(2), toDateTime('2024-02-01 03:45:00'),
+           toInt64(20000), toInt64(21000), toInt64(19000),
+           toInt64(20500), toUInt64(100), toUInt64(7),
+           toInt64(20400), toUInt32(1),
+           toInt64(20600), toUInt32(1)
+) ORDER BY time_stamp
+"""
+
+_SCRIPS_1M_SQL = """
+SELECT * FROM (
+    SELECT toInt32(2) AS scrip_code, toInt32(2) instrument_token, toInt32(2) exchange_token,
+           'NIFTY24FEB22000CE' AS tradingsymbol, 'NIFTY' AS underlying_instrument, 'NIFTY' AS name,
+           toDate('2024-02-29') AS expiry, toFloat32(22000) AS strike, toFloat32(0.05) AS tick_size,
+           toInt32(50) AS lot_size, 'CE' AS instrument_type, 'NFO-OPT' AS segment, 'NFO' AS exchange,
+           'monthly' AS expiry_type, toInt32(1) AS multiplier, true AS is_fno, false AS is_underlying,
+           d AS trading_day
+    FROM (SELECT arrayJoin([toDate('2024-01-31'), toDate('2024-02-01')]) AS d)
+)
+"""
+
+
+@pytest.fixture
+def synthetic_1m(tmp_path) -> tuple[Path, Path]:
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    _write_native(_SCRIPS_1M_SQL, raw_dir / fi.DAILY_SCRIPS_FILE)
+    _write_native(_QUOTES_1M_SQL, raw_dir / fi.QUOTES_FILES["1m"])
+    stage = tmp_path / "stage_1m"
+    fi.stage_1m(raw_dir=raw_dir, stage_dir=stage)
+    return raw_dir, stage
+
+
+def test_1m_staging_splits_by_month(synthetic_1m):
+    _, stage = synthetic_1m
+    assert [p.name for p in fi.staged_months(stage)] == ["m_202401.parquet", "m_202402.parquet"]
+
+
+def test_1m_import_converts_and_partitions_by_ist_month(synthetic_1m, tmp_path):
+    raw_dir, stage = synthetic_1m
+    out = tmp_path / "out"
+    fi.import_1m(raw_dir=raw_dir, stage_dir=stage, out_dir=out, underlyings=("NIFTY",))
+    feb = pd.read_parquet(out / "1m" / "underlying=NIFTY" / "year=2024" / "month=2")
+    assert len(feb) == 1
+    row = feb.iloc[0]
+    assert row["close"] == 205.0  # 20,500 paise
+    assert str(row["timestamp"]) == "2024-02-01 09:15:00+05:30"
+    assert row["timestamp"].tzinfo is not None
+
+
+def test_1m_forward_filled_minute_is_kept_and_flagged_untraded(synthetic_1m, tmp_path):
+    """The forward-filled minute stays (flag, never drop) but must read as
+    untraded, so nothing downstream mistakes a repeated price for a trade."""
+    raw_dir, stage = synthetic_1m
+    out = tmp_path / "out"
+    fi.import_1m(raw_dir=raw_dir, stage_dir=stage, out_dir=out, underlyings=("NIFTY",))
+    jan = pd.read_parquet(out / "1m" / "underlying=NIFTY" / "year=2024" / "month=1")
+    jan = jan.sort_values("timestamp")
+    assert len(jan) == 2
+    assert list(jan["volume"]) == [40, 0]
+    assert list(jan["liquid"]) == [True, False]
+
+
+def test_1m_import_without_staging_names_the_steps(tmp_path):
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    with pytest.raises(FileNotFoundError, match="stage_1m"):
+        fi.import_timeframe("1m", raw_dir=raw_dir, out_dir=tmp_path / "out")

@@ -637,8 +637,21 @@ class Store:
     # ------------------------------------------------------ one-off orders
 
     def save_one_off_order(
-        self, sentence: str, order_json: str, readback: str, created_at: str
+        self,
+        sentence: str,
+        order_json: str,
+        readback: str,
+        created_at: str,
+        *,
+        slippage: dict | None = None,
     ) -> int:
+        """Saves the order, and -- in the same transaction -- what slippage its
+        fills should use. `slippage` is `{"kind": "pct"|"rs", "value": ...}`
+        (see `nlt.costs.slippage.Slippage.to_dict`); omitted means the caller
+        did not record one, which `nlt.orders.runner.saved_orders` then treats
+        as the pre-2026-10-13 legacy 0.02%, not zero -- the same pattern as
+        `paper_run_option` for a paper run's own options.
+        """
         with self.tx() as conn:
             cur = conn.execute(
                 """INSERT INTO one_off_order (sentence, order_json, readback, created_at)
@@ -646,13 +659,27 @@ class Store:
                 (sentence, order_json, readback, created_at),
             )
             order_id = cur.lastrowid
+            if slippage is not None:
+                conn.execute(
+                    "INSERT INTO one_off_order_slippage (order_id, kind, value) VALUES (?,?,?)",
+                    (order_id, slippage["kind"], slippage["value"]),
+                )
             self._audit(conn, "one_off_order_saved", None, None, {"order_id": order_id})
             return order_id
 
     def one_off_orders(self) -> list[dict]:
+        """Every saved order, each with `slippage_kind`/`slippage_value` -- both
+        None when nothing was recorded for it (a pre-2026-10-13 order).
+        """
         conn = self._connect()
         try:
-            return [dict(r) for r in conn.execute("SELECT * FROM one_off_order ORDER BY id")]
+            rows = conn.execute(
+                """SELECT o.*, s.kind AS slippage_kind, s.value AS slippage_value
+                   FROM one_off_order o
+                   LEFT JOIN one_off_order_slippage s ON s.order_id = o.id
+                   ORDER BY o.id"""
+            )
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 
