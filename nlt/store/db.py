@@ -339,6 +339,75 @@ class Store:
             )
             self._audit(conn, "paper_kill_switch_released", None, None, {"reason": reason})
 
+    def paper_kill_switch_windows(self) -> list[tuple[str, str | None]]:
+        """Every `[engaged_at, released_at)` window the global paper kill switch has
+        ever been on, read from `audit_log` -- there is no separate table for this,
+        the switch's own engage/release events already are the history. The last
+        window's end is `None` if the switch is engaged right now.
+        """
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT at, event FROM audit_log WHERE event IN "
+                "('paper_kill_switch_engaged', 'paper_kill_switch_released') ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+        windows: list[tuple[str, str | None]] = []
+        open_start: str | None = None
+        for row in rows:
+            if row["event"] == "paper_kill_switch_engaged":
+                open_start = row["at"]
+            elif row["event"] == "paper_kill_switch_released" and open_start is not None:
+                windows.append((open_start, row["at"]))
+                open_start = None
+        if open_start is not None:
+            windows.append((open_start, None))
+        return windows
+
+    # ------------------------------------------------------------ paper pause
+
+    def is_paper_run_paused(self, run_id: int) -> bool:
+        rows = self.paper_pause_rows(run_id)
+        return bool(rows) and rows[-1]["kind"] == "pause"
+
+    def pause_paper_run(self, run_id: int, reason: str = "") -> None:
+        """Refuses a pause when the run is already paused: a second pause row
+        back to back would be indistinguishable from a resume-then-pause, and
+        the duration maths in `app.logic.stop_paper` pairs rows strictly
+        pause/resume/pause/resume.
+        """
+        if self.is_paper_run_paused(run_id):
+            raise ValueError("This run is already paused.")
+        with self.tx() as conn:
+            conn.execute(
+                "INSERT INTO paper_pause (run_id, kind, at, reason) VALUES (?, 'pause', ?, ?)",
+                (run_id, now(), reason),
+            )
+            self._audit(conn, "paper_run_paused", None, run_id, {"reason": reason})
+
+    def resume_paper_run(self, run_id: int, reason: str = "") -> None:
+        if not self.is_paper_run_paused(run_id):
+            raise ValueError("This run is not paused.")
+        with self.tx() as conn:
+            conn.execute(
+                "INSERT INTO paper_pause (run_id, kind, at, reason) VALUES (?, 'resume', ?, ?)",
+                (run_id, now(), reason),
+            )
+            self._audit(conn, "paper_run_resumed", None, run_id, {"reason": reason})
+
+    def paper_pause_rows(self, run_id: int) -> list[dict]:
+        conn = self._connect()
+        try:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM paper_pause WHERE run_id = ? ORDER BY id", (run_id,)
+                )
+            ]
+        finally:
+            conn.close()
+
     # --------------------------------------------------------------- paper
 
     def active_paper_runs(self) -> list[dict]:

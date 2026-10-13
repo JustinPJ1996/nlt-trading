@@ -376,6 +376,24 @@ one-off and alert-only-strategy alerts; the feed shows skipped signals.
   The test suite hits Yahoo whenever `data/bars` is stale, so these tests depend
   on the date -- worth pinning one day.
 
+**E3 built (2026-10-13, branch `paper-additions-batch-2`).** Pause/Resume per
+paper run (append-only `paper_pause`) and a "Running · N" drawer on every page.
+
+- Pause and the global paper kill switch both become `blocked_windows`:
+  signals known inside one are skipped (`paused`), never caught up. The kill
+  switch's history comes from `audit_log`. Open positions keep their exits
+  while paused; while the kill switch is on nothing is recorded, and exits
+  from that time are recorded after release, at their real candle times.
+- **Timing trap:** the engine sees a bar's *start* (a daily bar is 00:00); a
+  signal is known at its close. Windows are shifted back by `close_offset`
+  before reaching the engine (`runner.blocked_windows_for_engine`).
+- Drawer money: "Closed today" (IST day, includes one-off orders closed
+  today), "Open now" (as of the last candle), "Total" (what is listed). A
+  position with no price yet shows "price not known yet" and is left out of
+  the totals, saying so. The label shows "Paused" the moment Pause is pressed.
+- A stopped run's result states how long it was paused and how many signals
+  that skipped; it still counts toward the proving gate.
+
 **Next, from the competitor review** (paper first, carried into live):
 
 - **E1 Live activity feed** -- every decision with its reason: "RSI below 30 ·

@@ -777,3 +777,196 @@ def test_daily_trades_download_without_a_made_up_time(authed) -> None:
     ).json()
     text = authed.get(f"/api/results/{body['result_id']}/trades.csv").text
     assert "00:00" not in text
+
+
+# ----------------------------------------------------------- pause / resume
+
+
+def _seed_paper_run(store: Store, *, realised: float = 500.0, open_pnl: float = 200.0) -> int:
+    """A minimal paper run with a status snapshot, as if one pass had already
+    happened -- enough to drive the pause/resume routes and `/api/running`
+    without needing a real Kite feed."""
+    spec = logic.translate_text(RSI).spec
+    sid = store.save_strategy(spec, describe(spec))
+    started_at = pd.Timestamp.now(tz="Asia/Kolkata") - pd.Timedelta(days=1)
+    run_id = store.start_run(
+        sid, "paper", {"capital": 100_000.0, "started_at": started_at.isoformat()}
+    )
+    store.set_paper_status(
+        run_id,
+        "ok",
+        "Up to date.",
+        pd.Timestamp.now(tz="Asia/Kolkata").isoformat(),
+        {
+            "capital": 100_000.0,
+            "realised_pnl": realised,
+            "open_pnl_if_closed_now": open_pnl,
+            "equity": 100_000.0 + realised + open_pnl,
+            "closed_trades": 1,
+            "open_positions": [],
+            "skipped_symbols": [],
+        },
+    )
+    return run_id
+
+
+def test_pause_then_resume_round_trip(authed) -> None:
+    run_id = _seed_paper_run(authed.app.state.store)
+    r = authed.post(f"/api/paper/{run_id}/pause", json={})
+    assert r.status_code == 200
+    assert r.json()["run"]["paused"] is True
+
+    again = authed.post(f"/api/paper/{run_id}/pause", json={})
+    assert again.status_code == 400
+
+    r2 = authed.post(f"/api/paper/{run_id}/resume", json={})
+    assert r2.status_code == 200
+    assert r2.json()["run"]["paused"] is False
+
+    again2 = authed.post(f"/api/paper/{run_id}/resume", json={})
+    assert again2.status_code == 400
+
+
+def test_pause_and_resume_require_json(authed) -> None:
+    run_id = _seed_paper_run(authed.app.state.store)
+    r = authed.post(f"/api/paper/{run_id}/pause")
+    assert r.status_code == 400
+    r2 = authed.post(f"/api/paper/{run_id}/resume")
+    assert r2.status_code == 400
+
+
+def test_pause_refuses_a_run_that_is_not_running(authed) -> None:
+    run_id = _seed_paper_run(authed.app.state.store)
+    authed.app.state.store.finish_run(run_id, {}, status="complete")
+    r = authed.post(f"/api/paper/{run_id}/pause", json={})
+    assert r.status_code == 400
+
+
+# --------------------------------------------------------------- /api/running
+
+
+def test_running_lists_a_strategy_run_with_its_pause_flag(authed) -> None:
+    run_id = _seed_paper_run(authed.app.state.store)
+    body = authed.get("/api/running").json()
+    item = next(i for i in body["items"] if i.get("run_id") == run_id)
+    assert item["kind"] == "strategy"
+    assert item["paused"] is False
+
+    authed.post(f"/api/paper/{run_id}/pause", json={})
+    body2 = authed.get("/api/running").json()
+    item2 = next(i for i in body2["items"] if i.get("run_id") == run_id)
+    assert item2["paused"] is True
+    # Straight after pressing Pause, before any pass has run, the tag must not
+    # still say the run is going.
+    assert item2["health_label"] == logic.paper_health_label("paused")[1]
+    assert item2["health_label"] != item["health_label"]
+
+
+def test_running_money_figures_match_the_paper_run_cards_own_numbers(authed) -> None:
+    store = authed.app.state.store
+    run_id = _seed_paper_run(store, realised=500.0, open_pnl=200.0)
+    card = api._paper_run_card(store, store.get_run(run_id))
+    body = authed.get("/api/running").json()
+    item = next(i for i in body["items"] if i.get("run_id") == run_id)
+
+    # Same number as the card; the drawer adds the sign.
+    assert item["open_now"] == "+" + card["snapshot"]["open"]
+    assert item["open_now_value"] == 200.0
+    assert item["total_value"] == 700.0
+    assert item["closed_today_value"] == 0.0
+
+
+def test_running_requires_a_login(client) -> None:
+    r = client.get("/api/running")
+    assert r.status_code == 401
+
+
+def test_closed_today_is_judged_in_ist_not_utc(authed) -> None:
+    """01:00 IST on a given day is still the previous calendar day in UTC. An
+    exit recorded at that time must count as "today" when "now" is that same
+    morning in IST -- the only calendar the rest of this product (and its
+    user) uses. `now` is pinned so the test does not depend on when it runs.
+    """
+    store = authed.app.state.store
+    run_id = _seed_paper_run(store)
+    pinned_now = pd.Timestamp("2024-06-10T01:30:00", tz="Asia/Kolkata")
+    bar_time = pd.Timestamp("2024-06-10T01:00:00", tz="Asia/Kolkata")
+    store.record_paper_event(
+        run_id,
+        "exit",
+        "TEST|edge-of-day",
+        observed_at=bar_time.isoformat(),
+        symbol="NIFTY",
+        bar_time=bar_time.isoformat(),
+        detail={"net_pnl": 321.0},
+    )
+    body = api._running(store, now=pinned_now)
+    item = next(i for i in body["items"] if i.get("run_id") == run_id)
+    assert item["closed_today_value"] == pytest.approx(321.0)
+
+
+def test_today_ist_judges_the_ist_calendar_day_not_utcs() -> None:
+    """01:00 IST on 10 June is 19:30 UTC on 9 June -- a different calendar date.
+    `_today_ist` must use the IST date, the only calendar this product's user
+    (and the rest of the paper-trading feed) uses."""
+    bar_time = "2024-06-10T01:00:00+05:30"
+    today_ist = pd.Timestamp("2024-06-10T00:00:00", tz="Asia/Kolkata")
+    assert api._today_ist(bar_time, today_ist) is True
+    assert api._today_ist(bar_time, today_ist + pd.Timedelta(days=1)) is False
+
+
+def test_running_never_shows_an_unknown_price_as_rs_0(authed, monkeypatch) -> None:
+    """A position with no price yet is not a flat result. It shows as unknown,
+    is left out of the totals, and the totals line says so."""
+    store = authed.app.state.store
+    page = {
+        "orders": [],
+        "positions": [
+            {"id": 1, "name": "1 lot NIFTY FUT", "pnl": None, "pnl_text": "", "last_at": ""},
+            {
+                "id": 2,
+                "name": "1 lot NIFTY FUT",
+                "pnl": 250.0,
+                "pnl_text": "+Rs 250",
+                "last_at": "",
+            },
+        ],
+    }
+    monkeypatch.setattr(api.orders_view, "page", lambda _store: page)
+    body = api._running(store)
+    unpriced = next(i for i in body["items"] if i.get("position_id") == 1)
+    assert unpriced["open_now"] == "price not known yet"
+    assert "Rs 0" not in unpriced["open_now"] + unpriced["total"]
+    assert body["totals"]["open_now"] == "+Rs 250"
+    assert "1 open position without a price yet is left out" in body["totals"]["label"]
+
+
+def test_running_closed_today_includes_one_off_orders_closed_today(authed, monkeypatch) -> None:
+    store = authed.app.state.store
+    now = pd.Timestamp("2024-06-10T14:00:00", tz="Asia/Kolkata")
+    exits = [
+        {
+            "kind": "exited",
+            "bar_time": "2024-06-10T10:00:00+05:30",
+            "detail_json": '{"net_pnl": 400.0}',
+        },
+        {
+            "kind": "exited",
+            "bar_time": "2024-06-09T10:00:00+05:30",
+            "detail_json": '{"net_pnl": 999.0}',
+        },
+    ]
+    monkeypatch.setattr(api.orders_view, "page", lambda _store: {"orders": [], "positions": []})
+    monkeypatch.setattr(store, "one_off_events", lambda: exits)
+    body = api._running(store, now=now)
+    assert body["totals"]["closed_today"] == "+Rs 400"
+    assert "one-off orders that closed today" in body["totals"]["label"]
+
+
+def test_the_paper_page_card_says_paused_straight_after_pause(authed) -> None:
+    store = authed.app.state.store
+    run_id = _seed_paper_run(store)
+    authed.post(f"/api/paper/{run_id}/pause", json={})
+    card = api._paper_run_card(store, store.get_run(run_id))
+    assert card["paused"] is True
+    assert logic.paper_health_label("paused")[1] in str(card)

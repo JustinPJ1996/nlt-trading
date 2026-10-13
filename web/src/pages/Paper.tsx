@@ -115,7 +115,7 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
 }
 
 function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
-  const [busy, setBusy] = useState<"check" | "stop" | null>(null);
+  const [busy, setBusy] = useState<"check" | "stop" | "pause" | null>(null);
   const [sure, setSure] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +146,23 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
     }
   }
 
+  async function togglePause() {
+    setBusy("pause");
+    setError(null);
+    try {
+      if (run.paused) {
+        await api.paperResume(run.run_id);
+      } else {
+        await api.paperPause(run.run_id);
+      }
+      reload();
+    } catch (err) {
+      setError(message(err, "Could not change the pause."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <article className="panel">
       <div className="run-head">
@@ -161,6 +178,12 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
           {run.health_label}
         </span>
       </div>
+      {run.paused && (
+        <p className="muted small" style={{ marginTop: 4 }}>
+          Paused by hand: new signals are being skipped, not queued for later. Stops, targets and other
+          exits are still watched.
+        </p>
+      )}
       {run.message && <p style={{ marginTop: 8 }}>{run.message}</p>}
 
       {run.snapshot && (
@@ -247,7 +270,11 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
           <button className="btn secondary" onClick={check} disabled={busy !== null}>
             Check now
           </button>
+          <button className="btn secondary" onClick={togglePause} disabled={busy !== null}>
+            {run.paused ? "Resume" : "Pause"}
+          </button>
           {busy === "check" && <Working>Checking live prices...</Working>}
+          {busy === "pause" && <Working>{run.paused ? "Resuming..." : "Pausing..."}</Working>}
           {note && !busy && <span className="muted small">{note}</span>}
         </div>
         <div className="btn-row">
