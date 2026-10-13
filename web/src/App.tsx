@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, whenLoggedOut, type Options, type Result } from "./api";
 import { Working } from "./components/Callout";
+import { RunningDrawer } from "./components/RunningDrawer";
 import { Activity } from "./pages/Activity";
 import { Build, emptyBuild, type BuildState } from "./pages/Build";
 import { Login } from "./pages/Login";
@@ -34,6 +35,8 @@ export function App() {
   const [build, setBuild] = useState<BuildState>(emptyBuild);
   const [result, setResult] = useState<Result | null>(null);
   const [killed, setKilled] = useState(false);
+  const [runningCount, setRunningCount] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     whenLoggedOut(() => setUser(null));
@@ -47,11 +50,18 @@ export function App() {
     api.safety().then((s) => setKilled(s.paper || s.live), () => {});
   }, []);
 
+  const refreshRunningCount = useCallback(() => {
+    api.running().then((s) => setRunningCount(s.items.length), () => {});
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     api.options().then(setOptions, () => {});
     refreshKill();
-  }, [user, refreshKill]);
+    refreshRunningCount();
+    const id = window.setInterval(refreshRunningCount, 30_000);
+    return () => window.clearInterval(id);
+  }, [user, refreshKill, refreshRunningCount]);
 
   useEffect(() => {
     document.title = `${PAGES.find((p) => p.id === page)?.label} - Strategy Desk`;
@@ -83,6 +93,9 @@ export function App() {
               </a>
             ))}
           </nav>
+          <button className="btn secondary small" onClick={() => setDrawerOpen(true)}>
+            Running &middot; {runningCount}
+          </button>
           <button
             className="signout"
             onClick={() => api.logout().finally(() => setUser(null))}
@@ -95,6 +108,14 @@ export function App() {
         <div className="killbanner" role="alert">
           A kill switch is on. <a href="#/safety">See Safety</a>
         </div>
+      )}
+      {drawerOpen && (
+        <RunningDrawer
+          onClose={() => {
+            setDrawerOpen(false);
+            refreshRunningCount();
+          }}
+        />
       )}
       <main>
         {page === "build" && (

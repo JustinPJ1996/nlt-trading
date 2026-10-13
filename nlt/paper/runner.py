@@ -198,32 +198,98 @@ def _run_engine(
     return result.trades, result, result.decisions
 
 
-def _parse_blocked_windows(params: dict) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
-    """Reads `params["blocked_windows"]`: a list of `[start, end]` ISO strings.
+def _to_ist(value) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    return ts.tz_localize(IST) if ts.tzinfo is None else ts.tz_convert(IST)
 
-    Not driven by any screen today -- nothing in `web/` or `app/api.py` writes
-    this key -- but a saved run's params can already carry it by hand (or from
-    a future scheduling feature) and have the engine honour it, which is the
-    whole point of `run_backtest`/`run_basket_backtest` taking the parameter
-    in the first place. Naive timestamps are read as IST, matching every other
-    time the paper runner handles (see `started_at` just above its own call
-    site).
+
+def _parse_blocked_windows(params: dict) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Reads `params["blocked_windows"]`: a list of `[start, end]` ISO strings,
+    hand-set wall-clock windows a saved run's params can carry (or a future
+    scheduling feature could write). Naive timestamps are read as IST, matching
+    every other time the paper runner handles (see `started_at` just above its
+    own call site in `step`). These are wall-clock windows exactly like a pause
+    or the kill switch, so `pause_windows_for_run` shifts them the same way
+    before handing them to the engine.
     """
     windows = []
     for pair in params.get("blocked_windows") or []:
         start, end = pair
-        start_ts = pd.Timestamp(start)
-        end_ts = pd.Timestamp(end)
-        if start_ts.tzinfo is None:
-            start_ts = start_ts.tz_localize(IST)
-        else:
-            start_ts = start_ts.tz_convert(IST)
-        if end_ts.tzinfo is None:
-            end_ts = end_ts.tz_localize(IST)
-        else:
-            end_ts = end_ts.tz_convert(IST)
-        windows.append((start_ts, end_ts))
+        windows.append((_to_ist(start), _to_ist(end)))
     return windows
+
+
+def _pause_rows_to_windows(
+    rows: list[dict], open_end: pd.Timestamp
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Pairs `paper_pause` rows into `[pause, resume)` windows. A pause with no
+    matching resume yet is still a window -- open-ended at `open_end`, which the
+    caller passes as "now" (or the stop time, when called from `stop_paper`'s
+    summary) so a still-paused run's final signal is still counted as blocked.
+    """
+    windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    pending: pd.Timestamp | None = None
+    for row in rows:
+        at = _to_ist(row["at"])
+        if row["kind"] == "pause":
+            pending = at
+        elif row["kind"] == "resume" and pending is not None:
+            windows.append((pending, at))
+            pending = None
+    if pending is not None:
+        windows.append((pending, open_end))
+    return windows
+
+
+def kill_switch_windows_for_run(
+    store: Store, started_at: pd.Timestamp, open_end: pd.Timestamp
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Every global paper-kill-switch window that overlaps this run's lifetime,
+    clipped to `[started_at, open_end]`. Because the engine replays the run's
+    whole history on every pass (see the module docstring), a window from a
+    switch that has since been released still has to be fed back in on every
+    later pass -- otherwise the entries missed while it was engaged would be
+    recorded late, at prices from whenever the next pass happened to run, which
+    is exactly the behaviour Justin asked to stop (see HANDOFF.md, Phase 3).
+    """
+    windows = []
+    for start, end in store.paper_kill_switch_windows():
+        start_ts = _to_ist(start)
+        end_ts = open_end if end is None else _to_ist(end)
+        if end_ts <= started_at or start_ts >= open_end:
+            continue
+        windows.append((max(start_ts, started_at), min(end_ts, open_end)))
+    return windows
+
+
+def pause_windows_for_run(
+    store: Store, run_id: int, params: dict, started_at: pd.Timestamp, now: pd.Timestamp
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """All wall-clock windows during which this run's new signals are missed:
+    its own pause/resume history, the kill-switch windows that overlap it, and
+    any hand-set `params["blocked_windows"]`. Not yet shifted for the engine --
+    see `blocked_windows_for_engine`.
+    """
+    pause_windows = _pause_rows_to_windows(store.paper_pause_rows(run_id), now)
+    kill_windows = kill_switch_windows_for_run(store, started_at, now)
+    return _parse_blocked_windows(params) + pause_windows + kill_windows
+
+
+def blocked_windows_for_engine(
+    windows: list[tuple[pd.Timestamp, pd.Timestamp]], timeframe: str, session: Session
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """Shifts wall-clock windows back so the engine -- which only ever sees a
+    bar's START timestamp -- blocks the right bars.
+
+    A signal only becomes KNOWN when its bar closes: start + `close_offset`. A
+    daily bar is stamped at 00:00 and closes at the session close, so pausing
+    09:00-16:00 must block that day's daily signal (known at 15:30, inside the
+    window) while pausing 16:00-23:00 must not (known at 15:30, before the
+    window opens). So: a bar starting at t is blocked iff t + offset is inside
+    [start, end), i.e. iff t is inside [start - offset, end - offset).
+    """
+    offset = close_offset(timeframe, session)
+    return [(start - offset, end - offset) for start, end in windows]
 
 
 def _key(t: Trade, fallback_symbol: str) -> str:
@@ -264,6 +330,19 @@ def step(
             _prior_health = health
         store.set_paper_status(run_id, health, message, last_bar_time, snapshot)
 
+    # While the GLOBAL paper kill switch is on, every run's `step` returns here
+    # before touching the engine -- nothing is recorded, not even an exit, so an
+    # engaged switch can never be blamed for a wrong number appearing mid-flight.
+    # This is different from a per-run pause (see `pause_windows_for_run`),
+    # which keeps running the engine below so stops and targets stay managed.
+    # Exits that genuinely happened while the switch was on are NOT lost: they
+    # are not fabricated at some earlier time either. The next pass after
+    # release replays history as normal and records each exit once, stamped
+    # with its real candle time -- just later than it would have been recorded
+    # had the switch never been on. Entries are different: `kill_switch_windows_for_run`
+    # turns this same window into a blocked window on every future pass, so an
+    # entry whose signal became known while the switch was on is skipped
+    # ("paused") forever, never recorded late at a stale price.
     if store.paper_kill_switch_engaged():
         _set_status("paused", "Paused: the paper kill switch is on.")
         return StepResult("paused", "paper kill switch engaged")
@@ -327,7 +406,8 @@ def step(
     if contract_from is not None:
         trade_from = max(trade_from, contract_from)
 
-    blocked_windows = _parse_blocked_windows(params)
+    wall_clock_windows = pause_windows_for_run(store, run_id, params, started_at, now)
+    blocked_windows = blocked_windows_for_engine(wall_clock_windows, timeframe, session)
     trades, single, decisions = _run_engine(
         spec,
         bars_by_symbol,
@@ -556,8 +636,15 @@ def step(
     message = f"Up to date to the candle at {pd.Timestamp(last_bar):%d %b %H:%M}."
     if failures:
         message += f" Could not load {len(failures)} symbol(s)."
-    _set_status("ok", message, _iso(last_bar), snapshot)
-    return StepResult("ok", message, new)
+    health = "ok"
+    if store.is_paper_run_paused(run_id):
+        health = "paused"
+        message = (
+            "Paused. New signals are skipped, not queued for later. "
+            "Stops, targets and other exits are still being watched and recorded. " + message
+        )
+    _set_status(health, message, _iso(last_bar), snapshot)
+    return StepResult(health, message, new)
 
 
 def _drift(store, run_id, observed, symbol, kind, key, was, now_fields, new) -> None:

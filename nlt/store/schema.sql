@@ -215,6 +215,34 @@ CREATE TABLE IF NOT EXISTS paper_status (
     snapshot_json   TEXT    NOT NULL DEFAULT '{}'
 );
 
+-- When a paper run was paused and resumed by hand -- separate from the pause
+-- the global paper kill switch causes, whose history already lives in
+-- `audit_log` (see `Store.paper_kill_switch_windows`). Append-only for the
+-- same reason as `paper_event`: a pause record that could be edited after the
+-- fact proves nothing about when the run actually stopped looking for new
+-- signals.
+CREATE TABLE IF NOT EXISTS paper_pause (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER NOT NULL REFERENCES run(id),
+    kind            TEXT    NOT NULL CHECK (kind IN ('pause', 'resume')),
+    at              TEXT    NOT NULL,
+    reason          TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_pause_run ON paper_pause(run_id);
+
+CREATE TRIGGER IF NOT EXISTS paper_pause_no_update
+BEFORE UPDATE ON paper_pause
+BEGIN
+    SELECT RAISE(ABORT, 'paper_pause is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS paper_pause_no_delete
+BEFORE DELETE ON paper_pause
+BEGIN
+    SELECT RAISE(ABORT, 'paper_pause is append-only');
+END;
+
 -- One-off conditional orders ("when this happens, do that, once") -- paper only.
 -- The recipe is `nlt.orders.models.ConditionalOrder`. Once saved, an order's
 -- recipe never changes; it can only be cancelled, and only before it triggers.

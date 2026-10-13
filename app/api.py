@@ -696,7 +696,11 @@ def _paper_run_card(store: Store, run: dict) -> dict:
     params = json.loads(run["params_json"] or "{}")
     status = store.paper_status(run["id"]) or {}
     snap = json.loads(status.get("snapshot_json") or "{}")
-    kind, label = logic.paper_health_label(status.get("health", "waiting"))
+    # The label follows the Pause button at once, not the next minute's pass.
+    paused_now = run["status"] == "running" and store.is_paper_run_paused(run["id"])
+    kind, label = logic.paper_health_label(
+        "paused" if paused_now else status.get("health", "waiting")
+    )
     positions = []
     for p in snap.get("open_positions") or []:
         # A futures quantity already names its contract ("1 lot of Gold futures").
@@ -720,6 +724,7 @@ def _paper_run_card(store: Store, run: dict) -> dict:
         "name": strategy["name"],
         "version": strategy["version"],
         "readback": strategy["readback"],
+        "paused": store.is_paper_run_paused(run["id"]),
         "health": kind,
         "health_label": label,
         "message": status.get("message", ""),
@@ -823,6 +828,186 @@ async def paper_stop(request: Request) -> Response:
     _active_run(store, run_id)
     await _run(logic.stop_paper, store, run_id)
     return JSONResponse({"ok": True})
+
+
+async def paper_pause(request: Request) -> Response:
+    await _json_body(request)
+    store = _store(request)
+    run_id = int(request.path_params["rid"])
+    _active_run(store, run_id)
+    try:
+        await _run(logic.pause_paper, store, run_id)
+    except ValueError as exc:
+        raise _BadRequest(str(exc)) from None
+    return JSONResponse({"run": await _run(_paper_run_card, store, store.get_run(run_id))})
+
+
+async def paper_resume(request: Request) -> Response:
+    await _json_body(request)
+    store = _store(request)
+    run_id = int(request.path_params["rid"])
+    _active_run(store, run_id)
+    try:
+        await _run(logic.resume_paper, store, run_id)
+    except ValueError as exc:
+        raise _BadRequest(str(exc)) from None
+    return JSONResponse({"run": await _run(_paper_run_card, store, store.get_run(run_id))})
+
+
+# ------------------------------------------------------------- the running drawer
+
+
+def _today_ist(bar_time: str | None, today: pd.Timestamp) -> bool:
+    if not bar_time:
+        return False
+    ts = pd.Timestamp(bar_time)
+    ts = ts.tz_localize("Asia/Kolkata") if ts.tzinfo is None else ts.tz_convert("Asia/Kolkata")
+    return ts.normalize() == today
+
+
+def _no_money() -> dict:
+    """A waiting order has no money in play yet: show a dash, never "Rs 0",
+    which would read as a result."""
+    return {
+        "closed_today": "-",
+        "closed_today_value": 0.0,
+        "open_now": "-",
+        "open_now_value": 0.0,
+        "open_now_as_of": "",
+        "total": "-",
+        "total_value": 0.0,
+    }
+
+
+def _running(store: Store, *, now: pd.Timestamp | None = None) -> dict:
+    """Everything currently running or waiting, for the header drawer: every
+    paper strategy run, every waiting one-off order, every open one-off
+    position. The money maths is never redone here -- 'Closed today' is summed
+    straight from `paper_event` exit rows (the same rows `_paper_run_card`
+    reads), 'Open now' and 'Total' come from the same snapshot
+    `_paper_run_card` shows, and the one-off figures come straight from
+    `orders_view.open_positions`.
+
+    `now` is a parameter (defaulting to the real clock, in IST) rather than
+    read inline, so a test can pin the exact instant "today" is judged from --
+    the whole point being caught here is a day boundary that only shows up for
+    a few hours around midnight IST.
+    """
+    now = now or pd.Timestamp.now(tz="Asia/Kolkata")
+    today = now.normalize()
+    items = []
+    totals = {"closed_today": 0.0, "open_now": 0.0, "total": 0.0}
+
+    for run in store.active_paper_runs():
+        strategy = store.get_strategy(run["strategy_id"])
+        status = store.paper_status(run["id"]) or {}
+        snap = json.loads(status.get("snapshot_json") or "{}")
+        paused = store.is_paper_run_paused(run["id"])
+        # The label follows the Pause button at once, not the next minute's pass.
+        health = "paused" if paused else status.get("health", "waiting")
+        kind, label = logic.paper_health_label(health)
+        closed_today = sum(
+            (json.loads(e["detail_json"] or "{}").get("net_pnl") or 0.0)
+            for e in store.paper_events(run["id"])
+            if e["kind"] == "exit" and _today_ist(e["bar_time"], today)
+        )
+        realised = snap.get("realised_pnl", 0.0)
+        open_pnl = snap.get("open_pnl_if_closed_now", 0.0)
+        total = realised + open_pnl
+        totals["closed_today"] += closed_today
+        totals["open_now"] += open_pnl
+        totals["total"] += total
+        items.append(
+            {
+                "kind": "strategy",
+                "run_id": run["id"],
+                "name": f"{strategy['name']} v{strategy['version']}",
+                "health": kind,
+                "health_label": label,
+                "paused": paused,
+                "closed_today": orders_view._signed(closed_today),
+                "closed_today_value": closed_today,
+                "open_now": orders_view._signed(open_pnl),
+                "open_now_value": open_pnl,
+                "open_now_as_of": logic.when(status.get("last_bar_time")),
+                "total": orders_view._signed(total),
+                "total_value": total,
+            }
+        )
+
+    orders_page = orders_view.page(store)
+    for o in orders_page["orders"]:
+        if o["status"] != "waiting":
+            continue
+        items.append(
+            {
+                "kind": "one_off_order",
+                "order_id": o["id"],
+                "name": o["sentence"],
+                "health": "info",
+                "health_label": o["status_label"],
+                "paused": False,
+                **_no_money(),
+            }
+        )
+
+    unpriced = 0
+    for p in orders_page["positions"]:
+        known = p.get("pnl") is not None
+        pnl = p["pnl"] if known else 0.0
+        if known:
+            totals["open_now"] += pnl
+            totals["total"] += pnl
+        else:
+            unpriced += 1
+        items.append(
+            {
+                "kind": "one_off_position",
+                "position_id": p["id"],
+                "name": p["name"],
+                "health": "success",
+                "health_label": "Position open",
+                "paused": False,
+                "closed_today": "-",
+                "closed_today_value": 0.0,
+                "open_now": p["pnl_text"] if known else "price not known yet",
+                "open_now_value": pnl,
+                "open_now_as_of": p.get("last_at", ""),
+                "total": p["pnl_text"] if known else "price not known yet",
+                "total_value": pnl,
+            }
+        )
+
+    # One-off orders that closed today are no longer listed above, but their
+    # result belongs in today's total.
+    for e in store.one_off_events():
+        if e["kind"] == "exited" and _today_ist(e["bar_time"], today):
+            net = json.loads(e["detail_json"] or "{}").get("net_pnl")
+            if net is not None:
+                totals["closed_today"] += net
+
+    label = (
+        "Paper money. Closed today includes one-off orders that closed today; "
+        "Total covers what is listed above; open positions are before exit charges."
+    )
+    if unpriced:
+        label += (
+            f" {unpriced} open position{'s' if unpriced != 1 else ''} without a price yet "
+            f"{'are' if unpriced != 1 else 'is'} left out."
+        )
+    return {
+        "items": items,
+        "totals": {
+            "closed_today": orders_view._signed(totals["closed_today"]),
+            "open_now": orders_view._signed(totals["open_now"]),
+            "total": orders_view._signed(totals["total"]),
+            "label": label,
+        },
+    }
+
+
+async def running(request: Request) -> Response:
+    return JSONResponse(await _run(_running, _store(request)))
 
 
 def _paper_trade(store: Store, run_id: int, key: str) -> list[str]:
@@ -1137,7 +1322,10 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/paper/start", paper_start, ["POST"]),
         r("/api/paper/{rid:int}/check", paper_check, ["POST"]),
         r("/api/paper/{rid:int}/stop", paper_stop, ["POST"]),
+        r("/api/paper/{rid:int}/pause", paper_pause, ["POST"]),
+        r("/api/paper/{rid:int}/resume", paper_resume, ["POST"]),
         r("/api/paper/{rid:int}/trade/{key}", paper_trade),
+        r("/api/running", running),
         r("/api/activity", activity),
         r("/api/orders", orders),
         r("/api/orders/read", orders_read, ["POST"]),
