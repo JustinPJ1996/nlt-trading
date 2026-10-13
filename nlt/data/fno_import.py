@@ -64,6 +64,20 @@ in any backtest built on top of this data -- use it only to *estimate* spread
 cost. Treating it as a tradable price would flatter results with fills that
 never actually happened.
 
+## The 15-minute OHLC was built from forward-filled minutes
+
+Measured 2026-10-13 by rebuilding 15-minute bars from the 1-minute file: the
+native 15-minute `close` and `volume` match the traded minutes exactly, but
+`open` matches the first *traded* minute only ~65-70% of the time and
+`high`/`low` ~88%. They match aggregates over *all* minutes, including the
+volume-0 forward-filled ones, 100% -- so a 15-minute option bar's open can be
+a price from long before the bar (BANKNIFTY2460540000CE, 2024-06-04 11:00:
+open 10,899.95; its first trade in that bar was 7,735.60 at 11:13), and some
+lows are 0.00. The daily file's open/high/low match the traded minutes, but
+its `close` is an official closing price, not the last trade. **Option bars
+for backtesting are therefore built from traded 1-minute rows only**
+(`nlt/options/data.py`); the native 15m/1d option OHLC must not be filled at.
+
 ## Data quality is flagged, never dropped
 
 56.9% of daily option rows never traded that day (`volume = 0`), and defects
@@ -91,11 +105,11 @@ pattern -- verified in `.gitignore` and guarded by
 
 ## Scope
 
-Daily and 15-minute only, by design -- see `TIMEFRAMES`. The 1-minute file
-(`quotes_1m.bin`, decompressed it would be tens of gigabytes) is wired up but
-not decompressed or imported by default; `import_timeframe("1m", ...)` raises
-a clear `FileNotFoundError` naming the `zstd` command to run first, rather
-than silently doing that decompression as a side effect of an import.
+Daily and 15-minute by default -- see `DEFAULT_TIMEFRAMES`. The 1-minute
+file is opt-in: it decompresses to ~78 GB and is imported in two steps
+(`stage_1m`, then `import_1m`), described beside those functions.
+`import_timeframe("1m", ...)` raises a clear `FileNotFoundError` naming the
+command to run first rather than decompressing as a side effect.
 """
 
 from __future__ import annotations
@@ -197,7 +211,9 @@ def _master_cte(daily_scrips_path: Path) -> str:
     """
 
 
-def _join_sql(quotes_path: Path, daily_scrips_path: Path, *, where: str = "") -> str:
+def _join_sql(
+    quotes_path: Path, daily_scrips_path: Path, *, where: str = "", fmt: str = "Native"
+) -> str:
     """The shared join: quotes to the collapsed master, on the contract-day.
 
     `q.time_stamp + INTERVAL 330 MINUTE` converts the UTC quote timestamp to
@@ -207,7 +223,7 @@ def _join_sql(quotes_path: Path, daily_scrips_path: Path, *, where: str = "") ->
     """
     where_clause = f"WHERE {where}" if where else ""
     return f"""
-    FROM file('{quotes_path}', 'Native') AS q
+    FROM file('{quotes_path}', '{fmt}') AS q
     INNER JOIN {_master_cte(daily_scrips_path)} AS m
         ON q.scrip_code = m.scrip_code
        AND toDate(q.time_stamp + INTERVAL 330 MINUTE) = m.trading_day
@@ -224,9 +240,14 @@ _HAS_SETTLE_PRICE = {"1d": True, "1h": False, "15m": False, "1m": False}
 
 
 def _select_sql(
-    quotes_path: Path, daily_scrips_path: Path, *, timeframe: str, where: str = ""
+    quotes_path: Path,
+    daily_scrips_path: Path,
+    *,
+    timeframe: str,
+    where: str = "",
+    fmt: str = "Native",
 ) -> str:
-    join = _join_sql(quotes_path, daily_scrips_path, where=where)
+    join = _join_sql(quotes_path, daily_scrips_path, where=where, fmt=fmt)
     settle_price_col = (
         "q.settle_price / 100.0 AS settle_price,\n        " if _HAS_SETTLE_PRICE[timeframe] else ""
     )
@@ -267,7 +288,12 @@ def _localise(df: pd.DataFrame) -> pd.DataFrame:
     `tz_convert(IST)` is the mandatory conversion from the module docstring.
     """
     df = df.copy()
-    df["timestamp"] = df["time_stamp_utc"].dt.tz_localize("UTC").dt.tz_convert(IST)
+    ts = df["time_stamp_utc"]
+    # Read back from the staged 1-minute Parquet, the column arrives already
+    # tz-aware (an absolute instant); only then is it converted as-is.
+    if ts.dt.tz is None:
+        ts = ts.dt.tz_localize("UTC")
+    df["timestamp"] = ts.dt.tz_convert(IST)
     return df.drop(columns=["time_stamp_utc"])
 
 
@@ -440,6 +466,9 @@ def import_timeframe(
 
     Returns the quality notes gathered across every chunk written.
     """
+    if timeframe == "1m":
+        return import_1m(raw_dir=raw_dir, out_dir=out_dir, underlyings=underlyings)
+
     quotes_path = _require_quotes_file(raw_dir, timeframe)
     daily_scrips_path = _daily_scrips_path(raw_dir)
 
@@ -463,4 +492,112 @@ def import_timeframe(
             )
             notes.append(f"{underlying} {year}: wrote {len(chunk):,} rows")
 
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# The 1-minute file
+#
+# Decompressed it is ~78 GB, and its rows are not in time order, so the
+# per-(underlying, year) query the other timeframes use would re-read all
+# 78 GB for every chunk. Instead it goes through two steps:
+#
+#   1. `stage_1m` reads the raw file ONCE and splits it, untouched (still
+#      paise, still UTC, no join), into one Parquet file per calendar month
+#      (UTC month) in `stage_dir`.
+#   2. `import_1m` then runs the same join, conversions and quality flags as
+#      every other timeframe, one (month, underlying) at a time, against the
+#      small monthly file, and writes
+#      `out_dir/1m/underlying=U/year=Y/month=M/*.parquet`.
+#
+# **The 1-minute rows are forward-filled.** A minute in which a contract did
+# not trade still has a row: volume 0 and the previous price repeated as its
+# open/high/low/close. Those rows are kept and flagged like every other
+# untraded row (`volume == 0`, `liquid` False); anything that builds bars
+# from them must use traded rows only, or a stale price becomes a fake
+# high/low. `check("1m")` reports how many there are.
+# ---------------------------------------------------------------------------
+
+STAGE_DIR = RAW_DIR.parent / "stage_1m"
+
+
+def stage_1m(raw_dir: Path = RAW_DIR, stage_dir: Path = STAGE_DIR) -> list[Path]:
+    """Split the raw 1-minute file into one Parquet file per UTC month.
+
+    Re-runnable: `stage_dir` is cleared first. The month is taken from the
+    raw UTC timestamp; a UTC month boundary never falls inside an Indian
+    session (03:45-10:00 UTC), so no session is split across two files.
+    """
+    quotes_path = _require_quotes_file(raw_dir, "1m")
+    if stage_dir.exists():
+        shutil.rmtree(stage_dir)
+    stage_dir.mkdir(parents=True)
+    chdb.query(
+        f"""
+        INSERT INTO FUNCTION file('{stage_dir}/m_{{_partition_id}}.parquet', 'Parquet')
+        PARTITION BY toYYYYMM(time_stamp)
+        SELECT * FROM file('{quotes_path}', 'Native')
+        SETTINGS output_format_parquet_compression_method = 'zstd'
+        """
+    )
+    return staged_months(stage_dir)
+
+
+def staged_months(stage_dir: Path = STAGE_DIR) -> list[Path]:
+    return sorted(stage_dir.glob("m_*.parquet"))
+
+
+def import_1m(
+    *,
+    raw_dir: Path = RAW_DIR,
+    stage_dir: Path | None = None,
+    out_dir: Path = OUTPUT_DIR,
+    underlyings: tuple[str, ...] = UNDERLYINGS,
+) -> list[str]:
+    """Import the staged 1-minute months; see the section comment above."""
+    stage_dir = stage_dir if stage_dir is not None else raw_dir.parent / "stage_1m"
+    months = staged_months(stage_dir)
+    if not months:
+        raise FileNotFoundError(
+            f"No staged 1-minute months in {stage_dir}. Decompress and stage first:\n"
+            f"  zstd -dq {raw_dir.parent / COMPRESSED_NAMES['1m']} -o "
+            f"{_quotes_path(raw_dir, '1m')}\n"
+            f"  then call nlt.data.fno_import.stage_1m()"
+        )
+    daily_scrips_path = _daily_scrips_path(raw_dir)
+
+    timeframe_dir = out_dir / "1m"
+    if timeframe_dir.exists():
+        shutil.rmtree(timeframe_dir)
+    timeframe_dir.mkdir(parents=True, exist_ok=True)
+
+    notes: list[str] = []
+    for month_file in months:
+        for underlying in underlyings:
+            sql = _select_sql(
+                month_file,
+                daily_scrips_path,
+                timeframe="1m",
+                where=f"m.underlying = '{underlying}'",
+                fmt="Parquet",
+            )
+            chunk = _run_query(sql)
+            if chunk.empty:
+                continue
+            chunk = _localise(chunk)
+            chunk, _ = add_quality_flags(chunk)
+            # Partition by the IST date, so a reader asking for one Indian
+            # month reads exactly one folder.
+            chunk = chunk.assign(year=chunk["timestamp"].dt.year, month=chunk["timestamp"].dt.month)
+            chunk.to_parquet(
+                timeframe_dir,
+                engine="pyarrow",
+                partition_cols=["underlying", "year", "month"],
+                index=False,
+            )
+            forward_filled = int((chunk["volume"] == 0).sum())
+            notes.append(
+                f"{underlying} {month_file.stem[2:]}: wrote {len(chunk):,} rows "
+                f"({forward_filled:,} untraded/forward-filled)"
+            )
     return notes

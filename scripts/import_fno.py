@@ -3,7 +3,8 @@
 
     .venv/bin/python scripts/import_fno.py --check      # report only, writes nothing
     .venv/bin/python scripts/import_fno.py               # import 1d + 15m (the default)
-    .venv/bin/python scripts/import_fno.py --timeframe 1m   # opt-in; needs decompressing first
+    .venv/bin/python scripts/import_fno.py --stage-1m       # 1m step 1: split the raw file by month
+    .venv/bin/python scripts/import_fno.py --timeframe 1m   # 1m step 2: import the staged months
 
 See `nlt/data/fno_import.py` for the two mandatory unit conversions (paise,
 UTC->IST), the data-quality flags this deliberately does not filter on, and
@@ -39,12 +40,22 @@ def main() -> None:
         action="store_true",
         help="report row counts, date ranges and defect counts; write nothing",
     )
+    parser.add_argument(
+        "--stage-1m",
+        action="store_true",
+        help="split the decompressed 1-minute file into monthly Parquet (run before --timeframe 1m)",
+    )
     parser.add_argument("--raw-dir", type=Path, default=fi.RAW_DIR)
     parser.add_argument("--out", type=Path, default=fi.OUTPUT_DIR)
     args = parser.parse_args()
 
     timeframes = tuple(args.timeframes) if args.timeframes else fi.DEFAULT_TIMEFRAMES
     underlyings = tuple(args.underlyings) if args.underlyings else fi.UNDERLYINGS
+
+    if args.stage_1m:
+        months = fi.stage_1m(raw_dir=args.raw_dir)
+        print(f"Staged {len(months)} months in {fi.STAGE_DIR}")
+        return
 
     if args.check:
         for timeframe in timeframes:

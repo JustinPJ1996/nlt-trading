@@ -47,7 +47,8 @@ target-version = "py312"
 # approach this project deliberately moved away from. Linting it produced ten of
 # the eleven errors in the repo and none of them were ever going to be fixed,
 # which is how a tool teaches you to ignore its output.
-exclude = ["legacy"]
+# `.claude/worktrees/` holds agents' in-progress copies of this repo.
+exclude = ["legacy", ".claude"]
 
 [tool.ruff.lint]
 # Pyflakes and pycodestyle catch real mistakes; isort keeps imports tidy;
