@@ -10,8 +10,9 @@
 //  - A suggested answer is a hint, never pre-filled.
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type OrderPosition, type OrderReading, type OrdersState, type SavedOrder } from "../api";
+import { api, ApiError, type OrderPosition, type OrderReading, type OrdersState, type SavedOrder, type Slippage, ZERO_SLIPPAGE } from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
+import { SlippageInput } from "../components/SlippageInput";
 import { TradeTimeline } from "../components/TradeTimeline";
 
 const EXAMPLES = [
@@ -65,6 +66,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [stop, setStop] = useState("");
   const [chosen, setChosen] = useState<number[]>([]);
+  const [slippage, setSlippage] = useState<Slippage>(ZERO_SLIPPAGE);
   const [busy, setBusy] = useState<"read" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -114,7 +116,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
     setBusy("save");
     setError(null);
     try {
-      await api.orderCreate(checkedText!, answers, r.order, chosen);
+      await api.orderCreate(checkedText!, answers, r.order, chosen, slippage);
       setSaved(checkedText);
       setText("");
       setReading(null);
@@ -122,6 +124,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
       setAnswers({});
       setStop("");
       setChosen([]);
+      setSlippage(ZERO_SLIPPAGE);
       onSaved();
     } catch (err) {
       setError(message(err, "Could not save that order."));
@@ -281,6 +284,8 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
               ))}
             </fieldset>
           )}
+
+          <SlippageInput value={slippage} onChange={setSlippage} idPrefix="order-slippage" />
 
           <div className="btn-row">
             <button className="btn" onClick={save} disabled={busy !== null || !canSave}>

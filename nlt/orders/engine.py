@@ -10,9 +10,11 @@ disagree about what a fill is:
   * **Only finished candles.** A condition is judged on a 1-minute candle once
     that minute is over, never on the one still forming. A candle that started
     before the order was saved never counts -- part of it happened before.
-  * **Fills at the next candle's open,** plus the same 0.02% slippage the
-    backtest charges, the first candle of the traded contract that starts at
-    or after the moment the condition was met.
+  * **Fills at the next candle's open,** plus the slippage the order was
+    saved with -- zero by default, like a backtest -- the first candle of the
+    traded contract that starts at or after the moment the condition was met.
+    An order saved before slippage became a user setting (2026-10-13) still
+    uses the old hidden 0.02%: see `SavedOrder.slippage` and `LEGACY_SLIPPAGE`.
   * **Stop first** when one candle could hit both stop and target, and a gap
     past the stop fills at the open, not at the stop.
   * **Futures close at expiry**, at the expiry day's last candle. Never rolled.
@@ -42,6 +44,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.data.session import NSE_EQUITY, Session, session_date
 from nlt.orders.models import (
     AlertAction,
@@ -58,9 +62,11 @@ from nlt.orders.models import (
 IST = "Asia/Kolkata"
 MINUTE = pd.Timedelta(minutes=1)
 
-# The strategy engine's default (`run_backtest(slippage_pct=0.02)`), so a paper
-# order and a backtest pay the same for every fill.
-SLIPPAGE_PCT = 0.02
+# Kept for tests and callers that predate the user-set Slippage setting: what
+# every order saved before 2026-10-13 is still treated as using. New code
+# should use `LEGACY_SLIPPAGE` (from `nlt.costs.slippage`) directly rather
+# than this float.
+SLIPPAGE_PCT = LEGACY_SLIPPAGE.value
 
 # How long after a daily or weekly candle's close it is judged.
 DAILY_GRACE = pd.Timedelta(hours=1)
@@ -98,6 +104,12 @@ class SavedOrder:
     id: int
     order: ConditionalOrder
     created_at: pd.Timestamp
+    # What this order's fills use. Defaults to `LEGACY_SLIPPAGE` because that is
+    # what every order saved before 2026-10-13 was actually filled at -- the
+    # runner is responsible for passing the real value for orders that stored
+    # one (see `nlt.orders.runner.saved_orders`), so this default only ever
+    # matters for an order with nothing recorded.
+    slippage: Slippage = LEGACY_SLIPPAGE
 
 
 @dataclass
@@ -115,6 +127,11 @@ class Position:
     stop_level: float | None
     target_level: float | None
     token: int = 0
+    # The slippage this position's own entry (and, later, its exit) used.
+    # Carried on the position rather than looked up again, so an exit always
+    # pays what the order was saved with, even if a later order of the same
+    # kind used a different setting.
+    slippage: Slippage = LEGACY_SLIPPAGE
 
     def gross(self, price: float) -> float:
         sign = 1 if self.direction == "long" else -1
@@ -173,9 +190,8 @@ def _close_of(day: dt.date, session: Session) -> pd.Timestamp:
     return pd.Timestamp(dt.datetime.combine(day, session.close_time), tz=IST)
 
 
-def _slip(price: float, side: str) -> float:
-    factor = 1 + SLIPPAGE_PCT / 100 if side == "buy" else 1 - SLIPPAGE_PCT / 100
-    return price * factor
+def _slip(price: float, side: str, slippage: Slippage) -> float:
+    return slippage.apply(price, side)
 
 
 def near_contract(
@@ -351,7 +367,7 @@ def advance(
 
     def close_position(pos: Position, ts, raw_price: float, reason: str, by: int | None) -> None:
         side = "sell" if pos.direction == "long" else "buy"
-        price = _slip(raw_price, side)
+        price = _slip(raw_price, side, pos.slippage)
         exit_charges = charges(pos.symbol)(price, pos.quantity, side)
         gross = pos.gross(price)
         detail = {
@@ -568,7 +584,7 @@ def _fill(
     from nlt.data.futures import contract as terms
 
     side = action.side
-    price = _slip(open_price, side)
+    price = _slip(open_price, side, o.slippage)
     quantity = action.lots * terms(action.symbol).multiplier
     entry_charges = charges(action.symbol)(price, quantity, side)
     long = side == "buy"
@@ -599,6 +615,7 @@ def _fill(
         stop_level=stop,
         target_level=target,
         token=c.token,
+        slippage=o.slippage,
     )
     book.positions[o.id] = pos
     emit(
@@ -621,6 +638,7 @@ def _fill(
                 "charges": round(entry_charges, 2),
                 "stop_level": stop,
                 "target_level": target,
+                "slippage": o.slippage.to_dict(),
             },
         )
     )
@@ -679,5 +697,9 @@ def book_from_record(orders: list[SavedOrder], events: list[dict]) -> Book:
             stop_level=d.get("stop_level"),
             target_level=d.get("target_level"),
             token=int(d.get("token") or 0),
+            # A fill recorded before 2026-10-13 has no "slippage" key at all --
+            # it was filled at the old hidden 0.02%, so that is what re-pricing
+            # it (e.g. for an exit) must use, not the new zero default.
+            slippage=Slippage.from_dict(d["slippage"]) if "slippage" in d else LEGACY_SLIPPAGE,
         )
     return book

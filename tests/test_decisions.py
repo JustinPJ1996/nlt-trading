@@ -16,6 +16,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
 from nlt.engine.backtest import run_backtest
 from nlt.engine.basket import run_basket_backtest
 from nlt.paper import runner
@@ -85,7 +87,9 @@ def _spec(entry, exit_rules=None, **kwargs) -> StrategySpec:
 def test_every_trade_has_a_signal_time_before_its_entry_time():
     bars = _mkbars(20, close=np.concatenate([[100.0], np.full(19, 101.0)]))
     spec = _spec(_signal_once(bars, 0), ExitRules(stop_pct=5.0, target_pct=5.0))
-    result = run_backtest(spec, bars, capital=1_000_000.0, charge_fn=_zero, slippage_pct=0.02)
+    result = run_backtest(
+        spec, bars, capital=1_000_000.0, charge_fn=_zero, slippage=LEGACY_SLIPPAGE
+    )
     assert result.trades
     for t in result.trades:
         assert t.signal_time is not None
@@ -95,7 +99,9 @@ def test_every_trade_has_a_signal_time_before_its_entry_time():
 def test_raw_prices_with_slippage_reproduce_the_recorded_fill_prices():
     bars = _mkbars(20, close=np.concatenate([[100.0], np.full(19, 101.0)]))
     spec = _spec(_signal_once(bars, 0), ExitRules(stop_pct=5.0, target_pct=5.0))
-    result = run_backtest(spec, bars, capital=1_000_000.0, charge_fn=_zero, slippage_pct=0.02)
+    result = run_backtest(
+        spec, bars, capital=1_000_000.0, charge_fn=_zero, slippage=LEGACY_SLIPPAGE
+    )
     assert result.trades
     for t in result.trades:
         assert t.raw_entry_price is not None
@@ -130,7 +136,7 @@ def test_both_hit_matches_the_stop_beat_target_warning_count():
         Compare(op="gt", left=Ref(name="volume"), right=Const(value=1500)),
         ExitRules(stop_pct=5.0, target_pct=5.0),
     )
-    result = run_backtest(spec, bars, capital=1_000_000.0, charge_fn=_zero, slippage_pct=0.0)
+    result = run_backtest(spec, bars, capital=1_000_000.0, charge_fn=_zero, slippage=ZERO_SLIPPAGE)
     ambiguous_warning = next(w for w in result.warnings if "could have hit both" in w)
     counted = int(ambiguous_warning.split()[0])
     both_hit_trades = [t for t in result.trades if t.both_hit]
@@ -250,7 +256,7 @@ def test_concurrency_at_signal_is_emitted_though_never_counted_before():
         ExitRules(stop_pct=90.0, target_pct=90.0),  # never hit within the test window
         risk=RiskLimits(max_lots=100, max_concurrent_positions=1),
     )
-    result = run_backtest(spec, bars, capital=10_000_000.0, charge_fn=_zero, slippage_pct=0.0)
+    result = run_backtest(spec, bars, capital=10_000_000.0, charge_fn=_zero, slippage=ZERO_SLIPPAGE)
     assert len(result.trades) == 1  # only ever one open position
     assert not any("concurrency_at_signal" in w for w in result.warnings)
     skipped = [d for d in result.decisions if d.reason_code == "concurrency_at_signal"]

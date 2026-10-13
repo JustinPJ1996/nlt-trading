@@ -13,6 +13,8 @@ import inspect
 import pytest
 
 from app import logic
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.engine.backtest import run_backtest
 from nlt.engine.basket import run_basket_backtest
 from nlt.report import method
@@ -29,11 +31,18 @@ def _run(text: str, **kw):
     return result
 
 
-def test_the_slippage_stated_is_the_one_every_engine_uses() -> None:
-    basket_default = inspect.signature(run_basket_backtest).parameters["slippage_pct"].default
-    single_default = inspect.signature(run_backtest).parameters["slippage_pct"].default
-    assert method.SLIPPAGE_PCT == single_default == basket_default == 0.02
-    assert any("0.02% worse" in a for a in _run(NIFTY).assumptions)
+def test_the_slippage_default_is_zero_everywhere() -> None:
+    basket_default = inspect.signature(run_basket_backtest).parameters["slippage"].default
+    single_default = inspect.signature(run_backtest).parameters["slippage"].default
+    assert basket_default is ZERO_SLIPPAGE
+    assert single_default is ZERO_SLIPPAGE
+    assert any("No slippage assumed" in a for a in _run(NIFTY).assumptions)
+
+
+def test_a_chosen_slippage_is_stated_in_plain_words() -> None:
+    result = _run(NIFTY, slippage=Slippage("pct", 0.5))
+    assert any("0.5% slippage on every order" in a for a in result.assumptions)
+    assert any("0.5% slippage on every order" in s for s in result.weak_spots)
 
 
 def test_same_strategy_same_prices_same_result() -> None:
@@ -87,7 +96,9 @@ def test_futures_weak_spots_carry_the_margin_note() -> None:
     from nlt.translate.rules import parse
 
     spec = parse("buy crude oil futures when rsi cracks 30, target 2%, stop 1%").spec
-    spots, notes = method.weak_spots(spec, ["FUTURES ON MARGIN: one lot...", "Other note"])
+    spots, notes = method.weak_spots(
+        spec, ["FUTURES ON MARGIN: one lot...", "Other note"], slippage=ZERO_SLIPPAGE
+    )
     assert "FUTURES ON MARGIN: one lot..." in spots
     assert notes == ["Other note"]
     assert not any("Dividends" in s for s in spots)
@@ -97,10 +108,10 @@ def test_same_day_share_trades_are_said_to_be_charged_as_delivery() -> None:
     from nlt.translate.rules import parse
 
     intraday = parse("buy reliance when rsi cracks 30 on 15 minute candles, stop 1%").spec
-    spots, _ = method.weak_spots(intraday, [])
+    spots, _ = method.weak_spots(intraday, [], slippage=ZERO_SLIPPAGE)
     assert any("charged as delivery" in s for s in spots)
     held = parse("buy reliance when rsi cracks 30 on 15 minute candles, stop 1%, hold overnight")
-    spots, _ = method.weak_spots(held.spec, [])
+    spots, _ = method.weak_spots(held.spec, [], slippage=ZERO_SLIPPAGE)
     assert not any("charged as delivery" in s for s in spots)
 
 

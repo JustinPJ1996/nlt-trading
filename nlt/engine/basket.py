@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from nlt.costs.slippage import ZERO, Slippage
 from nlt.engine.backtest import (
     _DEFAULT_INTRADAY_BARS_PER_YEAR,
     BARS_PER_YEAR,
@@ -99,7 +100,7 @@ def run_basket_backtest(
     *,
     capital: float = 100_000.0,
     charge_fn=None,
-    slippage_pct: float = 0.02,
+    slippage: Slippage = ZERO,
     trade_from: pd.Timestamp | None = None,
     blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
 ) -> BasketResult:
@@ -246,7 +247,7 @@ def run_basket_backtest(
                 j,
                 ts,
                 bar,
-                slippage_pct,
+                slippage,
                 lot_size,
                 capital_total,
                 capital_spare,
@@ -307,7 +308,7 @@ def run_basket_backtest(
                     ts,
                     reason,
                     raw_price,
-                    slippage_pct,
+                    slippage,
                     charge_fn,
                     track.entry_reason,
                     ambiguous,
@@ -429,7 +430,7 @@ def _close_position(
     ts: pd.Timestamp,
     reason: str,
     raw_price: float,
-    slippage_pct: float,
+    slippage: Slippage,
     charge_fn,
     entry_reason: str,
     ambiguous: bool = False,
@@ -443,7 +444,7 @@ def _close_position(
     pnl arithmetic (`_gross_pnl`, imported, not re-derived).
     """
     exit_side = "sell" if pos.direction == "long" else "buy"
-    exit_price = _apply_slippage(raw_price, exit_side, slippage_pct)
+    exit_price = _apply_slippage(raw_price, exit_side, slippage)
     entry_side = "buy" if pos.direction == "long" else "sell"
     charges = charge_fn(pos.entry_price, pos.quantity, entry_side) + charge_fn(
         exit_price, pos.quantity, exit_side

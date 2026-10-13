@@ -18,12 +18,8 @@ from nlt.costs.charges import (
     NseOptionsCharges,
     ZeroCharges,
 )
-
-# Every engine run in this app uses the engine's default slippage.
-from nlt.engine.backtest import run_backtest as _run_backtest
+from nlt.costs.slippage import Slippage
 from nlt.spec.models import StrategySpec
-
-SLIPPAGE_PCT: float = _run_backtest.__kwdefaults__["slippage_pct"]
 
 _CHARGE_WORDS = {
     NseFuturesCharges: "NSE index futures charges",
@@ -51,16 +47,26 @@ def assumptions(
     charge_model,
     first: dt.date,
     last: dt.date,
+    slippage: Slippage,
 ) -> list[str]:
     """What this test took as given, in the order a trade happens."""
     from nlt.translate.readback import _sizing_desc
 
+    if slippage.is_zero:
+        fill_line = (
+            "Decisions use only finished candles. A trade is placed at the next candle's open. "
+            + slippage.describe()
+        )
+    else:
+        fill_line = (
+            "Decisions use only finished candles. A trade is placed at the next candle's open, "
+            f"with {slippage.describe()} on the way in and on the way out."
+        )
     out = [
         f"Tested from {first:%d %b %Y} to {last:%d %b %Y}, starting with {_inr(capital)}.",
         f"Size of each trade: {_sizing_desc(spec)[0].lower()}{_sizing_desc(spec)[1:]}, "
         "within the safety limits shown with the strategy.",
-        "Decisions use only finished candles. A trade is placed at the next candle's open, "
-        f"{SLIPPAGE_PCT:g}% worse than that price, on the way in and on the way out.",
+        fill_line,
     ]
     if spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
         out.append(
@@ -92,7 +98,9 @@ _WEAK_SPOT_NOTE_STARTS = (
 _WEAK_SPOT_NOTE_CONTAINS = ("the backtest only sees survivors",)
 
 
-def weak_spots(spec: StrategySpec, notes: list[str]) -> tuple[list[str], list[str]]:
+def weak_spots(
+    spec: StrategySpec, notes: list[str], *, slippage: Slippage
+) -> tuple[list[str], list[str]]:
     """(weak spots, the notes left over), moving matching notes into the weak spots."""
     notes = list(dict.fromkeys(notes))
     moved = [
@@ -106,12 +114,18 @@ def weak_spots(spec: StrategySpec, notes: list[str]) -> tuple[list[str], list[st
     survivors = [n for n in moved if any(c in n for c in _WEAK_SPOT_NOTE_CONTAINS)]
     moved = [n for n in moved if n not in survivors[:-1]]
 
+    if slippage.is_zero:
+        slippage_spot = f"Fills are modelled, not real. {slippage.describe()}"
+    else:
+        slippage_spot = (
+            f"Fills are modelled, not real: {slippage.describe()} Large "
+            "orders, or thinly traded stocks, would usually fill worse."
+        )
     spots = [
         "Candles cannot show what happened inside them. When one candle touched both the "
         "stop loss and the target, the stop was assumed to come first -- this can only make "
         "the result look worse, never better.",
-        f"Fills are modelled, not real: {SLIPPAGE_PCT:g}% slippage on every order. Large "
-        "orders, or thinly traded stocks, would usually fill worse.",
+        slippage_spot,
     ]
     trade_as = spec.instrument.trade_as
     if trade_as in ("stock", "index"):

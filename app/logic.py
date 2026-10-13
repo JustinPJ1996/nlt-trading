@@ -33,6 +33,8 @@ from nlt.costs.charges import (
     ZeroCharges,
 )
 from nlt.costs.charges import charge_fn as _adapt_charge_fn
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.data.source import DATA_FLOOR
 from nlt.data.yahoo import YahooSource
 from nlt.engine import warmup
@@ -447,6 +449,7 @@ def run_pipeline(
     start: dt.date | None = None,
     end: dt.date | None = None,
     answers: dict[str, str] | None = None,
+    slippage: Slippage = ZERO_SLIPPAGE,
 ) -> PipelineResult:
     """Plain English in, verdict out -- the function `run_backtest_flow` in the brief.
 
@@ -465,6 +468,7 @@ def run_pipeline(
         start=start,
         end=end,
         translation=translation,
+        slippage=slippage,
     )
 
 
@@ -477,6 +481,7 @@ def backtest_spec(
     start: dt.date | None = None,
     end: dt.date | None = None,
     translation: TranslationResult | None = None,
+    slippage: Slippage = ZERO_SLIPPAGE,
 ) -> PipelineResult:
     """The backtest half of `run_pipeline`, for a spec the user has already confirmed.
 
@@ -484,6 +489,11 @@ def backtest_spec(
     approved: the AI reader is not guaranteed to answer identically twice, so
     the strategy tested could differ from the readback they said yes to. The web
     front end therefore hands back the confirmed spec and this runs exactly that.
+
+    `slippage` is a run setting -- like `capital` or `cost_model_label` -- never
+    part of the spec. It applies identically to the real run and the
+    before-charges comparison run below, so the gap between them is only ever
+    the charges, never a slippage difference nobody asked for.
     """
     if translation is None:
         translation = TranslationResult(spec=spec)
@@ -541,7 +551,12 @@ def backtest_spec(
 
         if len(bars_by_symbol) > 1:
             basket = run_basket_backtest(
-                load_spec, bars_by_symbol, capital=capital, charge_fn=cf, trade_from=start_bar
+                load_spec,
+                bars_by_symbol,
+                capital=capital,
+                charge_fn=cf,
+                trade_from=start_bar,
+                slippage=slippage,
             )
             backtest = trimmed(_as_backtest_result(basket, load_spec))
             before_charges = trimmed(
@@ -552,6 +567,7 @@ def backtest_spec(
                         capital=capital,
                         charge_fn=no_charges,
                         trade_from=start_bar,
+                        slippage=slippage,
                     ),
                     load_spec,
                 )
@@ -577,6 +593,7 @@ def backtest_spec(
                     charge_fn=cf,
                     listed_expiries=listed,
                     trade_from=start_bar,
+                    slippage=slippage,
                 )
             )
             before_charges = trimmed(
@@ -587,6 +604,7 @@ def backtest_spec(
                     charge_fn=no_charges,
                     listed_expiries=listed,
                     trade_from=start_bar,
+                    slippage=slippage,
                 )
             )
             bars = all_bars.loc[start_bar:] if start_bar is not None else all_bars
@@ -625,11 +643,12 @@ def backtest_spec(
                 charge_model=model,
                 first=equity_index[0].date(),
                 last=equity_index[-1].date(),
+                slippage=slippage,
             )
             if len(equity_index)
             else []
         )
-        spots, data_notes = method.weak_spots(load_spec, data_notes)
+        spots, data_notes = method.weak_spots(load_spec, data_notes, slippage=slippage)
 
         return PipelineResult(
             translation=translation,
@@ -679,12 +698,17 @@ def save_strategy(
     *,
     capital: float | None = None,
     cost_model_label: str | None = None,
+    slippage: dict | None = None,
 ) -> int:
     """Saves the strategy and, when given, the backtest that was just shown.
 
     Recording the backtest as a completed run is what lets the strategy earn
     "Proven" later: the proving gate wants both a backtest and a paper run.
     Before this, nothing ever recorded a backtest, so no strategy could pass.
+
+    `slippage` (a `Slippage.to_dict()`) is recorded alongside `capital` purely
+    as a record of what was tested -- a backtest run is never re-run later the
+    way a paper run is, so nothing downstream reads it back.
     """
     readback = describe_spec(spec)
     strategy_id = store.save_strategy(spec, readback)
@@ -692,7 +716,7 @@ def save_strategy(
         run_id = store.start_run(
             strategy_id,
             "backtest",
-            {"capital": capital, "cost_model_label": cost_model_label},
+            {"capital": capital, "cost_model_label": cost_model_label, "slippage": slippage},
         )
         store.save_trades(run_id, result.backtest.trades, spec.instrument.symbol)
         store.finish_run(run_id, result.backtest.metrics)
@@ -783,11 +807,15 @@ def start_paper(
     capital: float,
     cost_model_label: str,
     alert_only: bool = False,
+    slippage: Slippage = ZERO_SLIPPAGE,
 ) -> int:
     """Starts a paper run, or -- with `alert_only` -- an alert-only run: the same
     engine and runner, but one that only ever tells you what it would have
     done. It records no paper money and never counts toward the proving gate
     (`Store.is_proven` excludes it at the database level, not just here).
+
+    `slippage` is a run setting, stored in `params_json` (like `capital`) so
+    every later pass of the runner uses exactly what this run started with.
     """
     spec = store.load_spec(strategy_id)
     problem = paper_problem(spec)
@@ -804,6 +832,7 @@ def start_paper(
             "cost_model_label": cost_model_label,
             "started_at": started_at.isoformat(),
             "alert_only": alert_only,
+            "slippage": slippage.to_dict(),
         },
         alert_only=alert_only,
     )
@@ -1126,8 +1155,14 @@ def trade_timeline(
     qty_text = quantity_words(spec, entry.get("quantity"))
     symbol = "" if (spec is not None and spec.instrument.is_future) else (entry.get("symbol") or "")
     raw_entry = detail.get("raw_entry_price")
+    entry_price = entry.get("price")
+    # Only claim slippage was applied when it actually moved the price -- at
+    # zero slippage the fill and the raw price are the same, and saying "plus
+    # slippage" there would be untrue.
     slippage_bit = (
-        f" (raw price {format_inr(raw_entry)} plus slippage)" if raw_entry is not None else ""
+        f" (raw price {format_inr(raw_entry)} plus slippage)"
+        if raw_entry is not None and entry_price is not None and abs(raw_entry - entry_price) > 1e-9
+        else ""
     )
     steps.append(
         f"Filled {qty_text}{symbol}".rstrip() + f" at {format_inr(entry.get('price'))}"

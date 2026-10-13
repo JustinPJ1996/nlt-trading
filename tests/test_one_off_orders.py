@@ -13,8 +13,10 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.orders import runner
-from nlt.orders.engine import SLIPPAGE_PCT, Contract
+from nlt.orders.engine import SLIPPAGE_PCT, Contract, SavedOrder, book_from_record
 from nlt.orders.models import ConditionalOrder, ExitAction, NowTrigger
 from nlt.orders.parse import parse_order
 from nlt.orders.readback import describe
@@ -277,7 +279,7 @@ def store(tmp_path):
     return Store(tmp_path / "orders.db")
 
 
-def save(store: Store, sentence: str, at: str, *, answers=None, positions=()) -> int:
+def save(store: Store, sentence: str, at: str, *, answers=None, positions=(), slippage=None) -> int:
     r = parse_order(sentence, answers)
     assert r.order is not None, [q.text for q in r.questions]
     order = r.order
@@ -285,7 +287,9 @@ def save(store: Store, sentence: str, at: str, *, answers=None, positions=()) ->
         order = ConditionalOrder(
             trigger=order.trigger, action=ExitAction(positions=tuple(positions))
         )
-    return store.save_one_off_order(sentence, order.model_dump_json(), "", t(at).isoformat())
+    return store.save_one_off_order(
+        sentence, order.model_dump_json(), "", t(at).isoformat(), slippage=slippage
+    )
 
 
 def run(store, feed, now: str, charges=zero):
@@ -400,6 +404,102 @@ def test_target_on_a_short(store):
     assert ex["detail"]["raw_price"] == pytest.approx(22140 * 0.99)
     assert ex["side"] == "buy"
     assert ex["detail"]["gross_pnl"] == pytest.approx((22140 * SELL - 22140 * 0.99 * BUY) * 65)
+
+
+def test_a_new_order_saved_with_zero_slippage_fills_at_the_exact_price(store):
+    """A new order defaults to zero slippage (see `app.orders_view.create`); a
+    legacy order with nothing stored (every other test in this file) still
+    uses `SLIPPAGE_PCT`/`LEGACY`."""
+    oid = save(
+        store,
+        "If Nifty spot goes below 22000, buy 1 lot Nifty Futures",
+        f"{DAY} 10:00:30",
+        slippage={"kind": "pct", "value": 0.0},
+    )
+    run(store, dip_feed(), f"{DAY} 10:30")
+    (fill,) = events(store, "filled", oid)
+    assert fill["price"] == pytest.approx(22140)  # no BUY factor: zero slippage
+
+
+def test_a_custom_slippage_is_stored_and_applied_to_both_the_fill_and_the_exit(store):
+    oid = save(
+        store,
+        "If Nifty goes below 22000, sell 1 lot Nifty Futures, stop loss 2%, target 1%",
+        f"{DAY} 10:00:30",
+        slippage={"kind": "rs", "value": 5.0},
+    )
+    feed = dip_feed()
+    fut = feed.futures[OCT.tradingsymbol]
+    fut.loc[t(f"{DAY} 10:12"), ["open", "high", "low", "close"]] = (22100, 22110, 21900, 21950)
+    # Two separate passes, deliberately: the fill happens in the first, and
+    # the exit only in the second, which can only see the position again by
+    # rebuilding it from the recorded "filled" event (`book_from_record`) --
+    # a single pass would build the Position in memory and never exercise
+    # that reconstruction path at all.
+    run(store, feed, f"{DAY} 10:08")
+    (fill,) = events(store, "filled", oid)
+    # A sell receives Rs 5 less than the raw open, not a percentage.
+    assert fill["side"] == "sell" and fill["price"] == pytest.approx(22140 - 5.0)
+    run(store, feed, f"{DAY} 10:30")
+    (ex,) = events(store, "exited", oid)
+    assert ex["detail"]["reason"] == "target"
+    raw_exit = 22140 * 0.99
+    # The exit is a buy (closing a short): Rs 5 MORE than the raw price.
+    assert ex["side"] == "buy" and ex["price"] == pytest.approx(raw_exit + 5.0)
+    assert ex["detail"]["gross_pnl"] == pytest.approx(((22140 - 5.0) - (raw_exit + 5.0)) * 65)
+
+
+def _fill_event(order_id: int, *, slippage_detail=None) -> dict:
+    """A minimal "filled" event dict, as `Store.one_off_events` would hand one
+    back -- enough for `book_from_record` to rebuild a `Position` from it.
+    """
+    detail = {
+        "contract": "NIFTY26OCTFUT",
+        "symbol": "NIFTY",
+        "expiry": "2026-10-27",
+        "token": 101,
+        "lots": 1,
+        "raw_price": 22140.0,
+        "charges": 0.0,
+        "stop_level": None,
+        "target_level": None,
+    }
+    if slippage_detail is not None:
+        detail["slippage"] = slippage_detail
+    return {
+        "order_id": order_id,
+        "kind": "filled",
+        "bar_time": t(f"{DAY} 10:06").isoformat(),
+        "side": "buy",
+        "quantity": 65,
+        "price": 22140.0,
+        "detail": detail,
+    }
+
+
+def test_book_from_record_treats_a_fill_with_no_stored_slippage_as_legacy():
+    """A fill recorded before 2026-10-13 has no "slippage" key in its detail at
+    all -- rebuilding the book from it must use the old hidden 0.02%, not the
+    new zero default, so a later exit re-prices it the same way it always was.
+    """
+    order = SavedOrder(
+        1,
+        parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures").order,
+        t(f"{DAY} 09:00"),
+    )
+    book = book_from_record([order], [_fill_event(1)])
+    assert book.positions[1].slippage == LEGACY_SLIPPAGE
+
+
+def test_book_from_record_uses_the_slippage_actually_stored_on_the_fill():
+    order = SavedOrder(
+        1,
+        parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures").order,
+        t(f"{DAY} 09:00"),
+    )
+    chosen = Slippage("rs", 3.0)
+    book = book_from_record([order], [_fill_event(1, slippage_detail=chosen.to_dict())])
+    assert book.positions[1].slippage == chosen
 
 
 def test_expiry_closes_at_the_last_candle_and_a_fill_on_expiry_day_goes_to_next_month(store):

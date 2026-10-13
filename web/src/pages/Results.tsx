@@ -105,6 +105,7 @@ export function Results({
         })()}{" "}
         costs.
       </p>
+      {params.slippage_text && <p className="period">{params.slippage_text}</p>}
 
       {verdict.flags.length > 0 && (
         <section className="section" aria-labelledby="flags" style={{ marginTop: 32 }}>

@@ -255,6 +255,18 @@ CREATE TABLE IF NOT EXISTS one_off_order (
     cancelled_at    TEXT
 );
 
+-- What one order's fills use. A separate table, like `paper_run_option`,
+-- rather than a column on `one_off_order`: that table already exists in a
+-- live database, and `CREATE TABLE IF NOT EXISTS` cannot add a column to it.
+-- A row's absence means the order was saved before slippage became a user
+-- setting (2026-10-13) and is still filled at the old hidden 0.02% -- see
+-- `nlt.costs.slippage.LEGACY` and `nlt.orders.runner.saved_orders`.
+CREATE TABLE IF NOT EXISTS one_off_order_slippage (
+    order_id        INTEGER PRIMARY KEY REFERENCES one_off_order(id),
+    kind            TEXT    NOT NULL CHECK (kind IN ('pct', 'rs')),
+    value           REAL    NOT NULL
+);
+
 -- What happened to each one-off order, written the first time it was seen.
 -- Append-only for the same reason as paper_event: a paper record that can be
 -- quietly corrected proves nothing.

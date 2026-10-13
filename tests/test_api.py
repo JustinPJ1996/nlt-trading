@@ -256,6 +256,12 @@ def test_backtest_result_matches_the_engine(authed) -> None:
         ({"cost_model": "Free"}, "costs"),
         ({"start": "2024-01-01", "end": "2023-01-01"}, "before"),
         ({"start": "not a date"}, "not a real date"),
+        ({"slippage": {"kind": "pct", "value": -1}}, "negative"),
+        ({"slippage": {"kind": "pct", "value": 50}}, "5"),
+        ({"slippage": {"kind": "rs", "value": 1000}}, "100"),
+        ({"slippage": {"kind": "bps", "value": 1}}, "percentage or a rupee"),
+        ({"slippage": {"kind": "pct", "value": "not a number"}}, "must be a number"),
+        ({"slippage": "not a dict"}, "kind and an amount"),
     ],
 )
 def test_bad_backtest_requests_are_refused_in_words(authed, change, words) -> None:
@@ -263,6 +269,31 @@ def test_bad_backtest_requests_are_refused_in_words(authed, change, words) -> No
     r = authed.post("/api/backtest", json={**body, **change})
     assert r.status_code == 400
     assert words in r.json()["error"]
+
+
+def test_backtest_defaults_to_zero_slippage_and_says_so(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={"spec": _spec_json(RSI), "capital": 100000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    assert body["params"]["slippage"] == {"kind": "pct", "value": 0.0}
+    assert "No slippage assumed" in body["params"]["slippage_text"]
+    assert any("No slippage assumed" in a for a in body["assumptions"])
+
+
+def test_a_chosen_slippage_is_accepted_and_stated(authed) -> None:
+    body = authed.post(
+        "/api/backtest",
+        json={
+            "spec": _spec_json(RSI),
+            "capital": 100000,
+            "cost_model": "Index futures",
+            "slippage": {"kind": "rs", "value": 1.5},
+            **WINDOW,
+        },
+    ).json()
+    assert body["params"]["slippage"] == {"kind": "rs", "value": 1.5}
+    assert "Rs 1.50 per unit slippage on every order" in body["params"]["slippage_text"]
 
 
 def test_saving_records_the_backtest_that_was_shown(authed) -> None:
@@ -277,6 +308,35 @@ def test_saving_records_the_backtest_that_was_shown(authed) -> None:
     assert run["kind"] == "Backtest" and run["status"] == "Finished"
     assert run["capital_text"] == "Rs 2,50,000"
     assert run["return_text"] == body["headline"]["strategy_return"]
+
+
+def test_changing_slippage_does_not_create_a_new_strategy_version(authed) -> None:
+    """Slippage is a run setting, not part of the spec -- re-running the same
+    strategy with a different slippage and saving again must land on the same
+    strategy id and version, never a new one, and must not touch its state.
+    """
+    zero_body = authed.post(
+        "/api/backtest",
+        json={"spec": _spec_json(RSI), "capital": 250000, "cost_model": "Index futures", **WINDOW},
+    ).json()
+    first = authed.post("/api/strategies", json={"result_id": zero_body["result_id"]}).json()
+    before = authed.get("/api/strategies").json()["strategies"]
+    assert len(before) == 1 and before[0]["version"] == 1
+
+    other_body = authed.post(
+        "/api/backtest",
+        json={
+            "spec": _spec_json(RSI),
+            "capital": 250000,
+            "cost_model": "Index futures",
+            "slippage": {"kind": "pct", "value": 0.3},
+            **WINDOW,
+        },
+    ).json()
+    second = authed.post("/api/strategies", json={"result_id": other_body["result_id"]}).json()
+    assert second["strategy_id"] == first["strategy_id"]
+    after = authed.get("/api/strategies").json()["strategies"]
+    assert len(after) == 1 and after[0]["version"] == 1
 
 
 def test_saving_an_unknown_result_is_refused(authed) -> None:
@@ -425,7 +485,17 @@ def test_positions_flow_from_fill_to_exit_order_to_close_now(authed, no_prices) 
 
     store = authed.app.state.store
     body = _read(authed)
-    authed.post("/api/orders/create", json={"text": ORDER, "order": body["order"]})
+    # Non-zero slippage, deliberately: this test exists to check a position's
+    # fill price moves away from the raw candle price, which the new zero
+    # default would make untrue.
+    authed.post(
+        "/api/orders/create",
+        json={
+            "text": ORDER,
+            "order": body["order"],
+            "slippage": {"kind": "pct", "value": 0.02},
+        },
+    )
     created = pd.Timestamp(store.one_off_orders()[0]["created_at"]).tz_convert("Asia/Kolkata")
     start = created.ceil("min")
     idx = pd.date_range(start, periods=30, freq="1min")
@@ -586,7 +656,14 @@ def test_the_report_shows_before_and_after_charges(authed) -> None:
     assert rows["Total return"]["before"] == logic.format_signed_pct(
         direct.before_charges.metrics["total_return_pct"]
     )
-    assert rows["Total return"]["before"] != rows["Total return"]["after"]
+    # Compare the raw figures, not their rounded-to-0.1% display strings: at
+    # zero slippage (the new default) this strategy's before/after numbers
+    # happen to round to the same "+0.6%" even though they really differ --
+    # exactly the trap of pinning a formatted string instead of the number
+    # behind it.
+    assert direct.before_charges.metrics["total_return_pct"] != pytest.approx(
+        direct.backtest.metrics["total_return_pct"]
+    )
 
 
 def test_no_charges_means_nothing_to_compare(authed) -> None:
