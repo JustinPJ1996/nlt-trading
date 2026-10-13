@@ -17,9 +17,11 @@ from pydantic import ValidationError
 from nlt.orders import runner
 from nlt.orders.engine import IST, streak_status
 from nlt.orders.models import (
+    AlertAction,
     ConditionalOrder,
     ExitAction,
     NowTrigger,
+    PnlTrigger,
     PriceTrigger,
     StreakTrigger,
     TradeAction,
@@ -171,7 +173,7 @@ def read(store: Store, text: str, answers: dict[str, str], *, daily: Daily | Non
                 f"futures {'is' if a.lots == 1 else 'are'} worth about {format_inr(value)}."
             )
 
-    if isinstance(a, ExitAction):
+    if isinstance(a, ExitAction) or (isinstance(a, AlertAction) and isinstance(t, PnlTrigger)):
         out["needs_positions"] = True
         out["positions"] = open_positions(store)
         if not out["positions"]:
@@ -205,17 +207,22 @@ def create(store: Store, text: str, answers: dict[str, str], raw_order, position
             "That order no longer matches its sentence. Check the sentence again before saving."
         )
     names = {}
-    if isinstance(order.action, ExitAction):
+    needs_positions = isinstance(order.action, ExitAction) or (
+        isinstance(order.action, AlertAction) and isinstance(order.trigger, PnlTrigger)
+    )
+    if needs_positions:
+        verb = "close" if isinstance(order.action, ExitAction) else "watch"
         try:
             chosen = tuple(sorted({int(p) for p in positions or ()}))
         except (TypeError, ValueError):
-            raise OrderError("Choose which positions to close.") from None
+            raise OrderError(f"Choose which positions to {verb}.") from None
         open_now = {p["id"]: p for p in open_positions(store)}
         if not chosen:
-            raise OrderError("Choose which positions to close.")
+            raise OrderError(f"Choose which positions to {verb}.")
         if any(p not in open_now for p in chosen):
             raise OrderError("One of the chosen positions is no longer open. Check again.")
-        order = ConditionalOrder(trigger=order.trigger, action=ExitAction(positions=chosen))
+        action_cls = type(order.action)
+        order = ConditionalOrder(trigger=order.trigger, action=action_cls(positions=chosen))
         names = {p: open_now[p]["name"] for p in chosen}
     readback = "\n".join(describe(order, names))
     return store.save_one_off_order(
@@ -298,11 +305,20 @@ _EXIT_REASON = {
 }
 
 
-def describe_event(e: dict, card_id: int | None = None, pressed: frozenset = frozenset()) -> str:
+def describe_event(
+    e: dict,
+    card_id: int | None = None,
+    pressed: frozenset = frozenset(),
+    *,
+    is_alert: bool = False,
+) -> str:
     """One recorded event in words. `card_id` is the order whose history this is shown in;
-    `pressed` are the orders made by the Close now button."""
+    `pressed` are the orders made by the Close now button; `is_alert` says this
+    order's action is an AlertAction, so "finished" must never read as a trade."""
     d = e["detail"]
     kind = e["kind"]
+    if kind == "finished" and is_alert:
+        return "Alert sent. Nothing was bought or sold."
     if kind == "triggered":
         reason = d.get("reason")
         if reason == "price":
@@ -360,13 +376,15 @@ def order_timeline(
     return [describe_event(e, order_id, pressed) for e in events if e["kind"] != "finished"]
 
 
-def _status(row: dict, book, events: list[dict]) -> tuple[str, str]:
+def _status(row: dict, book, events: list[dict], is_alert: bool = False) -> tuple[str, str]:
     oid = row["id"]
     if row["cancelled_at"]:
         return "cancelled", "Cancelled"
     if oid in book.positions:
         return "open", "Position open"
     if oid in book.finished:
+        if is_alert:
+            return "alerted", "Alerted"
         return "done", "Done"
     if oid in book.triggered:
         return "filling", "Condition met, filling at the next price"
@@ -387,7 +405,9 @@ def page(store: Store) -> dict:
     pressed = frozenset(o.id for o in book.orders if isinstance(o.order.trigger, NowTrigger))
     orders = []
     for row in reversed(store.one_off_orders()):
-        key, label = _status(row, book, by_order.get(row["id"], []))
+        row_order = ConditionalOrder.model_validate_json(row["order_json"])
+        is_alert = isinstance(row_order.action, AlertAction)
+        key, label = _status(row, book, by_order.get(row["id"], []), is_alert)
         mine = sorted(by_order.get(row["id"], []), key=lambda e: e["id"])
         realised = next(
             (
@@ -411,7 +431,7 @@ def page(store: Store) -> dict:
                 "events": [
                     {
                         "when": _when(e["bar_time"] or e["observed_at"]),
-                        "text": describe_event(e, row["id"], pressed),
+                        "text": describe_event(e, row["id"], pressed, is_alert=is_alert),
                     }
                     for e in mine
                     if e["kind"] != "finished"

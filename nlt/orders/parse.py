@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pydantic import ValidationError
 
 from nlt.orders.models import (
+    AlertAction,
     ConditionalOrder,
     ExitAction,
     PnlTrigger,
@@ -298,6 +299,13 @@ _EXIT = re.compile(
     r"(?:\s+(?:all|all\s+of|everything))?"
     r"(?:\s+(?:my|the))?(?:\s+open)?(?:\s+(?:positions?|trades?|everything))?"
 )
+# "tell me", "alert me", "notify me", "let me know" -- an AlertAction, never a
+# trade or an exit. Matched as a whole clause: anything else in the clause is
+# not understood, so "tell me and buy 1 lot" is refused rather than guessed at.
+_ALERT = re.compile(
+    r"(?:please\s+)?(?:tell\s+me|alert\s+me|notify\s+me|let\s+me\s+know)"
+    r"(?:\s+about\s+(?:it|this))?"
+)
 
 
 def _side(raw: str) -> str:
@@ -310,8 +318,10 @@ def _action(
     answers: dict,
     questions: list[Question],
     trigger_failed: bool = False,
-) -> TradeAction | ExitAction | None:
+) -> TradeAction | ExitAction | AlertAction | None:
     clause = _tidy(clause)
+    if _ALERT.fullmatch(clause):
+        return AlertAction()
     if _EXIT.fullmatch(clause):
         return ExitAction()
 
@@ -684,7 +694,7 @@ _IF_FIRST = re.compile(rf"{_LEAD}\s+(?P<trig>.+?)\s*(?:,|\bthen\b)\s*(?P<act>.+)
 # "if crude goes above 6500 buy 1 lot" -- no comma; the order starts at its verb.
 _IF_FIRST_NO_COMMA = re.compile(
     rf"{_LEAD}\s+(?P<trig>.+?)\s+(?P<act>(?:buy|sell|short|go\s+long|go\s+short|exit|close|"
-    rf"square\s*-?\s*off|squareoff|get\s+out)\b.*)"
+    rf"square\s*-?\s*off|squareoff|get\s+out|tell\s+me|alert\s+me|notify\s+me|let\s+me\s+know)\b.*)"
 )
 _IF_LATER = re.compile(rf"(?P<act>.+?)\s*,?\s+{_LEAD}\s+(?P<trig>.+)")
 _BRACKETS = re.compile(r"\(([^()]*)\)")
@@ -778,12 +788,12 @@ def parse_order(text: str, answers: dict[str, str] | None = None) -> OrderReadin
                 )
             )
 
-    if isinstance(action, ExitAction) and (stop is not None or target is not None):
+    if isinstance(action, (ExitAction, AlertAction)) and (stop is not None or target is not None):
         questions.append(
             _refusal(
-                "A stop loss or target doesn't apply to closing positions. Remove it, or "
-                "put it on the order that opens the position.",
-                "There is nothing left open for it to protect once the positions are closed.",
+                "A stop loss or target doesn't apply here: this order doesn't open a "
+                "position. Remove it, or put it on an order that buys or sells.",
+                "There is nothing it could protect -- nothing is bought or sold.",
                 field_name="trade.stop_loss",
             )
         )

@@ -696,13 +696,14 @@ def _paper_run_card(store: Store, run: dict) -> dict:
     params = json.loads(run["params_json"] or "{}")
     status = store.paper_status(run["id"]) or {}
     snap = json.loads(status.get("snapshot_json") or "{}")
+    alert_only = store.is_alert_only(run["id"])
     # The label follows the Pause button at once, not the next minute's pass.
     paused_now = run["status"] == "running" and store.is_paper_run_paused(run["id"])
     kind, label = logic.paper_health_label(
         "paused" if paused_now else status.get("health", "waiting")
     )
     positions = []
-    for p in snap.get("open_positions") or []:
+    for p in [] if alert_only else (snap.get("open_positions") or []):
         # A futures quantity already names its contract ("1 lot of Gold futures").
         symbol = "" if spec.instrument.is_future else (p.get("symbol") or "")
         pnl = p.get("pnl_if_closed_now")
@@ -729,23 +730,24 @@ def _paper_run_card(store: Store, run: dict) -> dict:
         "health_label": label,
         "message": status.get("message", ""),
         "started": logic.when(params.get("started_at")),
-        "capital_text": format_inr(params.get("capital", 0)),
+        "alert_only": alert_only,
+        "capital_text": "" if alert_only else format_inr(params.get("capital", 0)),
         "checked": logic.when(status.get("updated_at")),
         "daily": spec.instrument.timeframe == "1d",
         "snapshot": (
-            {
+            None
+            if alert_only or not snap
+            else {
                 "equity": format_inr(snap.get("equity", 0)),
                 "realised": format_inr(snap.get("realised_pnl", 0)),
                 "open": format_inr(snap.get("open_pnl_if_closed_now", 0)),
             }
-            if snap
-            else None
         ),
         "positions": positions,
         "events": [
             {
                 "when": logic.when(e["observed_at"]),
-                "text": logic.describe_paper_event(e, spec),
+                "text": logic.describe_paper_event(e, spec, alert_only=alert_only),
                 "drift": e["kind"] == "drift",
                 "trade_key": e["event_key"] if e["kind"] in ("entry", "exit") else None,
             }
@@ -788,19 +790,31 @@ async def paper(request: Request) -> Response:
 
 async def paper_start(request: Request) -> Response:
     body = await _json_body(request)
+    alert_only = bool(body.get("alert_only"))
     cost_label = str(body.get("cost_model") or "")
-    if cost_label not in logic.COST_MODEL_LABELS:
+    if not alert_only and cost_label not in logic.COST_MODEL_LABELS:
         raise _BadRequest("Pick which trading costs to charge.")
     try:
         sid = int(body.get("strategy_id"))
         capital = float(body.get("capital") or logic.DEFAULT_CAPITAL)
     except (TypeError, ValueError):
         raise _BadRequest("Pick a strategy and an amount of money.") from None
-    if capital < 1_000:
+    # An alert-only run never trades, so its capital figure never appears
+    # anywhere -- but the engine still needs one to size a position it will
+    # only ever describe, never place.
+    if alert_only:
+        capital = logic.DEFAULT_CAPITAL
+        cost_label = cost_label or next(iter(logic.COST_MODEL_LABELS))
+    elif capital < 1_000:
         raise _BadRequest("Starting money must be at least Rs 1,000.")
     try:
         run_id = await _run(
-            logic.start_paper, _store(request), sid, capital=capital, cost_model_label=cost_label
+            logic.start_paper,
+            _store(request),
+            sid,
+            capital=capital,
+            cost_model_label=cost_label,
+            alert_only=alert_only,
         )
     except ValueError as exc:
         raise _BadRequest(str(exc)) from None
@@ -903,9 +917,27 @@ def _running(store: Store, *, now: pd.Timestamp | None = None) -> dict:
         status = store.paper_status(run["id"]) or {}
         snap = json.loads(status.get("snapshot_json") or "{}")
         paused = store.is_paper_run_paused(run["id"])
+        alert_only = store.is_alert_only(run["id"])
         # The label follows the Pause button at once, not the next minute's pass.
         health = "paused" if paused else status.get("health", "waiting")
         kind, label = logic.paper_health_label(health)
+        if alert_only:
+            # No paper money is ever shown for an alert-only run, and none of
+            # it is counted into the drawer's totals either.
+            item = {
+                "kind": "strategy",
+                "run_id": run["id"],
+                "name": f"{strategy['name']} v{strategy['version']}",
+                "health": kind,
+                "health_label": label,
+                "paused": paused,
+                "alert_only": True,
+                **_no_money(),
+            }
+            item["open_now"] = "Alerts only"
+            item["total"] = "Alerts only"
+            items.append(item)
+            continue
         closed_today = sum(
             (json.loads(e["detail_json"] or "{}").get("net_pnl") or 0.0)
             for e in store.paper_events(run["id"])
@@ -925,6 +957,7 @@ def _running(store: Store, *, now: pd.Timestamp | None = None) -> dict:
                 "health": kind,
                 "health_label": label,
                 "paused": paused,
+                "alert_only": False,
                 "closed_today": orders_view._signed(closed_today),
                 "closed_today_value": closed_today,
                 "open_now": orders_view._signed(open_pnl),
@@ -1186,6 +1219,44 @@ async def orders_timeline(request: Request) -> Response:
     return JSONResponse({"steps": steps})
 
 
+# -------------------------------------------------------------- notifications
+
+
+def _notifications(store: Store) -> dict:
+    return {
+        "unread_count": store.unread_notification_count(),
+        "items": [
+            {
+                "id": n["id"],
+                "when": logic.when(n["created_at"]),
+                "source": n["source"],
+                "source_id": n["source_id"],
+                "text": n["text"],
+                "read": n["read_at"] is not None,
+            }
+            for n in store.notifications()
+        ],
+    }
+
+
+async def notifications(request: Request) -> Response:
+    return JSONResponse(await _run(_notifications, _store(request)))
+
+
+async def notifications_read(request: Request) -> Response:
+    await _json_body(request)
+    store = _store(request)
+    await _run(store.mark_notification_read, int(request.path_params["nid"]))
+    return JSONResponse(await _run(_notifications, store))
+
+
+async def notifications_read_all(request: Request) -> Response:
+    await _json_body(request)
+    store = _store(request)
+    await _run(store.mark_all_notifications_read)
+    return JSONResponse(await _run(_notifications, store))
+
+
 # -------------------------------------------------------------------- safety
 
 
@@ -1339,6 +1410,9 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/kite/token", kite_token_save, ["POST"]),
         r("/api/safety", safety),
         r("/api/safety/{which}/{action}", kill_switch, ["POST"]),
+        r("/api/notifications", notifications),
+        r("/api/notifications/{nid:int}/read", notifications_read, ["POST"]),
+        r("/api/notifications/read-all", notifications_read_all, ["POST"]),
         r("/api/{rest:path}", api_not_found, ["GET", "POST"]),
     ]
     if (WEB_DIST / "assets").is_dir():

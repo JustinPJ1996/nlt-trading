@@ -67,6 +67,7 @@ def _api_routes(app) -> list[tuple[str, str]]:
         if isinstance(route, Route) and route.path.startswith("/api/"):
             path = route.path.replace("{sid:int}", "1").replace("{rid:int}", "1")
             path = path.replace("{oid:int}", "1").replace("{pid:int}", "1")
+            path = path.replace("{nid:int}", "1")
             path = path.replace("{which}", "paper").replace("{action}", "engage")
             path = path.replace("{rest:path}", "anything")
             for method in route.methods - {"HEAD"}:

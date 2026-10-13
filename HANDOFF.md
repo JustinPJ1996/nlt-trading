@@ -394,6 +394,24 @@ paper run (append-only `paper_pause`) and a "Running · N" drawer on every page.
 - A stopped run's result states how long it was paused and how many signals
   that skipped; it still counts toward the proving gate.
 
+**E4 built (2026-10-13, branch `paper-additions-batch-3`).** Alerts, website only.
+
+- Inbox: `notification` table (only `read_at` may change; no deletes), written
+  only through `nlt.notify.notify` -- the one place email would be added.
+  Idempotent on `dedupe_key`. Bell with unread count; Alerts page.
+- One-off alerts: `AlertAction` ("tell me / alert me / notify me / let me know
+  when..."). Fires `triggered` then `finished`, never a fill. P&L alerts ask
+  loss-or-profit like P&L exits. "Crosses below" is refused, as for orders.
+  The readback says "Nothing is bought or sold" and promises no instant alert
+  (checked a minute after each candle, while the job runs).
+- Alert-only strategy runs (`paper_run_option`, set in the same transaction
+  as the run): same runner and engine; notifies each `signal_taken` and each
+  simulated exit, never skips; records no trades, shows no money; never
+  satisfies `is_proven`. Wording uses the readback's own condition text.
+- **Trap:** a git worktree shares `.venv`, whose editable install points at the
+  main checkout. `.venv/bin/pytest` there silently tests the *main* code; use
+  `PYTHONPATH=<worktree> .venv/bin/python -m pytest`.
+
 **Next, from the competitor review** (paper first, carried into live):
 
 - **E1 Live activity feed** -- every decision with its reason: "RSI below 30 ·
