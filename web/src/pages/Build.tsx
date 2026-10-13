@@ -536,7 +536,7 @@ export function Build({
                       <option key={c}>{c}</option>
                     ))}
                   </select>
-                  <span className="hint">Shares and futures always use their own real charges.</span>
+                  <span className="hint">Shares, futures and options always use their own real charges.</span>
                 </label>
                 <SlippageInput value={state.slippage} onChange={(slippage) => set({ slippage })} />
                 <label className="field" style={{ marginTop: 0 }}>
