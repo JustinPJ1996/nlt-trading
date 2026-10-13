@@ -21,6 +21,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
 from nlt.engine.backtest import run_backtest
 from nlt.spec.models import StrategySpec
 
@@ -69,7 +70,7 @@ def test_engine_trades_match_independently_computed_crossovers(nifty_bars):
     assert len(expected) > 5, "too few crossovers in the data to be a real test"
 
     result = run_backtest(
-        _crossover_spec(), bars, capital=10_000_000.0, lot_size=1, slippage_pct=0.0
+        _crossover_spec(), bars, capital=10_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE
     )
     assert result.trades, "the engine found no trades where crossovers plainly exist"
 
@@ -93,7 +94,7 @@ def test_engine_finds_every_crossover_it_could_act_on(nifty_bars):
     bars = nifty_bars
     crossovers = _crossover_dates(bars.close)
     result = run_backtest(
-        _crossover_spec(), bars, capital=10_000_000.0, lot_size=1, slippage_pct=0.0
+        _crossover_spec(), bars, capital=10_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE
     )
 
     positions = {ts: i for i, ts in enumerate(bars.index)}
@@ -120,7 +121,7 @@ def test_entry_price_is_the_next_bars_open(nifty_bars):
     bookkeeping."""
     bars = nifty_bars
     result = run_backtest(
-        _crossover_spec(), bars, capital=10_000_000.0, lot_size=1, slippage_pct=0.0
+        _crossover_spec(), bars, capital=10_000_000.0, lot_size=1, slippage=ZERO_SLIPPAGE
     )
 
     for trade in result.trades[:20]:

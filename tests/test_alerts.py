@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
 from nlt.engine.backtest import run_backtest
 from nlt.notify import notify
 from nlt.orders import runner as orders_runner
@@ -387,6 +388,11 @@ def test_alert_only_run_notifies_once_per_signal_and_exit_never_for_skips(alert_
         charge_fn=_zero,
         drop_partial_last_bar=False,
         trade_from=paper_runner.trade_from_for(started_at, "1d"),
+        # `_start_alert_only` builds its run's params by hand, with no
+        # "slippage" key -- exactly a run started before 2026-10-13, which
+        # `nlt.paper.runner.step` treats as the old hidden 0.02%, not the new
+        # zero default.
+        slippage=LEGACY_SLIPPAGE,
     )
     taken = [d for d in expected.decisions if d.kind == "signal_taken"]
     closed = [tr for tr in expected.trades if tr.exit_reason != "end_of_data"]

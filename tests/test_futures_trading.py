@@ -20,6 +20,7 @@ import pytest
 
 from app import logic
 from nlt.costs.charges import McxFuturesCharges, NseFuturesCharges, ZeroCharges
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
 from nlt.data import kite
 from nlt.engine.backtest import run_backtest
 from nlt.paper import runner
@@ -86,7 +87,9 @@ def _contango(idx: pd.DatetimeIndex) -> np.ndarray:
 
 def test_every_position_is_closed_at_the_close_of_its_expiry_day():
     bars = _daily("2026-10-01", "2026-12-10", _contango)
-    result = run_backtest(_spec(), bars, capital=10_000_000, charge_fn=_zero, slippage_pct=0)
+    result = run_backtest(
+        _spec(), bars, capital=10_000_000, charge_fn=_zero, slippage=ZERO_SLIPPAGE
+    )
     expiry_exits = [t for t in result.trades if t.exit_reason == "expiry"]
     assert [t.exit_time.date() for t in expiry_exits] == [OCT, NOV]
     for t in expiry_exits:
@@ -97,7 +100,9 @@ def test_the_jump_between_two_contracts_is_never_booked():
     # A long held through each switch would show +50% twice. Every price within
     # a contract is flat, so the honest profit is nil.
     bars = _daily("2026-10-01", "2026-12-10", _contango)
-    result = run_backtest(_spec(), bars, capital=10_000_000, charge_fn=_zero, slippage_pct=0)
+    result = run_backtest(
+        _spec(), bars, capital=10_000_000, charge_fn=_zero, slippage=ZERO_SLIPPAGE
+    )
     assert result.trades
     assert sum(t.gross_pnl for t in result.trades) == pytest.approx(0.0, abs=1e-6)
     for t in result.trades:
@@ -132,7 +137,9 @@ def test_profit_and_loss_is_in_whole_lots_of_the_real_contract_size():
         index=idx,
     )
     capital = 15_000_000  # one 1 kg lot at Rs 1 crore fits; two do not
-    result = run_backtest(_spec("GOLD"), bars, capital=capital, charge_fn=_zero, slippage_pct=0)
+    result = run_backtest(
+        _spec("GOLD"), bars, capital=capital, charge_fn=_zero, slippage=ZERO_SLIPPAGE
+    )
     first = result.trades[0]
     assert first.quantity == 100  # one lot: 100 x 10 grams
     assert first.gross_pnl == pytest.approx(100 * 100)

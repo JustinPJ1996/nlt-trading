@@ -51,6 +51,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from app import auth, logic, orders_view
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 from nlt.translate.readback import describe_lines, format_inr
@@ -365,6 +367,28 @@ def _parse_spec(raw) -> StrategySpec:
         ) from None
 
 
+def _parse_slippage(raw) -> Slippage:
+    """A run's slippage setting from a request body. Missing means zero.
+
+    `raw` is `{"kind": "pct"|"rs", "value": number}`; anything else, or a
+    value `Slippage` itself rejects (negative, or past the sane ceiling), is a
+    400 with the plain-English reason, never a server error.
+    """
+    if raw in (None, ""):
+        return ZERO_SLIPPAGE
+    if not isinstance(raw, dict):
+        raise _BadRequest("Slippage must be a kind and an amount.")
+    kind = raw.get("kind")
+    try:
+        value = float(raw.get("value"))
+    except (TypeError, ValueError):
+        raise _BadRequest("The slippage amount must be a number.") from None
+    try:
+        return Slippage(kind=kind, value=value)
+    except ValueError as exc:
+        raise _BadRequest(str(exc)) from None
+
+
 def _parse_date(raw, label: str) -> dt.date | None:
     if raw in (None, ""):
         return None
@@ -519,6 +543,7 @@ async def backtest(request: Request) -> Response:
     end = _parse_date(body.get("end"), "end")
     if start and end and start >= end:
         raise _BadRequest("The start date must be before the end date.")
+    slippage = _parse_slippage(body.get("slippage"))
 
     result = await _run(
         logic.backtest_spec,
@@ -527,6 +552,7 @@ async def backtest(request: Request) -> Response:
         cost_model_label=cost_label,
         start=start,
         end=end,
+        slippage=slippage,
     )
     if not result.ok:
         return JSONResponse(
@@ -539,6 +565,8 @@ async def backtest(request: Request) -> Response:
         "cost_model": cost_label,
         # What was really charged: shares and futures use their own charges.
         "charges_applied": logic.applied_charges_label(spec, cost_label),
+        "slippage": slippage.to_dict(),
+        "slippage_text": slippage.describe(),
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
     }
@@ -561,6 +589,7 @@ async def save(request: Request) -> Response:
         result,
         capital=params["capital"],
         cost_model_label=params["cost_model"],
+        slippage=params.get("slippage"),
     )
     return JSONResponse({"strategy_id": strategy_id, "name": result.spec.name})
 
@@ -807,6 +836,7 @@ async def paper_start(request: Request) -> Response:
         cost_label = cost_label or next(iter(logic.COST_MODEL_LABELS))
     elif capital < 1_000:
         raise _BadRequest("Starting money must be at least Rs 1,000.")
+    slippage = _parse_slippage(body.get("slippage"))
     try:
         run_id = await _run(
             logic.start_paper,
@@ -815,6 +845,7 @@ async def paper_start(request: Request) -> Response:
             capital=capital,
             cost_model_label=cost_label,
             alert_only=alert_only,
+            slippage=slippage,
         )
     except ValueError as exc:
         raise _BadRequest(str(exc)) from None
@@ -1159,6 +1190,7 @@ async def orders_read(request: Request) -> Response:
 
 async def orders_create(request: Request) -> Response:
     body = await _json_body(request)
+    slippage = _parse_slippage(body.get("slippage"))
     try:
         order_id = await _run(
             orders_view.create,
@@ -1169,6 +1201,7 @@ async def orders_create(request: Request) -> Response:
             else {},
             body.get("order"),
             body.get("positions"),
+            slippage=slippage,
         )
     except orders_view.OrderError as exc:
         raise _BadRequest(str(exc)) from None

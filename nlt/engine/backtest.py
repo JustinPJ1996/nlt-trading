@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from nlt.costs.slippage import ZERO, Slippage
 from nlt.data.instruments import lot_size as exchange_lot_size
 from nlt.data.instruments import lot_size_note
 from nlt.data.session import (
@@ -273,7 +274,7 @@ def run_backtest(
     capital: float = 100_000.0,
     lot_size: int | None = None,
     charge_fn=None,
-    slippage_pct: float = 0.02,
+    slippage: Slippage = ZERO,
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
     final_session_in_progress: bool = False,
@@ -477,7 +478,7 @@ def run_backtest(
                     i,
                     ts,
                     bar,
-                    slippage_pct,
+                    slippage,
                     lot_size,
                     capital_total,
                     capital_spare,
@@ -521,7 +522,7 @@ def run_backtest(
             if ambiguous:
                 stop_beat_target_count += 1
             exit_side = "sell" if pos.direction == "long" else "buy"
-            exit_price = _apply_slippage(raw_price, exit_side, slippage_pct)
+            exit_price = _apply_slippage(raw_price, exit_side, slippage)
             entry_side = "buy" if pos.direction == "long" else "sell"
             charges = charge_fn(pos.entry_price, pos.quantity, entry_side) + charge_fn(
                 exit_price, pos.quantity, exit_side
@@ -653,7 +654,7 @@ def run_backtest(
         bar = bars.iloc[-1]
         for pos in open_positions:
             exit_side = "sell" if pos.direction == "long" else "buy"
-            exit_price = _apply_slippage(bar.close, exit_side, slippage_pct)
+            exit_price = _apply_slippage(bar.close, exit_side, slippage)
             entry_side = "buy" if pos.direction == "long" else "sell"
             charges = charge_fn(pos.entry_price, pos.quantity, entry_side) + charge_fn(
                 exit_price, pos.quantity, exit_side
@@ -788,14 +789,15 @@ def _in_blocked_window(
     return False
 
 
-def _apply_slippage(price: float, side: str, slippage_pct: float) -> float:
+def _apply_slippage(price: float, side: str, slippage: Slippage) -> float:
     """A buy always fills a little worse (higher); a sell always fills a little worse (lower).
 
     This is applied to every fill -- entries and exits alike -- so a round trip
-    always costs slippage twice, the same as it would in a live account.
+    always costs slippage twice, the same as it would in a live account. See
+    `nlt.costs.slippage.Slippage.apply` for the actual arithmetic (percentage
+    or rupee, and the floor on a sell price).
     """
-    factor = 1.0 + slippage_pct / 100.0 if side == "buy" else 1.0 - slippage_pct / 100.0
-    return price * factor
+    return slippage.apply(price, side)
 
 
 def _gross_pnl(pos: _OpenPosition, exit_price: float) -> float:
@@ -964,7 +966,7 @@ def _open_position(
     i: int,
     ts: pd.Timestamp,
     bar: pd.Series,
-    slippage_pct: float,
+    slippage: Slippage,
     lot_size: int,
     capital_total: float,
     capital_spare: float,
@@ -985,7 +987,7 @@ def _open_position(
     """
     direction = spec.direction
     entry_side = "buy" if direction == "long" else "sell"
-    entry_price = _apply_slippage(bar.open, entry_side, slippage_pct)
+    entry_price = _apply_slippage(bar.open, entry_side, slippage)
 
     stop_distance = _fixed_stop_distance(spec, features, i, entry_price)
     stop_level = None

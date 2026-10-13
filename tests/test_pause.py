@@ -18,6 +18,7 @@ import sqlite3
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
 from nlt.data.session import NSE_EQUITY
 from nlt.engine.backtest import _in_blocked_window, run_backtest
 from nlt.paper import runner
@@ -112,6 +113,10 @@ def test_replay_with_a_pause_equals_a_backtest_given_the_same_shifted_window(tmp
         charge_fn=_zero,
         trade_from=started_at + pd.Timedelta(microseconds=1),
         blocked_windows=shifted,
+        # `_start` (from tests.test_paper) builds this run's params with no
+        # "slippage" key -- exactly a run started before 2026-10-13 -- so the
+        # runner fills it at the old hidden 0.02%, not the new zero default.
+        slippage=LEGACY_SLIPPAGE,
     )
     recorded = {e["event_key"] for e in _events(store, run["id"], "entry")}
     expected_keys = {_entry_key(DAILY_SPEC, t) for t in expected.trades}

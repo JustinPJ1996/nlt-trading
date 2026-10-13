@@ -17,6 +17,8 @@ import datetime as dt
 import pandas as pd
 import pytest
 
+from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
+from nlt.costs.slippage import Slippage
 from nlt.engine.backtest import run_backtest
 from nlt.engine.basket import run_basket_backtest
 from nlt.spec.models import (
@@ -91,7 +93,7 @@ def test_shared_capital_caps_concurrent_exposure_and_counts_the_shortfall():
     spec = _spec()
     # Enough for S1 (100) + S2 (200) = 300, not enough for a third.
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=350.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=350.0, slippage=ZERO_SLIPPAGE
     )
 
     filled_symbols = {t.symbol for t in res.trades}
@@ -110,7 +112,7 @@ def test_portfolio_concurrency_never_exceeds_the_limit():
 
     spec = _spec(risk=RiskLimits(max_lots=100, max_concurrent_positions=2))
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     assert _max_concurrent(res.trades) <= 2
@@ -128,10 +130,10 @@ def test_contention_is_deterministic_across_runs():
 
     spec = _spec(risk=RiskLimits(max_lots=100, max_concurrent_positions=2))
     res1 = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
     res2 = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     assert res1.trades == res2.trades
@@ -181,7 +183,7 @@ def test_ranked_selection_orders_by_signal_bar_move_then_symbol_name():
         risk=RiskLimits(max_lots=100, max_concurrent_positions=2),
     )
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     filled_symbols = {t.symbol for t in res.trades}
@@ -224,7 +226,7 @@ def test_alignment_no_forward_fill_and_no_cross_contamination():
 
     spec = _spec(exit=ExitRules(max_bars_held=1))
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     # No forward-fill: BBB's missing day never appears in its own bars, and
@@ -255,7 +257,7 @@ def test_per_symbol_pnl_sums_to_portfolio_total():
 
     spec = _spec()
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     per_symbol_total = sum(v["net_pnl"] for v in res.per_symbol.values())
@@ -304,13 +306,60 @@ def test_matches_single_symbol_run_backtest_exactly():
         risk=RiskLimits(max_lots=100, max_concurrent_positions=1),
     )
 
-    res_single = run_backtest(spec, bars, capital=1_000_000.0, slippage_pct=0.0)
+    res_single = run_backtest(spec, bars, capital=1_000_000.0, slippage=ZERO_SLIPPAGE)
     res_basket = run_basket_backtest(
-        bars_by_symbol={"ONESYM": bars}, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol={"ONESYM": bars}, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     assert len(res_single.trades) > 0, "test is vacuous with zero trades"
     assert res_basket.trades == res_single.trades
+
+
+def test_a_chosen_slippage_matches_single_symbol_run_backtest_exactly():
+    """Same as above, but with a non-zero, non-default slippage -- the basket
+    loop must thread it through `_open_position`/`_close_position` exactly as
+    `run_backtest` does, not quietly fall back to its own default.
+    """
+    idx = pd.bdate_range("2024-01-01", periods=40, tz="Asia/Kolkata")
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    closes = 100 + np.cumsum(rng.normal(0, 1.0, len(idx)))
+    opens = closes - rng.normal(0, 0.3, len(idx))
+    highs = np.maximum(opens, closes) + np.abs(rng.normal(0, 1.0, len(idx)))
+    lows = np.minimum(opens, closes) - np.abs(rng.normal(0, 1.0, len(idx)))
+    bars = pd.DataFrame(
+        {
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": [1_000_000.0] * len(idx),
+        },
+        index=idx,
+    )
+
+    spec = StrategySpec(
+        name="equiv test",
+        description="test",
+        instrument=Instrument(symbol="ONESYM"),
+        entry=Compare(op="crosses_below", left=Ref(name="close"), right=Ref(name="sma5")),
+        exit=ExitRules(stop_pct=1.5, target_pct=2.5),
+        indicators=[IndicatorSpec(id="sma5", type="sma", params={"length": 5})],
+        risk=RiskLimits(max_lots=100, max_concurrent_positions=1),
+    )
+    chosen = Slippage("rs", 0.75)
+    res_single = run_backtest(spec, bars, capital=1_000_000.0, slippage=chosen)
+    res_basket = run_basket_backtest(
+        bars_by_symbol={"ONESYM": bars}, spec=spec, capital=1_000_000.0, slippage=chosen
+    )
+
+    assert len(res_single.trades) > 0, "test is vacuous with zero trades"
+    assert res_basket.trades == res_single.trades
+    # And it must really differ from the zero-slippage run -- otherwise this
+    # test could pass even if the basket ignored `slippage` entirely.
+    zero_run = run_backtest(spec, bars, capital=1_000_000.0, slippage=ZERO_SLIPPAGE)
+    assert [t.entry_price for t in res_single.trades] != [t.entry_price for t in zero_run.trades]
 
 
 # ----------------------------------------------------------------- failures
@@ -325,7 +374,7 @@ def test_a_bad_symbol_is_skipped_not_fatal():
         bars_by_symbol={"GOOD": good, "BAD": bad, "EMPTY": pd.DataFrame()},
         spec=spec,
         capital=1_000_000.0,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
     )
 
     assert "BAD" in res.skipped
@@ -348,7 +397,7 @@ def test_survivorship_warning_fires_for_a_universe_started_long_before_snapshot(
     }
     spec = _spec(instrument=Instrument(symbol="NIFTY 50"))
     res = run_basket_backtest(
-        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage_pct=0.0
+        bars_by_symbol=bars_by_symbol, spec=spec, capital=1_000_000.0, slippage=ZERO_SLIPPAGE
     )
 
     assert any("snapshot" in w.lower() for w in res.warnings)
@@ -370,7 +419,7 @@ def test_charges_applied_per_trade_and_sum_matches_portfolio():
         spec=spec,
         capital=1_000_000.0,
         charge_fn=charge_fn,
-        slippage_pct=0.0,
+        slippage=ZERO_SLIPPAGE,
     )
 
     assert res.trades, "test is vacuous with zero trades"
@@ -491,7 +540,7 @@ def test_capital_committed_on_an_earlier_bar_still_blocks_a_later_entry():
         risk=RiskLimits(max_lots=100, max_concurrent_positions=5),
     )
 
-    result = run_basket_backtest(spec, bars_by_symbol, capital=120.0, slippage_pct=0.0)
+    result = run_basket_backtest(spec, bars_by_symbol, capital=120.0, slippage=ZERO_SLIPPAGE)
 
     peak = _peak_exposure(result.trades)
     assert peak <= 120.0 * 1.001, (
@@ -525,7 +574,7 @@ def test_peak_exposure_never_exceeds_capital_in_the_existing_basket_case():
     bars_by_symbol = {f"S{i + 1}": _one_shot_bars(b) for i, b in enumerate(bases)}
     spec = _spec(sizing=Sizing(mode="fixed_lots", lots=1))
 
-    result = run_basket_backtest(spec, bars_by_symbol, capital=350.0, slippage_pct=0.0)
+    result = run_basket_backtest(spec, bars_by_symbol, capital=350.0, slippage=ZERO_SLIPPAGE)
     assert _peak_exposure(result.trades) <= 350.0 * 1.001
 
 

@@ -3,9 +3,10 @@
 // side has no code that could.
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, type PaperRun, type PaperState } from "../api";
+import { api, ApiError, type PaperRun, type PaperState, type Slippage, ZERO_SLIPPAGE } from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
 import { Readback } from "../components/Readback";
+import { SlippageInput } from "../components/SlippageInput";
 import { TradeTimeline, type TimelineTarget } from "../components/TradeTimeline";
 import { parseRupees } from "../format";
 
@@ -307,6 +308,7 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
   const [pick, setPick] = useState<number | null>(state.startable[0]?.id ?? null);
   const [capital, setCapital] = useState(String(state.default_capital));
   const [cost, setCost] = useState(state.cost_models[0]);
+  const [slippage, setSlippage] = useState<Slippage>(ZERO_SLIPPAGE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -332,7 +334,7 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
     setBusy(true);
     setError(null);
     try {
-      await api.paperStart(chosen.id, money, cost, alertOnly);
+      await api.paperStart(chosen.id, money, cost, alertOnly, slippage);
       reload();
     } catch (err) {
       setError(message(err, alertOnly ? "Could not start alerts only." : "Could not start paper trading."));
@@ -387,6 +389,7 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
                 ))}
               </select>
             </label>
+            <SlippageInput value={slippage} onChange={setSlippage} idPrefix="paper-slippage" />
           </div>
           <p className="hint" style={{ marginTop: 12 }}>
             No real orders are placed. From the moment you press Start, the app follows live Kite prices
