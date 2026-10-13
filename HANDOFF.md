@@ -352,6 +352,30 @@ Saving a strategy from its results now records the backtest as a completed run
 
 **Not built:** the option-chain recorder, and any order placement (Phase 4).
 
+**E1 + E2 built (2026-10-13, branch `paper-additions-batch-1`).** Plan:
+`~/.claude/plans/can-we-plan-the-jaunty-twilight.md`. Justin's decisions: pause
+means signals are *missed*, never caught up; alerts on the website first; both
+one-off and alert-only-strategy alerts; the feed shows skipped signals.
+
+- The engine now keeps what it used to throw away: each `Trade` has
+  `signal_time`, stop/target levels, raw prices and `both_hit`; every entry
+  signal becomes a `Decision` (`signal_taken`, or `signal_skipped` with a
+  reason code) emitted at the same lines as the old skip counters. A test ties
+  each count to its counter. Stored append-only in `paper_decision`.
+- `blocked_windows` (pause) exists in both engines; nothing writes it yet
+  (batch 2). Open positions keep their stop/target watched while paused.
+- **Bug fixed:** the paper "signal" row re-checked the entry rule itself and
+  could announce a fill the engine then skipped (expiry day, after
+  `no_entry_after`). It now comes from the engine's own decision, and says
+  "queued", because the money check happens at the next open, not before.
+- `/api/activity` + Activity page (merged feed, Indian time), and a
+  step-by-step timeline for strategy trades and one-off orders.
+- **Also fixed:** stock backtests said "no price history" once saved prices
+  went stale: yfinance nests a one-ticker download under the ticker, and a
+  failed refresh dropped the stock rather than using saved prices.
+  The test suite hits Yahoo whenever `data/bars` is stale, so these tests depend
+  on the date -- worth pinning one day.
+
 **Next, from the competitor review** (paper first, carried into live):
 
 - **E1 Live activity feed** -- every decision with its reason: "RSI below 30 ·
