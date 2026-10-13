@@ -184,6 +184,12 @@ def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, 
             f"instead of '{label}'."
         )
 
+    if spec.instrument.is_option and not isinstance(chosen, NseOptionsCharges):
+        return NseOptionsCharges(), (
+            f"Costs: this strategy buys index options, so option charges were applied "
+            f"instead of '{label}'."
+        )
+
     if spec.instrument.trade_as == "stock" and not isinstance(chosen, NseEquityDeliveryCharges):
         return NseEquityDeliveryCharges(), (
             f"Costs: this strategy buys and sells shares, so equity delivery charges "
@@ -282,12 +288,21 @@ def translate_text(text: str, answers: dict[str, str] | None = None) -> Translat
         )
 
 
-def period_dates(period: BacktestPeriod, today: dt.date) -> dict | None:
+def period_dates(
+    period: BacktestPeriod, today: dt.date, *, data_end: dt.date | None = None
+) -> dict | None:
     """The dates a test period from the sentence means, as of `today`.
 
     None when there is nothing to test yet (a year still in the future).
     Never earlier than the history we trust (`DATA_FLOOR`), and it says so.
+
+    `data_end` is the last day prices exist for (option prices stop at the
+    end of the dataset): "the last year" then counts back from it, and the
+    note says so (Justin, 2026-10-13: test the latest year we have).
     """
+    shifted = None
+    if data_end is not None and data_end < today:
+        today, shifted = data_end, data_end
     if period.year is not None:
         start, end = dt.date(period.year, 1, 1), min(dt.date(period.year, 12, 31), today)
     else:
@@ -302,7 +317,23 @@ def period_dates(period: BacktestPeriod, today: dt.date) -> dict | None:
             f"History here starts on {DATA_FLOOR:%d %b %Y}, so the test starts there "
             f'rather than at the start of "{period.words}".'
         )
+    if shifted is not None:
+        moved = (
+            f'Option prices are only available up to {shifted:%d %b %Y}, so "{period.words}" '
+            f"is counted back from then."
+        )
+        note = f"{moved} {note}" if note else moved
     return {"words": period.words, "start": start.isoformat(), "end": end.isoformat(), "note": note}
+
+
+def option_data_end(spec: StrategySpec | None) -> dt.date | None:
+    """The last day with option prices, for an option strategy; else None."""
+    if spec is None or not spec.instrument.is_option:
+        return None
+    from nlt.options.data import ParquetSource
+
+    cover = ParquetSource().coverage(spec.instrument.symbol, spec.instrument.timeframe)
+    return cover[1] if cover else None
 
 
 def answers_from_questions(questions: list[Question], values: dict[str, str]) -> dict[str, str]:
@@ -363,6 +394,9 @@ class PipelineResult:
     assumptions: list[str] = field(default_factory=list)
     weak_spots: list[str] = field(default_factory=list)
     data_notes: list[str] = field(default_factory=list)
+    # Said at the very top of the result: the test covered different dates
+    # from the ones asked for, because option prices exist only for some.
+    window_notes: list[str] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -497,6 +531,16 @@ def backtest_spec(
     """
     if translation is None:
         translation = TranslationResult(spec=spec)
+    if spec.instrument.is_option:
+        return _backtest_option_spec(
+            spec,
+            capital=capital,
+            cost_model_label=cost_model_label,
+            start=start,
+            end=end,
+            translation=translation,
+            slippage=slippage,
+        )
     try:
         model, cost_note = charge_model_for_spec(spec, cost_model_label)
         cf = _adapt_charge_fn(model)
@@ -666,6 +710,127 @@ def backtest_spec(
         )
     except Exception as exc:  # noqa: BLE001 - deliberately broad; this is the UI's last line of defence
         logger.exception("run_pipeline failed for spec %r", getattr(spec, "name", None))
+        return PipelineResult(
+            translation=translation,
+            spec=spec,
+            error=f"The backtest could not be run: {exc}",
+        )
+
+
+def _backtest_option_spec(
+    spec: StrategySpec,
+    *,
+    capital: float,
+    cost_model_label: str,
+    start: dt.date | None,
+    end: dt.date | None,
+    translation: TranslationResult,
+    slippage: Slippage,
+) -> PipelineResult:
+    """`backtest_spec` for buying a call or a put (`nlt.engine.options_backtest`).
+
+    Signals come from the index's candles in the F&O dataset, trades from the
+    contract chosen at each signal. The test window is clamped to the days
+    with real option prices, and the result says so at the top.
+    """
+    from nlt.engine.loader import load_option_bars, option_window
+    from nlt.engine.options_backtest import run_option_backtest
+    from nlt.options.data import ParquetSource
+    from nlt.options.execution import OptionExecution
+    from nlt.report import method
+
+    try:
+        source = ParquetSource()
+        start, end, window_notes = option_window(spec, start, end, source)
+        model, cost_note = charge_model_for_spec(spec, cost_model_label)
+        cf = _adapt_charge_fn(model)
+        data_notes = [cost_note] if cost_note else []
+
+        load_from = max(
+            warmup.padded_start(spec, start),
+            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],
+        )
+        all_bars = load_option_bars(spec, load_from, end, source)
+        if all_bars.empty:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                data_notes=data_notes,
+                window_notes=window_notes,
+                error="There is no price history for that index and date range to test against.",
+            )
+        start_bar = warmup.first_bar_on_or_after(all_bars.index, start)
+        if start_bar is None:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                window_notes=window_notes,
+                error="There is no price history for that index and date range to test against.",
+            )
+
+        def run(charge_fn) -> BacktestResult:
+            execution = OptionExecution(
+                source,
+                spec.instrument.symbol,
+                spec.instrument.timeframe,
+                spec.instrument.option_type,
+                spec.instrument.strike_offset,
+                spec.instrument.expiry,
+            )
+            result = run_option_backtest(
+                spec,
+                all_bars,
+                execution,
+                capital=capital,
+                charge_fn=charge_fn,
+                slippage=slippage,
+                trade_from=start_bar,
+            )
+            return warmup.trim(result, start_bar, capital)
+
+        backtest = run(cf)
+        before_charges = run(_adapt_charge_fn(ZeroCharges()))
+        bars = all_bars.loc[start_bar:]
+        data_notes = data_notes + list(backtest.warnings)
+        note = warmup.warmup_note(spec, all_bars, start_bar)
+        if note:
+            data_notes.append(note)
+
+        benchmark = buy_and_hold(
+            bars, capital, charge_fn=cf, name=f"holding {spec.instrument.symbol}"
+        )
+        comparison = compare(backtest, benchmark, bars)
+        verdict = assess(backtest, comparison)
+        equity_index = backtest.equity.index
+        stated = (
+            method.assumptions(
+                spec,
+                capital=capital,
+                charge_model=model,
+                first=equity_index[0].date(),
+                last=equity_index[-1].date(),
+                slippage=slippage,
+            )
+            if len(equity_index)
+            else []
+        )
+        spots, data_notes = method.weak_spots(spec, data_notes, slippage=slippage)
+        return PipelineResult(
+            translation=translation,
+            spec=spec,
+            bars=bars,
+            backtest=backtest,
+            benchmark=benchmark,
+            comparison=comparison,
+            verdict=verdict,
+            before_charges=before_charges,
+            assumptions=stated,
+            weak_spots=spots,
+            data_notes=data_notes,
+            window_notes=window_notes,
+        )
+    except Exception as exc:  # noqa: BLE001 - the UI's last line of defence, as above
+        logger.exception("option backtest failed for spec %r", getattr(spec, "name", None))
         return PipelineResult(
             translation=translation,
             spec=spec,

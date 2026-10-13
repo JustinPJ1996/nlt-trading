@@ -121,6 +121,8 @@ export type Trade = {
   exited: string;
   exit_price: string;
   reason: string;
+  // Options only: why this contract was chosen, in words.
+  why: string | null;
   pnl: number;
   pnl_text: string;
 };
@@ -169,6 +171,9 @@ export type Result = {
   chart: ChartPoint[];
   trades: Trade[];
   notes: string[];
+  // The test covered different dates from the ones asked for (option prices
+  // exist only for some); said at the very top.
+  window_notes: string[];
 };
 
 export type RunSummary = {

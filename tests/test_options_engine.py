@@ -63,7 +63,9 @@ def _index_bars(days, signal_at: pd.Timestamp | None, signal_close: float = 2151
     return pd.DataFrame(rows).set_index("timestamp")
 
 
-def _chain(days, prices: dict[str, dict[pd.Timestamp, tuple]], default=(100.0, 100.0, 100.0, 100.0)):
+def _chain(
+    days, prices: dict[str, dict[pd.Timestamp, tuple]], default=(100.0, 100.0, 100.0, 100.0)
+):
     """Raw rows for FrameSource.
 
     `prices[symbol][ts] = (open, high, low, close[, volume])` overrides the
@@ -90,16 +92,32 @@ def _chain(days, prices: dict[str, dict[pd.Timestamp, tuple]], default=(100.0, 1
                         bad_ohlc=False,
                     )
                     rows.append(
-                        {**base, "timeframe": "1d", "timestamp": _ts(day, 9, 15), "open": 1.0,
-                         "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1}
+                        {
+                            **base,
+                            "timeframe": "1d",
+                            "timestamp": _ts(day, 9, 15),
+                            "open": 1.0,
+                            "high": 1.0,
+                            "low": 1.0,
+                            "close": 1.0,
+                            "volume": 1,
+                        }
                     )
                     for ts in _slots(day):
                         p = prices.get(sym, {}).get(ts, default)
                         o, h, low, c = p[:4]
                         vol = p[4] if len(p) > 4 else 10
                         rows.append(
-                            {**base, "timeframe": "1m", "timestamp": ts, "open": o, "high": h,
-                             "low": low, "close": c, "volume": vol}
+                            {
+                                **base,
+                                "timeframe": "1m",
+                                "timestamp": ts,
+                                "open": o,
+                                "high": h,
+                                "low": low,
+                                "close": c,
+                                "volume": vol,
+                            }
                         )
     return FrameSource(pd.DataFrame(rows))
 
@@ -202,7 +220,9 @@ def test_exits_wait_for_a_candle_where_the_option_actually_traded():
 
 
 def test_stop_is_assumed_first_when_one_candle_hits_both():
-    source = _chain([D1], {ATM_CE: {FILL: (100, 100, 100, 100), _ts(D1, 11, 0): (100, 200, 50, 100)}})
+    source = _chain(
+        [D1], {ATM_CE: {FILL: (100, 100, 100, 100), _ts(D1, 11, 0): (100, 200, 50, 100)}}
+    )
     res = _run(_spec(), _index_bars([D1], SIGNAL), source)
     t = res.trades[0]
     assert t.exit_reason == "stop" and t.both_hit
@@ -223,7 +243,13 @@ def test_square_off_on_an_untraded_candle_uses_the_last_traded_price_and_flags_i
     sq = _ts(D1, 15, 15)
     source = _chain(
         [D1],
-        {ATM_CE: {FILL: (100, 100, 100, 100), _ts(D1, 15, 0): (100, 112, 100, 111), sq: (5, 5, 5, 5, 0)}},
+        {
+            ATM_CE: {
+                FILL: (100, 100, 100, 100),
+                _ts(D1, 15, 0): (100, 112, 100, 111),
+                sq: (5, 5, 5, 5, 0),
+            }
+        },
     )
     res = _run(_spec(), _index_bars([D1], SIGNAL), source)
     t = res.trades[0]
@@ -236,7 +262,9 @@ def test_square_off_on_an_untraded_candle_uses_the_last_traded_price_and_flags_i
 def test_overnight_position_is_closed_at_1515_on_expiry_day_never_held_past_it():
     sq = _ts(D3, 15, 15)
     source = _chain([D1, D2, D3], {ATM_CE: {sq: (130, 140, 129, 139)}}, default=(100, 101, 99, 100))
-    res = _run(_spec(stop=90.0, target=90.0, intraday=False), _index_bars([D1, D2, D3], SIGNAL), source)
+    res = _run(
+        _spec(stop=90.0, target=90.0, intraday=False), _index_bars([D1, D2, D3], SIGNAL), source
+    )
     t = res.trades[0]
     assert t.exit_reason == "expiry"
     assert t.exit_time == sq
@@ -306,10 +334,90 @@ def test_a_hold_for_n_candles_exit_also_waits_for_a_traded_candle():
     spec = spec.model_copy(update={"exit": ExitRules(stop_pct=90.0, max_bars_held=2)})
     source = _chain(
         [D1],
-        {ATM_CE: {FILL: (100, 100, 100, 100), _ts(D1, 10, 30): (1, 1, 1, 1, 0), _ts(D1, 10, 45): (97, 99, 96, 98)}},
+        {
+            ATM_CE: {
+                FILL: (100, 100, 100, 100),
+                _ts(D1, 10, 30): (1, 1, 1, 1, 0),
+                _ts(D1, 10, 45): (97, 99, 96, 98),
+            }
+        },
     )
     res = _run(spec, _index_bars([D1], SIGNAL), source)
     t = res.trades[0]
     assert t.exit_reason == "max_bars"
     assert t.exit_time == _ts(D1, 10, 45)
     assert t.exit_price == pytest.approx(98.0)
+
+
+# ------------------------------------------------- the test window and the app
+
+
+def test_period_counts_back_from_the_last_day_with_option_prices_and_says_so():
+    from app.logic import period_dates
+    from nlt.translate.rules import BacktestPeriod
+
+    period = BacktestPeriod(words="the last 1 year", last=1, unit="years")
+    dates = period_dates(period, dt.date(2026, 10, 13), data_end=dt.date(2025, 12, 31))
+    assert dates["end"] == "2025-12-31"
+    assert dates["start"] == "2024-12-31"
+    assert "only available up to 31 Dec 2025" in dates["note"]
+    # Without a data end nothing moves (every non-option strategy).
+    plain = period_dates(period, dt.date(2026, 10, 13))
+    assert plain["end"] == "2026-10-13" and plain["note"] is None
+
+
+def test_option_window_is_clamped_to_the_days_with_prices_and_says_so():
+    from nlt.engine.loader import option_window
+
+    source = _chain([D1, D2], {})
+    start, end, notes = option_window(_spec(), dt.date(2023, 1, 1), dt.date(2026, 1, 1), source)
+    assert (start, end) == (D1, D2)
+    assert any("only available up to 03 Jan 2024" in n for n in notes)
+    assert any("start on 02 Jan 2024" in n for n in notes)
+    with pytest.raises(ValueError):
+        option_window(_spec(), dt.date(2025, 1, 1), dt.date(2025, 2, 1), source)
+
+
+# --------------------------------------------- known answer, on the real data
+
+
+_REAL_1M = (
+    __import__("pathlib").Path(__file__).resolve().parents[1] / "data/fno/1m/underlying=BANKNIFTY"
+)
+
+
+@pytest.mark.skipif(not _REAL_1M.exists(), reason="the F&O 1-minute data is not on this machine")
+def test_known_answer_first_banknifty_monthly_call_trade_of_2025():
+    """Checked by hand against the raw 1-minute rows (2026-10-13):
+
+    BANKNIFTY closed at 51,110.25 on the 10:45 candle of 1 Jan 2025 (its
+    10:59 minute); RSI(14) crossed above 60 there. Nearest listed strike
+    51,100; monthly expiry 30 Jan 2025. The option's last trade in that
+    candle was 1,129.90 (10:59) -- the basis. First trade from 11:00 opened at
+    1,130.25 -- the fill. Stop 1,130.25 - 30% x 1,129.90 = 791.28; target
+    1,130.25 + 50% x 1,129.90 = 1,695.20. Between 11:00 and 15:15 it traded
+    between 1,020 and 1,240, so neither was hit; first trade from 15:15
+    opened at 1,083.95 -- the square-off. Charges 38.87 + 86.05 (Zerodha's
+    options schedule); net (1,083.95 - 1,130.25) x 30 - 124.92 = -1,513.92.
+    """
+    from app.logic import backtest_spec, translate_text
+
+    tr = translate_text(
+        "Buy BANKNIFTY monthly ATM call on 15 minute bars when RSI crosses above 60. "
+        "Stop 30%, target 50% on the premium."
+    )
+    r = backtest_spec(
+        tr.spec, capital=2_500_000, start=dt.date(2025, 1, 1), end=dt.date(2025, 1, 1)
+    )
+    assert r.error is None
+    t = r.backtest.trades[0]
+    assert t.symbol == "BANKNIFTY25JAN51100CE"
+    assert t.signal_time == pd.Timestamp("2025-01-01 10:45", tz=IST)
+    assert t.entry_price == pytest.approx(1130.25)
+    assert t.stop_level == pytest.approx(791.28)
+    assert t.target_level == pytest.approx(1695.20)
+    assert t.exit_reason == "square_off"
+    assert t.exit_price == pytest.approx(1083.95)
+    assert t.quantity == 30
+    assert t.charges == pytest.approx(124.92)
+    assert t.net_pnl == pytest.approx(-1513.92)

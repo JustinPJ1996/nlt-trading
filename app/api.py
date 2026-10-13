@@ -324,7 +324,11 @@ async def translate(request: Request) -> Response:
             "read_by_ai": tr.source != "rules",
             "answers": answers,
             "period": (
-                logic.period_dates(tr.period, dt.date.today()) if tr.period is not None else None
+                logic.period_dates(
+                    tr.period, dt.date.today(), data_end=logic.option_data_end(tr.spec)
+                )
+                if tr.period is not None
+                else None
             ),
         }
     )
@@ -517,13 +521,16 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
                 "entry_price": format_inr(t.entry_price),
                 "exited": _time_text(t.exit_time, tf),
                 "exit_price": format_inr(t.exit_price),
-                "reason": logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason),
+                "reason": logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason)
+                + (" (at its last traded price)" if t.exit_untraded else ""),
+                "why": t.contract_why or None,
                 "pnl": round(float(t.net_pnl), 2),
                 "pnl_text": ("+" if t.net_pnl >= 0 else "-") + format_inr(abs(t.net_pnl)),
             }
             for t in bt.trades
         ],
         "notes": notes,
+        "window_notes": list(result.window_notes),
     }
 
 

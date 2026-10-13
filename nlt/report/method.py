@@ -68,7 +68,28 @@ def assumptions(
         "within the safety limits shown with the strategy.",
         fill_line,
     ]
-    if spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
+    if spec.instrument.is_option:
+        out.append(
+            f"The signal is judged on {spec.instrument.symbol}'s own candles. The option is "
+            "chosen at that moment: the listed strike nearest the index's close on the signal "
+            "candle, and the expiry the strategy names."
+        )
+        out.append(
+            "Option prices come from real trades only, minute by minute. If the chosen option "
+            "did not trade in the candle a trade would be placed in, that signal is skipped -- "
+            "another strike is never used."
+        )
+        if spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
+            out.append(
+                "Stop loss and target are percentages of the option's price at the close of "
+                "the candle that gave the signal, not of the index and not of the price paid."
+            )
+        out.append(
+            f"A same-day square-off sells at the {spec.schedule.square_off:%H:%M} price itself. "
+            "A position still open on its expiry day is closed then too, so no option is "
+            "ever held to settlement."
+        )
+    elif spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
         out.append(
             "Stop loss and target are measured from the close of the candle that gave the "
             "signal, not from the price paid."
@@ -142,6 +163,26 @@ def weak_spots(
             spots.append(
                 "Shares squared off the same day are charged as delivery trades, which pay "
                 "more transaction tax than intraday trades really do."
+            )
+    if spec.instrument.is_option:
+        spots.append(
+            "The gap between the price buyers offer and sellers ask is not charged on top: "
+            "only the slippage set for this test stands in for it, and thinly traded strikes "
+            "would usually cost more."
+        )
+        spots.append(
+            "A stop or target can only fill in a candle where the option actually traded; "
+            "between trades the position waits, and the next real trade may be well past "
+            "the level."
+        )
+        spots.append(
+            "Charges use today's tax rates for every year tested; the tax on selling an "
+            "option was lower in the years tested than it is today."
+        )
+        if spec.instrument.symbol == "SENSEX":
+            spots.append(
+                "SENSEX trades on BSE, but is charged here at NSE's rates; BSE's exchange "
+                "fees differ slightly."
             )
     if spec.instrument.is_future and spec.instrument.timeframe != "1d":
         spots.append(

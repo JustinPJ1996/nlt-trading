@@ -104,7 +104,7 @@ Ask before changing any of these; each was a deliberate decision.
 | Rule | Why |
 | --- | --- |
 | Signals judged on **closed** bars only | Never the bar still forming |
-| Fills at the **next** bar's open, plus slippage | No acting on a price you could not have got |
+| Fills at the **next** bar's open, plus the run's slippage (default zero, user-set) | No acting on a price you could not have got |
 | Stops and targets measured from the **signal bar's close** | Justin's call: the levels belong to the setup. Both from one number |
 | Stop assumed first when a bar could hit both | OHLC cannot show intrabar order; take the pessimistic branch |
 | A gap past the stop fills **at the open** | Stops do not protect you through a gap; gaps past the target modelled too, so the fix is not one-sided |
@@ -140,7 +140,9 @@ Ask before changing any of these; each was a deliberate decision.
 | `nlt/data/` | Sources, session calendar, universes, quality guard |
 | `nlt/store/db.py` | Strategies, runs, audit log, kill switch, proving gate |
 | `app/` | Streamlit dashboard, 4 pages |
-| `nlt/options/`, `nlt/risk/`, `nlt/broker/` | **Empty. Phases 2-4.** |
+| `nlt/options/` | Option contracts: data, expiry, strike choice, prices (Phase 2) |
+| `nlt/engine/options_backtest.py` | Buying one call or put: signals on the index, trades in the contract |
+| `nlt/risk/`, `nlt/broker/` | **Empty. Phase 4.** |
 
 ---
 
@@ -269,24 +271,77 @@ futures backtest crashed on a missing lot size; and a raw code dict leaked into
 its assumptions list. Our sizing, charges, benchmark and stop rule exist to
 prevent exactly these.
 
-### Phase 2 — Options execution — **NOT STARTED**
+### Phase 2 — Options — **batch 1 BUILT (2026-10-13): buying one call or put**
 
-`nlt/options/` is empty. Needs: strike selection (ATM default, configurable
-offset), expiry choice (nearest weekly), premium modelling for backtests, lot
-handling, mandatory square-off before expiry, and a plain-English record of why
-each contract was chosen.
+Plan: `~/.claude/plans/let-s-start-planning-phase-compiled-swan.md`. Branch
+`phase-2-options-batch-1`. Justin's decisions, each offered as a trade-off:
 
-**Blocked on data.** Kite does not serve historical data for expired contracts.
-Options: pay a vendor (TrueData, GDFL), or model premiums with Black-Scholes and
-label results as estimates while the paper phase records real chains.
+| Topic | Decision |
+| --- | --- |
+| Order | Buying first (batch 1); selling and multi-leg next (batch 2); options paper trading last (batch 3) |
+| Data ends 31 Dec 2025 | "Last 1 year" counts back from the last day with option prices, and says so at the top |
+| Chosen option did not trade in the fill candle | Skip the signal and say why; never another strike |
+| Selling margin (batch 2) | Replicate Zerodha's SPAN calculator |
+| Candle size | 1-minute data unpacked now (it covers 2022-12 to 2025-12, not from Aug 2024 as first thought) |
+| Lot size | Today's lot everywhere (SENSEX 20 added) |
+| Slippage | A user-set box on every strategy, % or Rs per unit, default **zero everywhere**; "No slippage assumed, so real fills would likely be worse" when zero. Paper runs and one-off orders saved before this keep 0.02% so they do not drift |
+| Overnight | Allowed; a position still open on expiry day is closed at the square-off time that day |
+| "Stop 30%" without "premium" | The option's price, labelled "We worked out" |
+| Square-off price (options) | The 15:15 candle's **open**, not its close (stocks/futures unchanged) |
+| Square-off when the option did not trade | Last traded price, trade flagged |
 
-The charge model already handles options correctly, including the trap that an
-exercised ITM option is charged STT on intrinsic value at the buy side.
+**The data trap that matters most.** The vendor's 15-minute (and daily)
+option OHLC was built from *forward-filled* minutes: a minute with no trade
+repeats the last price. Native 15m close/volume match the traded minutes
+exactly, but open matches only ~65-70% and high/low ~88% (example:
+BANKNIFTY2460540000CE, 2024-06-04 11:00 "opened" at 10,899.95; its first trade
+in that bar was 7,735.60). Some lows are 0.00. **Every option bar is therefore
+built from traded 1-minute rows only** (`nlt/options/execution.py`); the index's
+own candles are fine as they are. Documented in `nlt/data/fno_import.py`.
 
-**From the competitor review (F3):** 11 of Tradl's 26 suggested backtest prompts
-are options -- 9:20 short straddle, straddle with re-entry, iron condor, iron
-butterfly, bull put spread, ATM call/put buys with premium stops, an IV-percentile
-filter. They are a ready-made acceptance list for this phase.
+The 1-minute file (~78 GB raw) is imported in two steps: `scripts/import_fno.py
+--stage-1m` splits it by month once, then `--timeframe 1m` joins each month
+(`data/fno/1m/underlying=U/year=Y/month=M`, 11 GB).
+
+What exists:
+- `nlt/options/` -- `data.py` (ParquetSource, FrameSource for tests,
+  coverage measured from 1m), `expiry.py` (nearest/next weekly, monthly, from
+  the dataset's own expiries; BANKNIFTY weeklies end after 13 Nov 2024 and
+  "weekly" then refuses rather than becoming the monthly), `contracts.py`
+  (ATM = listed strike nearest the signal candle's close, tie to the lower;
+  offsets count listed strikes; a plain "why this contract" sentence),
+  `execution.py` (traded-only resampling, the option's price at the signal,
+  last trade).
+- `nlt/engine/options_backtest.py` -- a separate loop, so the stock/futures
+  engine is untouched. Signals on the index, fill at the next candle's open on
+  the option, stop/target as % of the option's price at the signal candle's
+  close, stop first, gap past the stop fills at the open, no exit on a candle
+  where the option did not trade, 15:15-open square-off, expiry-day close,
+  no entry after the contract's last close.
+- Reading: `nlt/translate/options_words.py`; selling and multi-leg sentences get
+  "coming in the next update". Tradl #31, #36, #41 read on the AI path; #26
+  (time trigger) is refused. The 70: still 3 / 67 / 0 wrong; the 43: 0 wrong.
+- `app/logic.py` `_backtest_option_spec`, the top-of-report window note, option
+  charges forced, option assumptions and weak spots (`nlt/report/method.py`).
+- Known answer: `test_known_answer_first_banknifty_monthly_call_trade_of_2025`,
+  every figure checked against the raw 1-minute rows.
+
+Open after batch 1, for Justin:
+- Tradl #36 "buy when a candle closes above the first-15-minute high" is read by
+  the AI as a *state* ("whenever the price is above"), not a one-off breakout:
+  after a stop it can buy again at once. The readback says so honestly.
+- The old Streamlit dashboard has no Slippage box; the one-off order form shows
+  it even for alerts, where it does nothing.
+- A year of 15-minute signals takes about a minute to run.
+
+**Batch 2 (selling, multi-leg)** needs SPAN margin research: NSE/BSE daily SPAN
+files plus exposure margin, the extra expiry-day margin from Nov 2024, hedge
+benefit on spreads, a check against Zerodha's calculator on ~20 positions, and
+a decision on historical vs today's rates. IV percentile (#37) needs IV
+computed from premium, index level and time to expiry.
+
+The charge model already handles the exercised-ITM STT trap, but batch 1 never
+needs it: no option is held to settlement.
 
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 

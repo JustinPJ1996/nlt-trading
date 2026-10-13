@@ -157,7 +157,7 @@ def run_option_backtest(
         charge_fn = _zero_charges
         warnings.append(NO_CHARGES_NOTE)
     warnings.append(
-        f"Lot size: {lot_size} units, today's lot for {spec.instrument.symbol}, used for "
+        f"Sized at today's lot of {lot_size} units for {spec.instrument.symbol}, used for "
         "every year tested even where the exchange's lot was different then."
     )
     if capital < FNO_MINIMUM_CAPITAL:
