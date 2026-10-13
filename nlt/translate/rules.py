@@ -255,6 +255,11 @@ def _clean(word: str) -> str:
 _BANKNIFTY = re.compile(r"\bbank\s*nifty\b")
 _NIFTY_UNIVERSE_NUM = re.compile(r"\bnifty\s*[\s\-_]?\s*(?P<num>50|100|500)\b")
 _NIFTY_BARE = re.compile(r"\bnifty\b")
+# SENSEX has no tradeable index or futures product here -- only options on it
+# (see `nlt.translate.options_words.OPTION_UNDERLYINGS`) -- so finding the bare
+# word here only stakes a claim on the symbol; whether that claim is allowed
+# depends on whether the sentence turns out to be an option one.
+_SENSEX = re.compile(r"\bsensex\b")
 
 # "stocks"/"shares" immediately after the number ("nifty 100 stocks"), or
 # "stocks in"/"shares in" immediately before it ("stocks in nifty 500").
@@ -394,11 +399,14 @@ def _blank(text: str, pattern: re.Pattern) -> str:
 
 def _extract_instrument(
     text: str,
+    answers: dict[str, str] | None = None,
 ) -> tuple[str, dict | None, Question | None]:
     """Returns (text, instrument kwargs, ambiguity question).
 
     `kwargs` is `None` exactly when `question` is set -- an ambiguous "NIFTY
     50" with no qualifier, the one case this function refuses to guess at.
+    `answers` carries the user's picks from a previous options question
+    (call/put, strike, expiry) back in.
     """
     kwargs: dict = {}
 
@@ -438,39 +446,51 @@ def _extract_instrument(
         elif _NIFTY_BARE.search(text):
             kwargs["symbol"] = "NIFTY"
             text = _NIFTY_BARE.sub(" ", text)
+        elif _SENSEX.search(text):
+            kwargs["symbol"] = "SENSEX"
+            text = _SENSEX.sub(" ", text)
 
-    option_word = re.search(r"\b(call|put|ce|pe|option|options)\b", text)
-    if option_word:
-        # Refused rather than parsed, until there is option price data to test
-        # against. This used to build an option spec, and the readback would
-        # faithfully describe "at-the-money call option, nearest weekly expiry"
-        # while the engine backtested the index's own price and reported the
-        # result with no hint that it had traded something else entirely.
-        #
-        # Refusing costs the user a strategy they could not have trusted anyway.
-        # Parsing it cost them a number they had every reason to believe.
-        #
-        # Removed in the phase that adds real contract resolution; the
-        # extraction below is what it will grow back into.
-        return (
-            text,
-            None,
-            Question(
-                text=(
-                    "I can't test option strategies yet -- option price history is "
-                    "being wired in now. Try the same idea on the index itself, "
-                    "e.g. 'buy NIFTY when RSI crosses below 30, target 2%, stop 1%'."
-                ),
-                why=(
-                    "There is no option price data here yet. Testing an option "
-                    "strategy against the index's own price would give you a "
-                    "confident-looking number for a completely different trade -- "
-                    "a 2% move in NIFTY is nothing like a 2% move in a premium."
-                ),
-                suggestion=None,
-                field="instrument.trade_as",
-            ),
-        )
+    # Options: buying one call or one put. Everything else an options sentence
+    # might describe -- selling, two or more legs, a fixed strike, a points
+    # offset -- is refused by `options_words.read` before it ever reaches here.
+    from nlt.translate import options_words
+
+    opt = options_words.read(text, answers)
+    if opt.is_option:
+        # The underlying is checked before anything else an option question
+        # might ask -- there is no point asking "which strike?" of a sentence
+        # we are about to refuse anyway for naming a stock, and defaulting it
+        # to NIFTY in the meantime would silently drop the stock the user
+        # actually named.
+        symbol = kwargs.get("symbol")
+        if symbol is not None and symbol not in options_words.OPTION_UNDERLYINGS:
+            return text, None, options_words.unsupported_underlying_question(symbol)
+        if symbol is None:
+            stock = _find_stock_ticker(text)
+            if stock is not None:
+                return text, None, options_words.unsupported_underlying_question(stock[0])
+
+        if opt.question is not None:
+            return text, None, opt.question
+
+        kwargs.update(opt.kwargs)
+        if symbol is not None:
+            kwargs["symbol"] = symbol
+        # Else: no underlying named at all. Leave "symbol" out of kwargs
+        # entirely -- `Instrument`'s own field default ("NIFTY") then applies
+        # exactly the way it does for every other instrument, which is also
+        # what makes `symbol_said` false and the readback say "Default"
+        # rather than "You said".
+        return opt.text, kwargs, None
+
+    if kwargs.get("symbol") == "SENSEX":
+        # SENSEX was named but this never turned out to be an option sentence
+        # -- the index itself and SENSEX futures are not supported. A futures
+        # word gets the same "Futures work on ..." refusal every other
+        # unsupported contract gets, so the message stays one voice.
+        if _FUTURES_WORD.search(text):
+            return text, None, _futures_question("SENSEX futures")
+        return text, None, options_words.sensex_non_option_question()
 
     futures_word = _FUTURES_WORD.search(text)
     if commodity is not None:
@@ -2310,7 +2330,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     text = re.sub(r"(\d+(?:\.\d+)?)\s*percent\b", r"\1%", text)
     text = re.sub(r"\bclose_price\b", "close", text)
 
-    text, instrument_kwargs, instrument_question = _extract_instrument(text)
+    text, instrument_kwargs, instrument_question = _extract_instrument(text, answers)
     symbol_said = bool(instrument_kwargs and "symbol" in instrument_kwargs)
     if instrument_question is not None:
         return TranslationResult(
@@ -2352,6 +2372,25 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         )
     if timeframe:
         instrument_kwargs["timeframe"] = timeframe
+    elif instrument_kwargs.get("trade_as") == "option":
+        # An option's premium behaves very differently depending on how often
+        # the signal is checked, unlike an index or a stock where "no candle
+        # size stated" can default to daily without changing what the strategy
+        # means. So, for options only, this is asked rather than defaulted.
+        picked = answers.get("instrument.timeframe", "").strip()
+        valid_timeframes = {"1m", "3m", "5m", "15m", "30m", "1h", "1d"}
+        if picked in valid_timeframes:
+            timeframe = picked
+            instrument_kwargs["timeframe"] = picked
+        else:
+            from nlt.translate import options_words
+
+            return TranslationResult(
+                spec=None,
+                questions=[options_words._candle_size_question()],
+                notes=notes,
+                source="rules",
+            )
 
     text, backtest_note, period = _extract_backtest_window(text)
     if backtest_note:
@@ -2367,6 +2406,11 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             overnight = False  # "overnight" needs nothing: holding overnight wins below
 
     text, percent_exits = _extract_percent_exits(text)
+    premium_said = False
+    if instrument_kwargs.get("trade_as") == "option":
+        from nlt.translate import options_words
+
+        text, premium_said = options_words.consume_premium_words(text)
     text, exit_condition, exit_cond_inds, exit_cond_notes, exit_ambiguous = _extract_exit_condition(
         text, direction, answers.get("exit.condition")
     )
@@ -2534,6 +2578,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         schedule_said=bool(
             rest_exits.get("_square_off") or rest_exits.get("_intraday") or overnight
         ),
+        premium_said=premium_said,
     )
     return TranslationResult(
         spec=spec,
@@ -2553,6 +2598,7 @@ def recipe_sources(
     timeframe_said: bool,
     sizing_said: bool,
     schedule_said: bool,
+    premium_said: bool = False,
 ) -> dict[str, str]:
     """Where each readback part came from, for both readers.
 
@@ -2584,6 +2630,15 @@ def recipe_sources(
         out["schedule"] = WORKED_OUT  # from the market's own closing time
     else:
         out["schedule"] = DEFAULT
+
+    if spec.instrument.is_option and not premium_said:
+        # "Stop 30%" on an option is read as 30% of the option's own price --
+        # an assumption, not something the sentence said, unless it actually
+        # named the premium. Claiming "You said" for a reading we supplied
+        # would be the readback lying about its own evidence.
+        for part in ("exit.stop", "exit.target"):
+            if part in out:
+                out[part] = WORKED_OUT
     return out
 
 
