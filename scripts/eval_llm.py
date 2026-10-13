@@ -33,7 +33,7 @@ NEVER_A_STRATEGY = {
     "fundamental",
     "event",  # the 70
     "screen",
-    "options",
+    "options-later",
     "no-stop",
     "unsupported-stop",  # Tradl's templates
 }

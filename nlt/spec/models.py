@@ -300,6 +300,12 @@ class Schedule(Base):
 
 INDICES = ("NIFTY", "BANKNIFTY")
 
+# Underlyings this platform can trade *as options*. SENSEX is here and nowhere
+# else: it has no tradeable index or futures product here (the parser refuses
+# a bare "SENSEX" or "SENSEX futures" -- see `nlt.translate.rules`), only
+# options on it.
+OPTION_UNDERLYINGS = (*INDICES, "SENSEX")
+
 
 class Instrument(Base):
     """What the signal is computed on, and what actually gets traded.
@@ -388,9 +394,34 @@ class Instrument(Base):
             raise ValueError(f"{self.symbol} is an MCX commodity and can only be traded as futures")
         return self
 
+    @model_validator(mode="after")
+    def _option_fields_are_resolved(self):
+        """A real option order needs a real strike and a real underlying.
+
+        `option_type="auto"` is the field's own default, meant for callers that
+        never touch options at all (most of the test suite exercises the lot
+        and margin mechanics of "an F&O instrument" using `trade_as="option"`
+        on an arbitrary symbol, not a real contract) -- so this only fires once
+        a spec actually claims to be tradeable, i.e. `option_type` has been set
+        to a real side (`CE` or `PE` -- the only other values the field's own
+        `Literal` allows). At that point the underlying must be one this
+        platform can actually resolve into a listed contract.
+        """
+        if self.trade_as == "option" and self.option_type != "auto":
+            if self.symbol not in OPTION_UNDERLYINGS:
+                raise ValueError(
+                    f"{self.symbol} options are not supported; supported: "
+                    f"{', '.join(OPTION_UNDERLYINGS)}"
+                )
+        return self
+
     @property
     def is_future(self) -> bool:
         return self.trade_as == "future"
+
+    @property
+    def is_option(self) -> bool:
+        return self.trade_as == "option"
 
     @property
     def is_universe(self) -> bool:
@@ -460,13 +491,18 @@ class StrategySpec(Base):
         return self
 
     @model_validator(mode="after")
-    def _options_must_square_off(self):
-        if self.instrument.trade_as == "option" and not self.schedule.intraday:
-            if self.exit.max_bars_held is None and self.exit.condition is None:
-                raise ValueError(
-                    "a positional option strategy needs an explicit exit condition or "
-                    "max_bars_held, or it will be held into expiry"
-                )
+    def _options_long_only(self):
+        """Batch 1 is buying one call or one put, never selling (writing) one.
+
+        Selling an option is refused in words before a spec is ever built (see
+        `nlt.translate.options_words`); this is the backstop for anything that
+        reaches the model directly, e.g. a saved strategy edited by hand later.
+        A naked short option has unbounded loss -- the one thing this platform
+        refuses to let through silently.
+        """
+        if self.instrument.trade_as == "option" and self.instrument.option_type != "auto":
+            if self.direction != "long":
+                raise ValueError("selling (writing) an option is not supported -- only buying one")
         return self
 
     def indicator_ids(self) -> list[str]:

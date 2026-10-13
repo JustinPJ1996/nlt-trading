@@ -178,9 +178,24 @@ def test_the_model_is_never_asked_to_overrule_a_deliberate_refusal(sentence) -> 
 
 
 def test_the_ai_reader_applies_the_options_refusal_itself() -> None:
-    """Even called directly, past the rules-first gate, it never reads an option trade."""
+    """Even called directly, past the rules-first gate, it never invents a strike itself.
+
+    "25000 call" is a fixed strike, not yet supported (batch 1 only reads
+    at-the-money or "N strikes OTM/ITM") -- `options_words` refuses it before
+    the model is ever asked.
+    """
     fake = Scripted(GOOD)
     result = llm.parse_llm("Go long on the NIFTY 25000 call, bank 4% profit, SL 2%", transport=fake)
+    assert fake.calls == []
+    assert _fields(result) == {"instrument.strike_offset"}
+
+
+def test_the_ai_reader_applies_the_sell_option_refusal_itself() -> None:
+    """A sold option is refused the same way, never read as a backtestable trade."""
+    fake = Scripted(GOOD)
+    result = llm.parse_llm(
+        "Sell the NIFTY weekly ATM call, bank 50% of the premium, SL 2%", transport=fake
+    )
     assert fake.calls == []
     assert _fields(result) == {"instrument.trade_as"}
 
