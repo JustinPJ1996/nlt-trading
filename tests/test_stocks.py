@@ -248,3 +248,39 @@ def test_real_download_of_three_nse_stocks():
         assert str(df.index.tz) == "Asia/Kolkata"
         assert len(df) > 1000  # years of daily bars
     assert src.failures() == {}
+
+
+def test_a_one_stock_refresh_reads_yahoos_ticker_nested_columns(source, monkeypatch):
+    """Asked for one ticker with group_by="ticker", yfinance nests the columns
+    under it. Reading that as flat columns turned every stale single-stock
+    backtest into "no price history" (seen 2026-10-13)."""
+    import yfinance as yf
+
+    flat = _frame(dt.date.today(), rows=5).rename(columns=str.title)
+    flat["Adj Close"] = flat["Close"]
+    flat.index = flat.index.tz_localize(None)
+    nested = flat.copy()
+    nested.columns = pd.MultiIndex.from_product([["RELIANCE.NS"], flat.columns])
+    monkeypatch.setattr(yf, "download", lambda *a, **k: nested)
+
+    result = source.bars_many(["RELIANCE"])
+    assert source.failures() == {}
+    assert list(result["RELIANCE"].columns) == ["open", "high", "low", "close", "volume"]
+
+
+def test_a_failed_refresh_falls_back_to_saved_prices_and_says_so(source, monkeypatch):
+    old = _frame(dt.date.today() - dt.timedelta(days=20), rows=5)
+    source._cache_path("RELIANCE", "1d").parent.mkdir(parents=True, exist_ok=True)
+    old.to_parquet(source._cache_path("RELIANCE", "1d"))
+
+    def broken(symbols, interval):
+        for s in symbols:
+            source._failures[s] = "bar frame missing required columns"
+        return {}
+
+    monkeypatch.setattr(source, "_download_many", broken)
+    result = source.bars_many(["RELIANCE"])
+    assert len(result["RELIANCE"]) == 5
+    assert source.failures() == {}
+    (note,) = source.stale_notes().values()
+    assert "could not be refreshed" in note and f"{old.index[-1]:%d %b %Y}" in note

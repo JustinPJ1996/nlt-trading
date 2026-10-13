@@ -162,6 +162,47 @@ BEGIN
     SELECT RAISE(ABORT, 'paper_event is append-only');
 END;
 
+-- What the engine decided, on every pass, whether or not it became a trade --
+-- "signal_taken" (queued for the next candle's open) or "signal_skipped"
+-- (the entry rule fired but the engine did not act; `reason_code` says why:
+-- concurrency, capital, position_cap, expiry, boundary, weekday,
+-- no_entry_after, paused, slots). Append-only for the same reason as
+-- `paper_event`: the whole point of a decision log is that it cannot be
+-- quietly rewritten after the fact to make a feed row look right in
+-- hindsight.
+--
+-- `event_key` makes each decision idempotent exactly as `paper_event`'s does:
+-- the runner re-derives every decision on every pass, and only the first
+-- sighting is recorded.
+CREATE TABLE IF NOT EXISTS paper_decision (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER NOT NULL REFERENCES run(id),
+    observed_at     TEXT    NOT NULL,
+    symbol          TEXT    NOT NULL DEFAULT '',
+    bar_time        TEXT,
+    kind            TEXT    NOT NULL
+                    CHECK (kind IN ('signal_taken', 'signal_skipped')),
+    reason_code     TEXT    NOT NULL DEFAULT '',
+    detail_json     TEXT    NOT NULL DEFAULT '{}',
+    event_key       TEXT    NOT NULL,
+    UNIQUE (run_id, kind, event_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_decision_run ON paper_decision(run_id);
+
+CREATE TRIGGER IF NOT EXISTS paper_decision_no_update
+BEFORE UPDATE ON paper_decision
+BEGIN
+    SELECT RAISE(ABORT, 'paper_decision is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS paper_decision_no_delete
+BEFORE DELETE ON paper_decision
+BEGIN
+    SELECT RAISE(ABORT, 'paper_decision is append-only');
+END;
+
+
 -- The latest state of each paper run, overwritten on every pass: when it last
 -- updated, whether the feed is healthy, open positions and running P&L. The
 -- history lives in paper_event; this is only "where things stand right now".

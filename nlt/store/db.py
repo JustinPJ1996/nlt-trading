@@ -409,6 +409,54 @@ class Store:
         finally:
             conn.close()
 
+    def record_paper_decision(
+        self,
+        run_id: int,
+        kind: str,
+        event_key: str,
+        *,
+        observed_at: str | None = None,
+        symbol: str = "",
+        bar_time: str | None = None,
+        reason_code: str = "",
+        detail: dict | None = None,
+    ) -> bool:
+        """Records a decision the first time it is seen. Returns False if already recorded.
+
+        Mirrors `record_paper_event`: idempotent on `(run_id, kind, event_key)`,
+        and the table it writes to is append-only (enforced by triggers, not
+        just by this method behaving itself).
+        """
+        with self.tx() as conn:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO paper_decision (run_id, observed_at, symbol,
+                   bar_time, kind, reason_code, detail_json, event_key)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    run_id,
+                    observed_at or now(),
+                    symbol,
+                    bar_time,
+                    kind,
+                    reason_code,
+                    json.dumps(detail or {}, default=str),
+                    event_key,
+                ),
+            )
+            return cur.rowcount == 1
+
+    def paper_decisions(self, run_id: int) -> list[dict]:
+        conn = self._connect()
+        try:
+            return [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM paper_decision WHERE run_id = ? ORDER BY id", (run_id,)
+                )
+            ]
+        finally:
+            conn.close()
+
     def set_paper_status(
         self,
         run_id: int,

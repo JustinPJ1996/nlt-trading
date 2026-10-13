@@ -311,7 +311,13 @@ def test_a_feed_problem_pauses_and_says_so_without_guessing(store, error, health
     result = runner.step(store, run, fetch=broken, charge_fn=_zero, now=now)
     assert result.health == health
     assert store.paper_status(run["id"])["health"] == health
-    assert store.paper_events(run["id"]) == []
+    # Nothing about a trade, signal or decision is recorded -- the feed is
+    # down, so there is nothing to derive those from. The only thing written
+    # is the one `note` row marking the health change itself.
+    events = store.paper_events(run["id"])
+    assert [e for e in events if e["kind"] != "note"] == []
+    assert len(events) == 1
+    assert json.loads(events[0]["detail_json"])["health"] == health
 
 
 def test_the_paper_kill_switch_pauses_paper_runs(store):
@@ -319,7 +325,11 @@ def test_the_paper_kill_switch_pauses_paper_runs(store):
     run = _start(store, DAILY_SPEC, bars.index[300] - pd.Timedelta(minutes=1))
     store.engage_paper_kill_switch("test")
     _replay(store, run, bars.iloc[:320], "1d", from_index=300)
-    assert store.paper_events(run["id"]) == []
+    events = store.paper_events(run["id"])
+    assert [e for e in events if e["kind"] != "note"] == []
+    # One note for the whole replay, not one per pass: the health never
+    # changes again once it first becomes "paused".
+    assert len(events) == 1
     assert store.paper_status(run["id"])["health"] == "paused"
 
 

@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type OrderPosition, type OrderReading, type OrdersState, type SavedOrder } from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
+import { TradeTimeline } from "../components/TradeTimeline";
 
 const EXAMPLES = [
   "If Nifty spot goes below 22000, buy 1 lot Nifty Futures",
@@ -399,6 +400,7 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
 function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void }) {
   const [sure, setSure] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showTimeline, setShowTimeline] = useState(false);
 
   async function cancel() {
     setError(null);
@@ -436,14 +438,20 @@ function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void })
         </div>
       </details>
       {order.events.length > 0 && (
-        <ul className="log" style={{ marginTop: 12 }}>
-          {order.events.map((e, i) => (
-            <li key={i}>
-              <time>{e.when}</time>
-              <span>{e.text}</span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="log clickable" style={{ marginTop: 12 }} onClick={() => setShowTimeline(true)}>
+            {order.events.map((e, i) => (
+              <li key={i} className="clickable">
+                <time>{e.when}</time>
+                <span>{e.text}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="hint">Click the activity above for this order's step-by-step timeline.</p>
+        </>
+      )}
+      {showTimeline && (
+        <TradeTimeline target={{ kind: "order", orderId: order.id }} onClose={() => setShowTimeline(false)} />
       )}
       {order.can_cancel && (
         <div className="btn-row" style={{ marginTop: 16, justifyContent: "flex-end" }}>

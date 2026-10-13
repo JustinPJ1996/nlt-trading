@@ -56,6 +56,7 @@ class StockSource:
         # default; a caller studying the raw feed can turn it off deliberately.
         self.clean_artefacts = clean_artefacts
         self._quality_notes: dict[str, list[str]] = {}
+        self._stale_notes: dict[str, str] = {}
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         # Symbol -> reason it could not be loaded, from the most recent
         # `bars_many`/`panel` call. Never raised past that call: a basket
@@ -158,10 +159,19 @@ class StockSource:
         out: dict[str, pd.DataFrame] = {}
         for symbol, ticker in zip(symbols, tickers, strict=True):
             try:
-                if len(tickers) == 1:
-                    frame = raw
-                else:
-                    frame = raw[ticker]
+                frame = raw
+                if isinstance(frame.columns, pd.MultiIndex):
+                    # With group_by="ticker" yfinance nests columns under the
+                    # ticker -- for a one-ticker list too, in current versions.
+                    if ticker in frame.columns.get_level_values(0):
+                        frame = frame[ticker]
+                    elif len(tickers) == 1:
+                        frame = frame.copy()
+                        frame.columns = frame.columns.get_level_values(-1)
+                    else:
+                        raise RuntimeError(f"no data returned for {symbol} ({ticker})")
+                elif len(tickers) != 1:
+                    raise RuntimeError(f"no data returned for {symbol} ({ticker})")
                 frame = frame.dropna(how="all")
                 if frame.empty:
                     raise RuntimeError(f"no data returned for {symbol} ({ticker})")
@@ -223,6 +233,7 @@ class StockSource:
         symbols = [s.strip().upper() for s in symbols]
 
         cached: dict[str, pd.DataFrame] = {}
+        stale_notes = self._stale_notes = {}
         to_fetch: list[str] = []
         for symbol in symbols:
             path = self._cache_path(symbol, interval)
@@ -254,6 +265,25 @@ class StockSource:
             for symbol, df in fresh.items():
                 self._cache_path(symbol, interval).parent.mkdir(parents=True, exist_ok=True)
                 df.to_parquet(self._cache_path(symbol, interval))
+            # A symbol the refresh could not fill still has its saved prices.
+            # Use them, as `_load_cached` does, and say how old they are --
+            # silently dropping it turned every stock backtest into "no price
+            # history" the first stale morning Yahoo changed its reply.
+            for symbol in to_fetch:
+                if symbol in fresh:
+                    continue
+                path = self._cache_path(symbol, interval)
+                if not path.exists():
+                    continue
+                df = pd.read_parquet(path)
+                if df.empty:
+                    continue
+                fresh[symbol] = df
+                self._failures.pop(symbol, None)
+                stale_notes[symbol] = (
+                    f"{symbol}: prices could not be refreshed just now, so saved prices "
+                    f"up to {df.index[-1]:%d %b %Y} were used."
+                )
             cached.update(fresh)
 
         result: dict[str, pd.DataFrame] = {}
@@ -310,6 +340,11 @@ class StockSource:
         to find out and say so.
         """
         return {k: list(v) for k, v in self._quality_notes.items()}
+
+    def stale_notes(self) -> dict[str, str]:
+        """Symbols the last bulk call served from saved prices because the
+        refresh failed, with a sentence saying how old those prices are."""
+        return dict(self._stale_notes)
 
     def failures(self) -> dict[str, str]:
         """Symbols that could not be loaded on the most recent bulk call, and why."""

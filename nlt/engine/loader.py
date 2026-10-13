@@ -116,6 +116,8 @@ def load_for_spec(
     # the 2020 floor removes anyway, which buried the two that actually matter
     # (survivorship, and signals dropped for want of capital). A warning nobody
     # reads is worse than none: it trains the reader to skip the whole section.
+    notes.extend(source.stale_notes().values())
+
     cleaned = source.quality_notes()
     if cleaned:
         affected = sorted(cleaned)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, whenLoggedOut, type Options, type Result } from "./api";
 import { Working } from "./components/Callout";
+import { Activity } from "./pages/Activity";
 import { Build, emptyBuild, type BuildState } from "./pages/Build";
 import { Login } from "./pages/Login";
 import { Orders } from "./pages/Orders";
@@ -15,6 +16,7 @@ const PAGES = [
   { id: "strategies", label: "My strategies" },
   { id: "paper", label: "Paper trading" },
   { id: "orders", label: "One-off orders" },
+  { id: "activity", label: "Activity" },
   { id: "safety", label: "Safety" },
 ] as const;
 
@@ -135,6 +137,7 @@ export function App() {
         )}
         {page === "paper" && <Paper onBuild={() => go("strategies")} />}
         {page === "orders" && <Orders />}
+        {page === "activity" && <Activity />}
         {page === "safety" && <Safety onChange={(s) => setKilled(s.live || s.paper)} />}
       </main>
     </>

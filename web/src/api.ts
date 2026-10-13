@@ -205,7 +205,7 @@ export type PaperRun = {
     pnl: number | null;
     pnl_text: string;
   }[];
-  events: { when: string; text: string; drift: boolean }[];
+  events: { when: string; text: string; drift: boolean; trade_key: string | null }[];
 };
 
 export type PaperState = {
@@ -273,6 +273,23 @@ export type OrdersState = {
   orders: SavedOrder[];
 };
 
+// One merged, newest-first row across every paper run and every one-off
+// order -- what `/api/activity` returns.
+export type ActivityItem = {
+  time: string;
+  source: "strategy" | "order";
+  source_name: string;
+  source_id: number;
+  kind: string;
+  text: string;
+  skip: boolean;
+  trade_key: string | null;
+};
+
+export type ActivityState = { items: ActivityItem[] };
+
+export type ActivityFilter = { source_id?: number; skips_only?: boolean; limit?: number };
+
 // -------------------------------------------------------------------- calls
 
 export const api = {
@@ -323,4 +340,15 @@ export const api = {
   safety: () => call<SafetyState>("/api/safety"),
   killSwitch: (which: "live" | "paper", action: "engage" | "release", confirm = false) =>
     call<SafetyState>(`/api/safety/${which}/${action}`, { confirm }),
+  activity: (filter: ActivityFilter = {}) => {
+    const q = new URLSearchParams();
+    if (filter.source_id !== undefined) q.set("source_id", String(filter.source_id));
+    if (filter.skips_only) q.set("skips_only", "1");
+    if (filter.limit !== undefined) q.set("limit", String(filter.limit));
+    const qs = q.toString();
+    return call<ActivityState>(`/api/activity${qs ? `?${qs}` : ""}`);
+  },
+  paperTrade: (runId: number, tradeKey: string) =>
+    call<{ steps: string[] }>(`/api/paper/${runId}/trade/${encodeURIComponent(tradeKey)}`),
+  orderTimeline: (orderId: number) => call<{ steps: string[] }>(`/api/orders/${orderId}/timeline`),
 };

@@ -346,6 +346,20 @@ def describe_event(e: dict, card_id: int | None = None, pressed: frozenset = fro
     return d.get("note", "")
 
 
+def order_timeline(
+    events: list[dict], order_id: int, pressed: frozenset = frozenset()
+) -> list[str]:
+    """One order's history, in words, from its recorded `one_off_event` rows alone.
+
+    `events` are that order's own rows (and any 'exited' row belonging to a
+    different order that closed a position this order opened), already in the
+    order they were recorded. Text comes entirely from `describe_event`,
+    never written fresh here, so the activity feed and this timeline can
+    never disagree about what a given row means.
+    """
+    return [describe_event(e, order_id, pressed) for e in events if e["kind"] != "finished"]
+
+
 def _status(row: dict, book, events: list[dict]) -> tuple[str, str]:
     oid = row["id"]
     if row["cancelled_at"]:

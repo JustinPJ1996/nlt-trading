@@ -59,7 +59,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -186,6 +186,41 @@ class Trade:
     bars_held: int
     entry_reason: str
     symbol: str = ""
+    # The closed candle whose signal caused this entry -- one bar before
+    # `entry_time`, which is the bar the fill happened on. None only for a
+    # Trade built by hand (e.g. in a test) that never went through the engine.
+    signal_time: pd.Timestamp | None = None
+    # Stop/target as set at entry (a trailing stop ratchets afterwards; this
+    # is always the original fixed level, or None if the rule has none).
+    stop_level: float | None = None
+    target_level: float | None = None
+    # The price before slippage was applied, for each side of the trade.
+    raw_entry_price: float | None = None
+    raw_exit_price: float | None = None
+    # True when the exit candle touched both the stop and the target -- OHLC
+    # cannot show which came first, so the stop is always assumed to have hit
+    # first (see the module docstring); this flag says that assumption was
+    # actually exercised on this trade, not merely available.
+    both_hit: bool = False
+
+
+@dataclass(frozen=True)
+class Decision:
+    """One thing the engine decided on one bar, whether or not it became a trade.
+
+    `kind` is "signal_taken" (the entry rule was true and the engine queued a
+    fill for the next bar's open) or "signal_skipped" (the entry rule was true
+    but the engine did not act on it -- `reason_code` says why). Nothing is
+    recorded for a bar where the entry rule was simply false: a "decision" is
+    the engine choosing between taking and not taking a signal, not a log of
+    every bar.
+    """
+
+    time: pd.Timestamp
+    symbol: str
+    kind: str
+    reason_code: str
+    detail: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -196,6 +231,7 @@ class BacktestResult:
     metrics: dict
     features: pd.DataFrame
     warnings: list[str]
+    decisions: list[Decision] = field(default_factory=list)
 
 
 @dataclass
@@ -210,6 +246,11 @@ class _OpenPosition:
     trail_best: float  # best price seen since entry; only moves favourably
     bars_held: int = 0
     pending_condition_exit: bool = False
+    # The closed bar whose signal led to this entry; None only when a position
+    # is opened without having gone through the scheduling step below (never
+    # happens today, but keeps the field honest about when it can be absent).
+    signal_time: pd.Timestamp | None = None
+    raw_entry_price: float | None = None  # bar.open, before slippage
 
 
 # Below this, index options stop being a sensible instrument rather than merely
@@ -232,8 +273,17 @@ def run_backtest(
     trade_from: pd.Timestamp | None = None,
     final_session_in_progress: bool = False,
     listed_expiries: Iterable[dt.date] = (),
+    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
 ) -> BacktestResult:
     """Run `spec` bar by bar over `bars`.
+
+    `blocked_windows` pauses new entries during the given `[start, end)` wall-
+    clock windows: a signal whose bar falls inside one is skipped (reason
+    "paused"), exactly like any other skip. It does not touch exits -- a stop,
+    a target, square-off and expiry all still fire normally for a position
+    already open, because pausing the strategy is a decision about new risk,
+    not about abandoning risk already taken on. Default empty means identical
+    behaviour to not having the feature at all.
 
     `lot_size` is optional and should almost always be left unset: it is
     derived from `spec.instrument.trade_as` (see `_default_lot_size`) so that
@@ -381,11 +431,14 @@ def run_backtest(
     margin_rate = _margin_rate(spec)
     entry_reason = _describe(spec.entry)
 
+    symbol = spec.instrument.symbol
     n = len(bars)
     equity = np.empty(n, dtype="float64")
     trades: list[Trade] = []
+    decisions: list[Decision] = []
     open_positions: list[_OpenPosition] = []
     pending_entry = False
+    pending_entry_ts: pd.Timestamp | None = None
     realized_pnl = 0.0
     stop_beat_target_count = 0
     risk_fallback_count = 0
@@ -403,6 +456,8 @@ def run_backtest(
         # --- 1. fill an entry scheduled from the previous bar's signal -----
         if pending_entry:
             pending_entry = False
+            signal_ts = pending_entry_ts
+            pending_entry_ts = None
             if len(open_positions) < max_concurrent:
                 capital_total = capital + realized_pnl
                 # Capital already tied up in other open positions is not spare
@@ -421,6 +476,7 @@ def run_backtest(
                     lot_size,
                     capital_total,
                     capital_spare,
+                    signal_time=signal_ts,
                 )
                 if pos is not None:
                     open_positions.append(pos)
@@ -430,8 +486,12 @@ def run_backtest(
                         affordability_capped_count += 1
                 else:
                     affordability_skipped_count += 1
+                    pct = spec.risk.max_position_pct
+                    reason_code = "position_cap" if pct is not None else "capital"
+                    decisions.append(Decision(signal_ts, symbol, "signal_skipped", reason_code, {}))
             else:
                 dropped_for_concurrency += 1
+                decisions.append(Decision(signal_ts, symbol, "signal_skipped", "concurrency", {}))
 
         # --- 2. check exits, in the mandated precedence order --------------
         still_open: list[_OpenPosition] = []
@@ -481,6 +541,12 @@ def run_backtest(
                     bars_held=pos.bars_held + 1,
                     entry_reason=entry_reason,
                     symbol=spec.instrument.symbol,
+                    signal_time=pos.signal_time,
+                    stop_level=pos.stop_level,
+                    target_level=pos.target_level,
+                    raw_entry_price=pos.raw_entry_price,
+                    raw_exit_price=raw_price,
+                    both_hit=bool(ambiguous),
                 )
             )
         open_positions = still_open
@@ -504,13 +570,36 @@ def run_backtest(
         # trade on a 15:00 cutoff, which is the "at" half of "at or after" being
         # silently ignored.
         is_intraday_spec = is_intraday_tf and spec.schedule.intraday
+        entry_true = bool(entry_signal.iloc[i])
+        concurrency_ok = len(open_positions) < max_concurrent
+        weekday_ok = ts.weekday() in spec.schedule.weekdays
+        paused = _in_blocked_window(ts, blocked_windows)
+        no_entry_after_ok = not is_intraday_spec or ts.time() < spec.schedule.no_entry_after
+        trade_from_ok = trade_from is None or ts >= trade_from
         can_enter = (
-            len(open_positions) < max_concurrent
-            and bool(entry_signal.iloc[i])
-            and ts.weekday() in spec.schedule.weekdays
-            and (not is_intraday_spec or ts.time() < spec.schedule.no_entry_after)
-            and (trade_from is None or ts >= trade_from)
+            concurrency_ok
+            and entry_true
+            and weekday_ok
+            and not paused
+            and no_entry_after_ok
+            and trade_from_ok
         )
+        # A decision is only meaningful once the signal could actually have
+        # mattered: a bar before `trade_from` is history the engine is only
+        # warming indicators on, never a choice it made (see `trade_from`'s
+        # own docstring above).
+        emit_decision = entry_true and trade_from_ok
+        if emit_decision:
+            if not concurrency_ok:
+                decisions.append(
+                    Decision(ts, symbol, "signal_skipped", "concurrency_at_signal", {})
+                )
+            elif not weekday_ok:
+                decisions.append(Decision(ts, symbol, "signal_skipped", "weekday", {}))
+            elif paused:
+                decisions.append(Decision(ts, symbol, "signal_skipped", "paused", {}))
+            elif not no_entry_after_ok:
+                decisions.append(Decision(ts, symbol, "signal_skipped", "no_entry_after", {}))
         # A signal on the last bar of a session has no valid intraday fill: the
         # only bar left to fill it on is tomorrow morning's open, 14+ hours away
         # across a gap the user never asked to hold through. Decision: SKIP the
@@ -528,10 +617,25 @@ def run_backtest(
         # entry is skipped rather than filled on levels from another contract.
         if can_enter and bool(expiry_close[i]):
             expiry_entry_skipped_count += 1
+            if emit_decision:
+                decisions.append(Decision(ts, symbol, "signal_skipped", "expiry", {}))
         elif can_enter and is_intraday_spec and bool(last_bar_of_session[i]):
             boundary_entry_skipped_count += 1
-        elif can_enter and i + 1 < n:
-            pending_entry = True
+            if emit_decision:
+                decisions.append(Decision(ts, symbol, "signal_skipped", "boundary", {}))
+        elif can_enter:
+            # Emitted even on the very last bar of `bars`, where there is no
+            # further bar in THIS run to fill on (`i + 1 >= n`, handled below):
+            # paper trading calls this engine again next pass with one more
+            # candle appended, and that candle is the fill this decision
+            # promises. A real backtest simply has nothing to show for a
+            # "queued" entry past the end of its data, which is fine --
+            # nobody reads a finished backtest's decisions as a live feed.
+            if emit_decision:
+                decisions.append(Decision(ts, symbol, "signal_taken", "queued", {}))
+            if i + 1 < n:
+                pending_entry = True
+                pending_entry_ts = ts
 
         if exit_signal is not None:
             for pos in open_positions:
@@ -576,6 +680,12 @@ def run_backtest(
                     bars_held=pos.bars_held + 1,
                     entry_reason=entry_reason,
                     symbol=spec.instrument.symbol,
+                    signal_time=pos.signal_time,
+                    stop_level=pos.stop_level,
+                    target_level=pos.target_level,
+                    raw_entry_price=pos.raw_entry_price,
+                    raw_exit_price=bar.close,
+                    both_hit=False,
                 )
             )
         equity[-1] = capital + realized_pnl
@@ -651,10 +761,26 @@ def run_backtest(
         metrics=metrics,
         features=features,
         warnings=warnings,
+        decisions=decisions,
     )
 
 
 # --------------------------------------------------------------- fills & pnl
+
+
+def _in_blocked_window(
+    ts: pd.Timestamp, blocked_windows: Iterable[tuple[dt.datetime, dt.datetime]]
+) -> bool:
+    """Is `ts` inside one of `blocked_windows`'s `[start, end)` ranges?
+
+    `ts` comes from `bars.index`, which is timezone-aware; a window compared
+    against it must be too (a naive datetime compared to an aware one raises),
+    so callers pass windows already in `bars.index`'s timezone.
+    """
+    for start, end in blocked_windows:
+        if start <= ts < end:
+            return True
+    return False
 
 
 def _apply_slippage(price: float, side: str, slippage_pct: float) -> float:
@@ -837,6 +963,7 @@ def _open_position(
     lot_size: int,
     capital_total: float,
     capital_spare: float,
+    signal_time: pd.Timestamp | None = None,
 ) -> tuple[_OpenPosition | None, bool, bool]:
     """Returns (position or None, used_risk_fallback, size_was_capped).
 
@@ -899,6 +1026,8 @@ def _open_position(
         target_level=target_level,
         trailing_pct=trailing_pct,
         trail_best=entry_price,
+        signal_time=signal_time,
+        raw_entry_price=bar.open,
     )
     return pos, used_fallback, capped
 
