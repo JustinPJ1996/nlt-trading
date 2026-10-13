@@ -1,0 +1,693 @@
+"""The backtest loop for buying one call or one put (Phase 2, batch 1).
+
+The signal is judged on the **index's** candles, exactly as `run_backtest`
+judges any other strategy; the trade happens in an **option contract** chosen
+at the moment of the signal. Everything `run_backtest` refuses to do, this
+refuses too -- it is a separate loop rather than a branch inside that one only
+because every price after the signal comes from a different series (the
+chosen contract's), and threading that through the stock/futures loop would
+put the rules every existing result depends on at risk.
+
+The rules, each one Justin's or the engine's own (see `HANDOFF.md`):
+
+  * **The contract is chosen at the signal, from the signal candle's close.**
+    `OptionExecution.resolve` picks the listed strike nearest the index's close
+    on that closed candle -- nothing later is visible to it.
+  * **Fill at the next candle's open, on the option**, plus the run's
+    slippage. If the chosen option did not trade in that candle, the signal is
+    **skipped** (`option_not_traded`) -- never filled on another strike, never
+    filled at a price that did not trade.
+  * **Stop and target are percentages of the option's price at the signal**:
+    the last traded price of that contract up to the end of the signal
+    candle. The levels belong to the setup, the same rule as every other
+    strategy, applied to the premium. If the option had not traded at all that
+    day up to the signal, there is no price to measure from, and the signal
+    is skipped (`no_option_price`).
+  * **Stop first** when one candle could hit both; **a gap past the stop
+    fills at the open** -- both unchanged.
+  * **A candle in which the option did not trade cannot fill an exit.** A
+    stop, target or condition exit waits for the next candle with a real
+    trade, where the gap rule above then applies.
+  * **Square-off fills at the 15:15 price itself** -- the opening price of the
+    square-off candle (Justin, 2026-10-13), not its close. If the option did
+    not trade in that candle, the **last traded price** is used and the trade
+    is flagged `exit_untraded` (Justin's choice over the worse of last trade
+    and bid).
+  * **Never held to expiry.** A position still open on its contract's expiry
+    day is closed at the square-off time that day, priced the same way. So an
+    option is never exercised or settled, and the STT charged on an exercised
+    in-the-money option can never arise (`settled_at_expiry` is always False).
+  * **No entry after the contract's last close time.** A signal that would
+    fill in a contract at or after its expiry-day square-off is skipped.
+  * Lot size is **today's** lot (`nlt.data.instruments`), not the data's.
+
+Only long (bought) single options reach here: the spec model refuses a sold
+option, and a multi-leg trade cannot be written as a spec yet.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import math
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+
+from nlt.costs.slippage import ZERO, Slippage
+from nlt.data.session import (
+    NSE_EQUITY,
+    is_last_bar_of_session,
+    is_partial_last_bar,
+)
+from nlt.engine.backtest import (
+    BARS_PER_YEAR,
+    FNO_MINIMUM_CAPITAL,
+    NO_CHARGES_NOTE,
+    BacktestResult,
+    Decision,
+    Trade,
+    _assert_equity_floor,
+    _assert_no_overnight_carry,
+    _bars_per_session_safe,
+    _default_lot_size,
+    _describe,
+    _in_blocked_window,
+    _size_position,
+    _warn_on_cross_session_lookback,
+    _zero_charges,
+)
+from nlt.engine.conditions import evaluate
+from nlt.engine.features import build_features
+from nlt.engine.metrics import compute_metrics
+from nlt.options.contracts import Contract, format_strike
+from nlt.options.execution import OptionExecution
+from nlt.spec.models import StrategySpec
+
+_DEFAULT_INTRADAY_BARS_PER_YEAR = 252 * 75
+
+
+@dataclass
+class _OptionPosition:
+    contract: Contract
+    contract_why: str
+    entry_time: pd.Timestamp
+    entry_price: float
+    raw_entry_price: float
+    quantity: int
+    basis: float  # the option's price at the signal; stop/target measure from it
+    stop_level: float | None
+    target_level: float | None
+    trailing_pct: float | None
+    trail_best: float
+    signal_time: pd.Timestamp
+    last_price: float  # last traded price seen, for valuing it on untraded candles
+    bars_held: int = 0
+    pending_condition_exit: bool = False
+
+
+@dataclass
+class _Counts:
+    not_traded: int = 0
+    no_price: int = 0
+    no_contract: dict[str, int] = field(default_factory=dict)
+    capital: int = 0
+    concurrency: int = 0
+    boundary: int = 0
+    expiry_entry: int = 0
+    expiry_exit: int = 0
+    untraded_exit: int = 0
+    stop_beat_target: int = 0
+    risk_fallback: int = 0
+    capped: int = 0
+
+
+def run_option_backtest(
+    spec: StrategySpec,
+    bars: pd.DataFrame,
+    execution: OptionExecution,
+    *,
+    capital: float = 100_000.0,
+    lot_size: int | None = None,
+    charge_fn=None,
+    slippage: Slippage = ZERO,
+    drop_partial_last_bar: bool = True,
+    trade_from: pd.Timestamp | None = None,
+    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+) -> BacktestResult:
+    """Run a bought-option `spec`: signals on the index `bars`, trades via `execution`.
+
+    `bars` are the underlying index's candles at the spec's timeframe;
+    `execution` supplies the chosen contracts' own prices. The other
+    arguments mean what they mean for `run_backtest`.
+    """
+    if not spec.instrument.is_option:
+        raise ValueError("run_option_backtest only runs option strategies")
+    if spec.direction != "long":
+        raise ValueError("only bought options can be backtested yet")
+    if spec.exit.stop_atr_mult is not None:
+        # An ATR stop is measured in index points; an option's price does not
+        # move point for point with the index, so the level would mean nothing.
+        raise ValueError("an ATR-based stop cannot be applied to an option's price")
+
+    warnings: list[str] = []
+    if lot_size is None:
+        lot_size = _default_lot_size(spec)
+    if charge_fn is None:
+        charge_fn = _zero_charges
+        warnings.append(NO_CHARGES_NOTE)
+    warnings.append(
+        f"Lot size: {lot_size} units, today's lot for {spec.instrument.symbol}, used for "
+        "every year tested even where the exchange's lot was different then."
+    )
+    if capital < FNO_MINIMUM_CAPITAL:
+        warnings.append(
+            f"OPTIONS ON A SMALL ACCOUNT: this was tested with Rs {capital:,.0f}. Options are "
+            f"not really tradeable below about Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one lot is "
+            f"{lot_size} units and indivisible, so a smaller account must either skip most "
+            "trades or bet far too much of itself on a single contract. Treat these results "
+            "as theoretical."
+        )
+
+    timeframe = spec.instrument.timeframe
+    is_intraday_tf = timeframe != "1d"
+    is_intraday_spec = is_intraday_tf and spec.schedule.intraday
+    session = NSE_EQUITY  # NIFTY, BANKNIFTY and SENSEX all trade 09:15-15:30
+    square_off = spec.schedule.square_off
+
+    if drop_partial_last_bar and is_intraday_tf and len(bars) > 0:
+        try:
+            partial = is_partial_last_bar(bars, session, timeframe)
+        except ValueError:
+            partial = False
+        if partial:
+            bars = bars.iloc[:-1]
+
+    features = build_features(spec, bars)
+    entry_signal = evaluate(spec.entry, features)
+    exit_signal = (
+        evaluate(spec.exit.condition, features) if spec.exit.condition is not None else None
+    )
+
+    session_bar_count = _bars_per_session_safe(session, timeframe)
+    if is_intraday_tf and spec.indicators and session_bar_count:
+        _warn_on_cross_session_lookback(spec, session_bar_count, warnings)
+
+    if is_intraday_tf and len(bars) > 0:
+        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+    else:
+        last_bar_of_session = np.zeros(len(bars), dtype=bool)
+
+    entry_reason = _describe(spec.entry)
+    max_concurrent = spec.risk.max_concurrent_positions
+    counts = _Counts()
+
+    n = len(bars)
+    equity = np.empty(n, dtype="float64")
+    trades: list[Trade] = []
+    decisions: list[Decision] = []
+    open_positions: list[_OptionPosition] = []
+    pending: tuple[pd.Timestamp, Contract, str] | None = None
+    realized_pnl = 0.0
+
+    def close_position(pos, ts, reason, raw_price, ambiguous=False, untraded=False):
+        nonlocal realized_pnl
+        exit_price = slippage.apply(raw_price, "sell")
+        charges = charge_fn(pos.entry_price, pos.quantity, "buy") + charge_fn(
+            exit_price, pos.quantity, "sell"
+        )
+        gross = (exit_price - pos.entry_price) * pos.quantity
+        net = gross - charges
+        realized_pnl += net
+        if is_intraday_spec:
+            _assert_no_overnight_carry(pos.entry_time, ts, session)
+        if ts.date() > pos.contract.expiry:
+            raise RuntimeError(
+                f"an option position in {pos.contract.tradingsymbol} was held past its "
+                f"expiry ({pos.contract.expiry}) to {ts}"
+            )
+        trades.append(
+            Trade(
+                entry_time=pos.entry_time,
+                entry_price=pos.entry_price,
+                exit_time=ts,
+                exit_price=exit_price,
+                direction="long",
+                quantity=pos.quantity,
+                gross_pnl=gross,
+                charges=charges,
+                net_pnl=net,
+                exit_reason=reason,
+                bars_held=pos.bars_held + 1,
+                entry_reason=entry_reason,
+                symbol=pos.contract.tradingsymbol,
+                signal_time=pos.signal_time,
+                stop_level=pos.stop_level,
+                target_level=pos.target_level,
+                raw_entry_price=pos.raw_entry_price,
+                raw_exit_price=raw_price,
+                both_hit=bool(ambiguous),
+                contract_why=pos.contract_why,
+                exit_untraded=untraded,
+            )
+        )
+
+    for i in range(n):
+        ts = bars.index[i]
+
+        # --- 1. fill the entry queued by the previous candle's signal ---------
+        if pending is not None:
+            signal_ts, contract, why = pending
+            pending = None
+            label = _contract_label(contract)
+            option_bar = execution.bar(contract, ts)
+            basis = execution.price_at_signal(contract, signal_ts)
+            if len(open_positions) >= max_concurrent:
+                counts.concurrency += 1
+                decisions.append(
+                    Decision(signal_ts, contract.tradingsymbol, "signal_skipped", "concurrency", {})
+                )
+            elif option_bar is None or not bool(option_bar["traded"]):
+                counts.not_traded += 1
+                decisions.append(
+                    Decision(
+                        signal_ts,
+                        contract.tradingsymbol,
+                        "signal_skipped",
+                        "option_not_traded",
+                        {
+                            "why": why,
+                            "message": f"{label} did not trade in the {ts:%d %b %Y %H:%M} "
+                            "candle, so this signal was skipped -- never another strike.",
+                        },
+                    )
+                )
+            elif basis is None:
+                counts.no_price += 1
+                decisions.append(
+                    Decision(
+                        signal_ts,
+                        contract.tradingsymbol,
+                        "signal_skipped",
+                        "no_option_price",
+                        {
+                            "why": why,
+                            "message": f"{label} had not traded that day by the signal, so "
+                            "there was no price to measure the stop and target from; the "
+                            "signal was skipped.",
+                        },
+                    )
+                )
+            else:
+                pos, used_fallback, capped = _open(
+                    spec,
+                    contract,
+                    why,
+                    ts,
+                    option_bar,
+                    basis,
+                    signal_ts,
+                    slippage,
+                    lot_size,
+                    capital + realized_pnl,
+                    capital
+                    + realized_pnl
+                    - sum(p.entry_price * p.quantity for p in open_positions),
+                )
+                if pos is None:
+                    counts.capital += 1
+                    reason = "position_cap" if spec.risk.max_position_pct is not None else "capital"
+                    decisions.append(
+                        Decision(signal_ts, contract.tradingsymbol, "signal_skipped", reason, {})
+                    )
+                else:
+                    open_positions.append(pos)
+                    counts.risk_fallback += int(used_fallback)
+                    counts.capped += int(capped)
+
+        # --- 2. exits ---------------------------------------------------------
+        still_open: list[_OptionPosition] = []
+        for pos in open_positions:
+            outcome = _check_exit(
+                pos,
+                execution,
+                ts,
+                spec,
+                is_intraday_tf,
+                is_intraday_spec,
+                bool(last_bar_of_session[i]),
+                square_off,
+            )
+            if outcome is None:
+                pos.bars_held += 1
+                still_open.append(pos)
+                continue
+            reason, raw_price, ambiguous, untraded = outcome
+            if reason == "expiry":
+                counts.expiry_exit += 1
+            if ambiguous:
+                counts.stop_beat_target += 1
+            if untraded:
+                counts.untraded_exit += 1
+            close_position(pos, ts, reason, raw_price, ambiguous, untraded)
+        open_positions = still_open
+
+        # --- 3. mark to market at each option's last traded price ------------
+        unrealized = sum((p.last_price - p.entry_price) * p.quantity for p in open_positions)
+        equity[i] = capital + realized_pnl + unrealized
+        _assert_equity_floor(equity[i], ts, "long")
+
+        # --- 4. this closed candle's signal queues a fill for the next one ----
+        entry_true = bool(entry_signal.iloc[i])
+        trade_from_ok = trade_from is None or ts >= trade_from
+        if entry_true and trade_from_ok:
+            skip = None
+            if len(open_positions) >= max_concurrent:
+                skip = "concurrency_at_signal"
+            elif ts.weekday() not in spec.schedule.weekdays:
+                skip = "weekday"
+            elif _in_blocked_window(ts, blocked_windows):
+                skip = "paused"
+            elif is_intraday_spec and ts.time() >= spec.schedule.no_entry_after:
+                skip = "no_entry_after"
+            elif is_intraday_spec and bool(last_bar_of_session[i]):
+                counts.boundary += 1
+                skip = "boundary"
+            elif i + 1 >= n:
+                # Nothing left in this run to fill on; paper trading's next pass
+                # will have the candle this promises.
+                decisions.append(Decision(ts, spec.instrument.symbol, "signal_taken", "queued", {}))
+            if skip is not None:
+                decisions.append(Decision(ts, spec.instrument.symbol, "signal_skipped", skip, {}))
+            elif i + 1 < n:
+                resolution = execution.resolve(ts.to_pydatetime(), float(bars["close"].iloc[i]))
+                contract = resolution.contract
+                fill_ts = bars.index[i + 1]
+                if contract is None:
+                    code = resolution.reason_code or "no_contract"
+                    counts.no_contract[code] = counts.no_contract.get(code, 0) + 1
+                    decisions.append(
+                        Decision(
+                            ts,
+                            spec.instrument.symbol,
+                            "signal_skipped",
+                            code,
+                            {"why": resolution.why, "message": resolution.why},
+                        )
+                    )
+                elif _past_last_close(contract, fill_ts, timeframe, square_off):
+                    counts.expiry_entry += 1
+                    decisions.append(
+                        Decision(
+                            ts,
+                            contract.tradingsymbol,
+                            "signal_skipped",
+                            "expiry",
+                            {
+                                "why": resolution.why,
+                                "message": f"{_contract_label(contract)} expires at "
+                                f"{square_off:%H:%M} that day, before this signal could be "
+                                "filled, so it was skipped.",
+                            },
+                        )
+                    )
+                else:
+                    decisions.append(
+                        Decision(
+                            ts,
+                            contract.tradingsymbol,
+                            "signal_taken",
+                            "queued",
+                            {"why": resolution.why, "contract": contract.tradingsymbol},
+                        )
+                    )
+                    pending = (ts, contract, resolution.why)
+
+        if exit_signal is not None and bool(exit_signal.iloc[i]):
+            for pos in open_positions:
+                pos.pending_condition_exit = True
+
+    # --- 5. anything still open at the end of the data ----------------------
+    if open_positions:
+        ts = bars.index[-1]
+        for pos in open_positions:
+            close_position(pos, ts, "end_of_data", pos.last_price)
+        equity[-1] = capital + realized_pnl
+        _assert_equity_floor(equity[-1], ts, "long")
+
+    warnings.extend(_count_warnings(counts, square_off, spec))
+
+    equity_series = pd.Series(equity, index=bars.index, name="equity")
+    bars_per_year = BARS_PER_YEAR.get(timeframe, _DEFAULT_INTRADAY_BARS_PER_YEAR)
+    metrics = compute_metrics(trades, equity_series, capital, bars_per_year)
+    return BacktestResult(
+        spec=spec,
+        trades=trades,
+        equity=equity_series,
+        metrics=metrics,
+        features=features,
+        warnings=warnings,
+        decisions=decisions,
+    )
+
+
+def _contract_label(contract: Contract) -> str:
+    return f"{contract.underlying} {format_strike(contract.strike)} {contract.option_type}"
+
+
+def _past_last_close(
+    contract: Contract, fill_ts: pd.Timestamp, timeframe: str, square_off: dt.time
+) -> bool:
+    """Would a fill at `fill_ts` be at or after the contract's final close time?
+
+    On daily candles the fill is the day's open, before the expiry-day
+    square-off, so only a day after expiry is too late.
+    """
+    day = fill_ts.date()
+    if day > contract.expiry:
+        return True
+    if timeframe == "1d":
+        return False
+    return day == contract.expiry and fill_ts.time() >= square_off
+
+
+def _open(
+    spec: StrategySpec,
+    contract: Contract,
+    why: str,
+    ts: pd.Timestamp,
+    option_bar: pd.Series,
+    basis: float,
+    signal_ts: pd.Timestamp,
+    slippage: Slippage,
+    lot_size: int,
+    capital_total: float,
+    capital_spare: float,
+) -> tuple[_OptionPosition | None, bool, bool]:
+    raw = float(option_bar["open"])
+    entry_price = slippage.apply(raw, "buy")
+
+    stop_level = None
+    stop_distance = None
+    if spec.exit.stop_pct is not None:
+        stop_distance = basis * spec.exit.stop_pct / 100.0
+        stop_level = entry_price - stop_distance
+    target_level = None
+    if spec.exit.target_pct is not None:
+        target_level = entry_price + basis * spec.exit.target_pct / 100.0
+    trailing_pct = spec.exit.trailing_stop_pct
+    sizing_distance = stop_distance
+    if sizing_distance is None and trailing_pct is not None:
+        sizing_distance = entry_price * trailing_pct / 100.0
+
+    quantity, used_fallback = _size_position(
+        spec, entry_price, capital_total, sizing_distance, lot_size
+    )
+    # A bought option is paid for in full: the premium is the whole cost.
+    lot_cost = entry_price * lot_size
+    affordable = max(math.floor(capital_spare / lot_cost), 0) * lot_size if lot_cost > 0 else 0
+    capped = False
+    if quantity > affordable:
+        quantity = affordable
+        capped = True
+    if quantity <= 0:
+        return None, used_fallback, False
+
+    return (
+        _OptionPosition(
+            contract=contract,
+            contract_why=why,
+            entry_time=ts,
+            entry_price=entry_price,
+            raw_entry_price=raw,
+            quantity=quantity,
+            basis=basis,
+            stop_level=stop_level,
+            target_level=target_level,
+            trailing_pct=trailing_pct,
+            trail_best=entry_price,
+            signal_time=signal_ts,
+            last_price=float(option_bar["close"]),
+        ),
+        used_fallback,
+        capped,
+    )
+
+
+def _check_exit(
+    pos: _OptionPosition,
+    execution: OptionExecution,
+    ts: pd.Timestamp,
+    spec: StrategySpec,
+    is_intraday_tf: bool,
+    is_intraday_spec: bool,
+    is_last_bar_of_session: bool,
+    square_off: dt.time,
+) -> tuple[str, float, bool, bool] | None:
+    """(reason, raw price before slippage, stop-and-target-both-hit, untraded) or None.
+
+    Precedence as in `run_backtest`: square-off (and, for options, the
+    expiry-day close, which is a square-off forced by the contract), stop,
+    trailing stop, target, condition, max bars held.
+    """
+    bar = execution.bar(pos.contract, ts)
+    traded = bar is not None and bool(bar["traded"])
+    if traded:
+        pos.last_price = float(bar["close"])
+
+    on_expiry_day = ts.date() == pos.contract.expiry
+    clock_reached = is_intraday_tf and ts.time() >= square_off
+    forced = None
+    if is_intraday_spec and (clock_reached or is_last_bar_of_session):
+        forced = "square_off"
+    elif on_expiry_day and (not is_intraday_tf or clock_reached or is_last_bar_of_session):
+        forced = "expiry"
+    if forced is not None:
+        if not is_intraday_tf:
+            # A daily candle has no 15:15 in it: read the minute prices.
+            price = _price_at_clock(execution, pos.contract, ts.date(), square_off)
+            if price is not None:
+                return forced, price, False, False
+            last = execution.last_trade(pos.contract, _day_end(ts.date()))
+            return forced, (last[0] if last else pos.last_price), False, True
+        if traded:
+            # At the clock, the square-off candle's opening price; on a short
+            # session that never reaches the clock, its last price.
+            return forced, float(bar["open"] if clock_reached else bar["close"]), False, False
+        last = execution.last_trade(pos.contract, ts.to_pydatetime())
+        return forced, (last[0] if last else pos.last_price), False, True
+
+    if not traded:
+        return None  # nothing traded in this candle, so no exit could fill
+
+    o, h, low = float(bar["open"]), float(bar["high"]), float(bar["low"])
+    target_hit = pos.target_level is not None and h >= pos.target_level
+    if pos.stop_level is not None and low <= pos.stop_level:
+        fill = o if o < pos.stop_level else pos.stop_level
+        return "stop", fill, target_hit, False
+    if pos.trailing_pct is not None:
+        pos.trail_best = max(pos.trail_best, h)
+        trail_level = pos.trail_best * (1.0 - pos.trailing_pct / 100.0)
+        if low <= trail_level:
+            return "trailing_stop", (o if o < trail_level else trail_level), target_hit, False
+    if target_hit:
+        return "target", (o if o > pos.target_level else pos.target_level), False, False
+    if pos.pending_condition_exit:
+        return "condition", o, False, False
+    if spec.exit.max_bars_held is not None and pos.bars_held + 1 >= spec.exit.max_bars_held:
+        return "max_bars", float(bar["close"]), False, False
+    return None
+
+
+def _day_end(day: dt.date) -> dt.datetime:
+    return pd.Timestamp(
+        dt.datetime.combine(day, dt.time(23, 59)), tz="Asia/Kolkata"
+    ).to_pydatetime()
+
+
+def _price_at_clock(
+    execution: OptionExecution, contract: Contract, day: dt.date, clock: dt.time
+) -> float | None:
+    """The first traded 1-minute open at or after `clock` on `day`, if any."""
+    minutes = execution.source.contract_bars(
+        contract.underlying, contract.tradingsymbol, "1m", day, day
+    )
+    if minutes is None or len(minutes) == 0:
+        return None
+    traded = minutes[minutes["traded"]] if "traded" in minutes else minutes
+    at_or_after = traded[traded.index.time >= clock]
+    at_or_after = at_or_after[at_or_after.index.date == day]
+    if at_or_after.empty:
+        return None
+    return float(at_or_after["open"].iloc[0])
+
+
+def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec) -> list[str]:
+    out: list[str] = []
+    if counts.not_traded:
+        out.append(
+            f"{counts.not_traded} signal(s) skipped: the chosen option did not trade in the "
+            "candle we would have bought in. Another strike is never used instead."
+        )
+    if counts.no_price:
+        out.append(
+            f"{counts.no_price} signal(s) skipped: the chosen option had not traded that day "
+            "by the signal, so there was no price to measure the stop and target from."
+        )
+    for code, k in sorted(counts.no_contract.items()):
+        if code == "no_weekly":
+            out.append(
+                f"{k} signal(s) skipped: {spec.instrument.symbol} had no weekly options on "
+                "those days, so no contract could be chosen."
+            )
+        else:
+            out.append(f"{k} signal(s) skipped: no suitable option contract was listed.")
+    if counts.capital:
+        pct = spec.risk.max_position_pct
+        why = (
+            f"one position may not exceed {pct:g}% of the account, and a single lot cost more"
+            if pct is not None
+            else "not enough spare money for even one lot"
+        )
+        out.append(f"{counts.capital} signal(s) skipped: {why}.")
+    if counts.concurrency:
+        out.append(
+            f"{counts.concurrency} signal(s) skipped: the most positions allowed at once were "
+            "already open."
+        )
+    if counts.boundary:
+        out.append(
+            f"{counts.boundary} signal(s) skipped: they fired on the day's last candle, and "
+            "this strategy squares off the same day."
+        )
+    if counts.expiry_entry:
+        out.append(
+            f"{counts.expiry_entry} signal(s) skipped: the chosen option expired before the "
+            "trade could be placed."
+        )
+    if counts.expiry_exit:
+        out.append(
+            f"{counts.expiry_exit} position(s) closed at {square_off:%H:%M} on their expiry "
+            "day. An option is never held to settlement here."
+        )
+    if counts.untraded_exit:
+        out.append(
+            f"{counts.untraded_exit} position(s) closed at the option's last traded price: it "
+            "did not trade at the moment of closing, so no fresher price exists."
+        )
+    if counts.stop_beat_target:
+        out.append(
+            f"{counts.stop_beat_target} trade(s) could have hit both the stop loss and the "
+            "target within one candle; the stop was assumed to come first, the cautious choice."
+        )
+    if counts.risk_fallback:
+        out.append(
+            f"{counts.risk_fallback} trade(s) had no stop-loss distance to size the risk from, "
+            "so one lot was bought."
+        )
+    if counts.capped:
+        out.append(f"{counts.capped} trade(s) sized down to what the account could pay for.")
+    return out
+
+
+__all__ = ["run_option_backtest"]

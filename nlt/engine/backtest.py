@@ -202,6 +202,11 @@ class Trade:
     # first (see the module docstring); this flag says that assumption was
     # actually exercised on this trade, not merely available.
     both_hit: bool = False
+    # Options only (`nlt.engine.options_backtest`): why this contract was
+    # chosen, in words, and whether the exit had to use the option's last
+    # traded price because it did not trade at the moment of closing.
+    contract_why: str = ""
+    exit_untraded: bool = False
 
 
 @dataclass(frozen=True)
