@@ -742,6 +742,7 @@ def _paper_run_card(store: Store, run: dict) -> dict:
                 "when": logic.when(e["observed_at"]),
                 "text": logic.describe_paper_event(e, spec),
                 "drift": e["kind"] == "drift",
+                "trade_key": e["event_key"] if e["kind"] in ("entry", "exit") else None,
             }
             for e in reversed(events)
         ],
@@ -822,6 +823,69 @@ async def paper_stop(request: Request) -> Response:
     _active_run(store, run_id)
     await _run(logic.stop_paper, store, run_id)
     return JSONResponse({"ok": True})
+
+
+def _paper_trade(store: Store, run_id: int, key: str) -> list[str]:
+    run = store.get_run(run_id)
+    if run is None:
+        raise _BadRequest("No such paper run.")
+    spec = store.load_spec(run["strategy_id"])
+    events = [e for e in store.paper_events(run_id) if e["event_key"] == key]
+    entry = next((e for e in events if e["kind"] == "entry"), None)
+    if entry is None:
+        raise _BadRequest("No such trade.")
+    detail = json.loads(entry.get("detail_json") or "{}")
+    signal_time = detail.get("signal_time")
+    trade_events = [e for e in events if e["kind"] in ("entry", "exit")]
+    if signal_time:
+        trade_events += [
+            e
+            for e in store.paper_events(run_id)
+            if e["kind"] == "signal"
+            and e["symbol"] == entry["symbol"]
+            and e["bar_time"] == signal_time
+        ]
+    open_pnl = None
+    open_pnl_as_of = None
+    if not any(e["kind"] == "exit" for e in trade_events):
+        status = store.paper_status(run_id) or {}
+        open_pnl_as_of = status.get("last_bar_time")
+        snap = json.loads(status.get("snapshot_json") or "{}")
+        for p in snap.get("open_positions") or []:
+            if f"{p.get('symbol')}|{p.get('entry_time')}" == key:
+                open_pnl = p.get("pnl_if_closed_now")
+                break
+    return logic.trade_timeline(
+        trade_events, spec, open_pnl=open_pnl, open_pnl_as_of=open_pnl_as_of
+    )
+
+
+async def paper_trade(request: Request) -> Response:
+    store = _store(request)
+    run_id = int(request.path_params["rid"])
+    key = request.path_params["key"]
+    steps = await _run(_paper_trade, store, run_id, key)
+    return JSONResponse({"steps": steps})
+
+
+async def activity(request: Request) -> Response:
+    store = _store(request)
+    items = await _run(logic.activity_feed, store)
+    source_id = request.query_params.get("source_id")
+    if source_id not in (None, ""):
+        try:
+            sid = int(source_id)
+        except ValueError:
+            raise _BadRequest("source_id must be a number.") from None
+        items = [it for it in items if it["source_id"] == sid]
+    if request.query_params.get("skips_only") in ("1", "true", "True"):
+        items = [it for it in items if it["skip"]]
+    raw_limit = request.query_params.get("limit")
+    try:
+        limit = int(raw_limit) if raw_limit not in (None, "") else 200
+    except ValueError:
+        raise _BadRequest("limit must be a number.") from None
+    return JSONResponse({"items": items[: max(0, limit)]})
 
 
 async def kite_login_save(request: Request) -> Response:
@@ -916,6 +980,25 @@ async def orders_close(request: Request) -> Response:
 async def orders_check(request: Request) -> Response:
     await _json_body(request)
     return JSONResponse({"message": await _run(orders_view.check_now, _store(request))})
+
+
+def _order_timeline(store: Store, order_id: int) -> list[str]:
+    if not any(row["id"] == order_id for row in store.one_off_orders()):
+        raise _BadRequest("No such order.")
+    from nlt.orders import runner as orders_runner
+    from nlt.orders.models import NowTrigger
+
+    book = orders_runner.current_book(store)
+    pressed = frozenset(o.id for o in book.orders if isinstance(o.order.trigger, NowTrigger))
+    events = [e for e in store.one_off_events() if e["order_id"] == order_id]
+    return orders_view.order_timeline(events, order_id, pressed)
+
+
+async def orders_timeline(request: Request) -> Response:
+    store = _store(request)
+    order_id = int(request.path_params["oid"])
+    steps = await _run(_order_timeline, store, order_id)
+    return JSONResponse({"steps": steps})
 
 
 # -------------------------------------------------------------------- safety
@@ -1054,11 +1137,14 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/paper/start", paper_start, ["POST"]),
         r("/api/paper/{rid:int}/check", paper_check, ["POST"]),
         r("/api/paper/{rid:int}/stop", paper_stop, ["POST"]),
+        r("/api/paper/{rid:int}/trade/{key}", paper_trade),
+        r("/api/activity", activity),
         r("/api/orders", orders),
         r("/api/orders/read", orders_read, ["POST"]),
         r("/api/orders/create", orders_create, ["POST"]),
         r("/api/orders/check", orders_check, ["POST"]),
         r("/api/orders/{oid:int}/cancel", orders_cancel, ["POST"]),
+        r("/api/orders/{oid:int}/timeline", orders_timeline),
         r("/api/orders/positions/{pid:int}/close", orders_close, ["POST"]),
         r("/api/kite/login", kite_login_save, ["POST"]),
         r("/api/kite/forget", kite_login_forget, ["POST"]),

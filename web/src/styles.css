@@ -1179,6 +1179,83 @@ details[open] > summary::before {
   color: var(--critical);
 }
 
+.log li.clickable {
+  cursor: pointer;
+}
+
+.log li.clickable:hover span:not(.drift) {
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+}
+
+.log .skip {
+  color: var(--ink-3);
+}
+
+/* -------------------------------------------------------------- timelines */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(21, 32, 58, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10vh 16px;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow);
+  max-width: 520px;
+  width: 100%;
+  padding: 24px;
+  max-height: 76vh;
+  overflow-y: auto;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.timeline li {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 12px;
+  padding-bottom: 20px;
+  position: relative;
+}
+
+.timeline li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 16px;
+  bottom: -4px;
+  width: 2px;
+  background: var(--rule);
+}
+
+.timeline-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--focus);
+  margin-top: 2px;
+}
+
 /* ------------------------------------------------------------------ safety */
 
 /* One fixed layout for both switches: name and an On/Off badge, one sentence,

@@ -984,6 +984,191 @@ def describe_decision(decision: dict, spec: StrategySpec | None = None) -> str:
     return f"{prefix}entry rule met on the {when_text} candle, but skipped: {reason}."
 
 
+def trade_timeline(
+    events: list[dict],
+    spec: StrategySpec | None = None,
+    *,
+    open_pnl: float | None = None,
+    open_pnl_as_of: str | None = None,
+) -> list[str]:
+    """The step-by-step story of one paper trade, built only from recorded rows.
+
+    `events` is the subset of one run's `paper_event` rows that belong to a
+    single trade: the matching 'signal' row (if any -- an older paper run
+    recorded before this feature may not have one), the 'entry' row keyed
+    `event_key`, and the 'exit' row sharing that same key if the trade has
+    closed. Nothing here is re-derived from the engine; it is only ever the
+    words for what was already written down, which is the same safety rule
+    `describe_paper_event` and `describe_decision` already follow.
+
+    `open_pnl` is the trade's current mark-to-market, read from the run's
+    `paper_status` snapshot by the caller -- it is never computed here, so a
+    stale or missing snapshot shows as "not available" rather than a guess.
+    """
+    by_kind = {e["kind"]: e for e in events}
+    entry = by_kind.get("entry")
+    if entry is None:
+        return []
+    detail = json.loads(entry.get("detail_json") or "{}")
+    steps: list[str] = []
+
+    signal_time = detail.get("signal_time")
+    reason = detail.get("reason") or "the entry rule"
+    steps.append(f"Signal candle closed at {when(signal_time)}: {reason}.")
+
+    steps.append(
+        "Queued for the next candle's open, where the money and position-size checks are made."
+    )
+
+    qty_text = quantity_words(spec, entry.get("quantity"))
+    symbol = "" if (spec is not None and spec.instrument.is_future) else (entry.get("symbol") or "")
+    raw_entry = detail.get("raw_entry_price")
+    slippage_bit = (
+        f" (raw price {format_inr(raw_entry)} plus slippage)" if raw_entry is not None else ""
+    )
+    steps.append(
+        f"Filled {qty_text}{symbol}".rstrip() + f" at {format_inr(entry.get('price'))}"
+        f"{slippage_bit} on the {when(entry.get('bar_time'))} candle."
+    )
+
+    stop = detail.get("stop_level")
+    target = detail.get("target_level")
+    stop_text = format_inr(stop) if stop is not None else "no stop"
+    target_text = format_inr(target) if target is not None else "no target"
+    steps.append(f"Stop at {stop_text}, target at {target_text}.")
+
+    exit_ = by_kind.get("exit")
+    if exit_ is not None:
+        exit_detail = json.loads(exit_.get("detail_json") or "{}")
+        reason_text = _EXIT_WORDS.get(
+            exit_detail.get("reason"), exit_detail.get("reason") or "exit"
+        )
+        both_bit = (
+            " The stop and the target were both touched on this candle; the stop is "
+            "assumed to have come first."
+            if exit_detail.get("both_hit")
+            else ""
+        )
+        steps.append(
+            f"Exited at {format_inr(exit_.get('price'))} on the {when(exit_.get('bar_time'))} "
+            f"candle because {reason_text}.{both_bit}"
+        )
+        net_pnl = exit_detail.get("net_pnl")
+        charges = exit_detail.get("charges")
+        if net_pnl is not None:
+            sign = "+" if net_pnl >= 0 else "-"
+            charges_bit = f" Charges came to {format_inr(charges)}." if charges is not None else ""
+            steps.append(
+                f"Net result: {sign}{format_inr(abs(net_pnl))} after charges.{charges_bit}"
+            )
+    else:
+        open_bit = ""
+        if open_pnl is not None:
+            sign = "+" if open_pnl >= 0 else "-"
+            # The snapshot is only as fresh as the last successful check; a
+            # paused run or a dead feed leaves it hours old. Say which candle.
+            as_of = f" as of the {when(open_pnl_as_of)} candle" if open_pnl_as_of else ""
+            open_bit = f" Open profit or loss{as_of}: {sign}{format_inr(abs(open_pnl))}."
+        steps.append(f"Still open.{open_bit}")
+
+    return steps
+
+
+def activity_feed(store: Store) -> list[dict]:
+    """One merged, newest-first feed across every paper run and every one-off
+    order. Built only from recorded rows (`paper_event`, `paper_decision`,
+    `one_off_event`) and this module's own describe functions -- no line here
+    is written fresh, so the feed can never say anything those records do not
+    already back up.
+
+    Each item: time (the bar's own time, falling back to when it was
+    observed), source ("strategy"/"order"), source_name, source_id (the run id
+    or order id), kind, text, skip (a signal the engine chose not to act on),
+    and trade_key (set only on a strategy's entry/exit row, for opening its
+    step-by-step timeline).
+    """
+    from app import orders_view  # deferred: orders_view imports this module too
+
+    items: list[dict] = []
+    for run in store.list_runs(mode="paper"):
+        strategy = store.get_strategy(run["strategy_id"])
+        name = strategy["name"] if strategy else ""
+        spec = store.load_spec(run["strategy_id"])
+        for e in store.paper_events(run["id"]):
+            items.append(
+                {
+                    "time": e["bar_time"] or e["observed_at"],
+                    "source": "strategy",
+                    "source_name": name,
+                    "source_id": run["id"],
+                    "kind": e["kind"],
+                    "text": describe_paper_event(e, spec),
+                    "skip": False,
+                    "trade_key": e["event_key"] if e["kind"] in ("entry", "exit") else None,
+                }
+            )
+        for d in store.paper_decisions(run["id"]):
+            items.append(
+                {
+                    "time": d["bar_time"] or d["observed_at"],
+                    "source": "strategy",
+                    "source_name": name,
+                    "source_id": run["id"],
+                    "kind": d["kind"],
+                    "text": describe_decision(d, spec),
+                    "skip": d["kind"] == "signal_skipped",
+                    "trade_key": None,
+                }
+            )
+
+    try:
+        book = orders_view.runner.current_book(store)
+    except Exception:
+        # One unreadable order record must not blank the whole feed: say so,
+        # and still show every strategy's activity.
+        items.append(
+            {
+                "time": pd.Timestamp.now(tz="Asia/Kolkata").isoformat(),
+                "source": "order",
+                "source_name": "One-off orders",
+                "source_id": 0,
+                "kind": "note",
+                "text": "One-off orders could not be read just now, so they are missing "
+                "from this list. Open the One-off orders page for details.",
+                "skip": False,
+                "trade_key": None,
+            }
+        )
+        items.sort(key=lambda it: pd.Timestamp(it["time"]), reverse=True)
+        return items
+    pressed = frozenset(
+        o.id for o in book.orders if isinstance(o.order.trigger, orders_view.NowTrigger)
+    )
+    by_order: dict[int, list[dict]] = {}
+    for e in store.one_off_events():
+        by_order.setdefault(e["order_id"], []).append(e)
+    for row in store.one_off_orders():
+        oid = row["id"]
+        for e in by_order.get(oid, []):
+            if e["kind"] == "finished":
+                continue
+            items.append(
+                {
+                    "time": e["bar_time"] or e["observed_at"],
+                    "source": "order",
+                    "source_name": row["sentence"],
+                    "source_id": oid,
+                    "kind": e["kind"],
+                    "text": orders_view.describe_event(e, oid, pressed),
+                    "skip": False,
+                    "trade_key": None,
+                }
+            )
+
+    items.sort(key=lambda it: pd.Timestamp(it["time"]), reverse=True)
+    return items
+
+
 # ------------------------------------------------------------------ CSV
 
 

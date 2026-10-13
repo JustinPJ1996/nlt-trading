@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type PaperRun, type PaperState } from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
 import { Readback } from "../components/Readback";
+import { TradeTimeline, type TimelineTarget } from "../components/TradeTimeline";
 import { parseRupees } from "../format";
 
 const HEALTH_TONE: Record<string, Tone> = { success: "good", info: "info", warning: "warning", error: "critical" };
@@ -118,6 +119,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
   const [sure, setSure] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<TimelineTarget | null>(null);
 
   async function check() {
     setBusy("check");
@@ -226,7 +228,11 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
         ) : (
           <ul className="log" style={{ marginTop: 8 }}>
             {run.events.map((e, i) => (
-              <li key={i}>
+              <li
+                key={i}
+                className={e.trade_key ? "clickable" : undefined}
+                onClick={e.trade_key ? () => setOpen({ kind: "trade", runId: run.run_id, tradeKey: e.trade_key! }) : undefined}
+              >
                 <time>{e.when}</time>
                 <span className={e.drift ? "drift" : undefined}>{e.text}</span>
               </li>
@@ -234,6 +240,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
           </ul>
         )}
       </details>
+      {open && <TradeTimeline target={open} onClose={() => setOpen(null)} />}
 
       <div className="btn-row" style={{ marginTop: 20, justifyContent: "space-between" }}>
         <div className="btn-row">
