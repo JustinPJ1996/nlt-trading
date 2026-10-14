@@ -980,3 +980,73 @@ def test_batch_1_bought_option_also_closes_on_the_real_last_day():
         _ts(D3, 15, 15),
         55.0,
     )
+
+
+# ------------------------------------------------ when no margin figure exists
+
+
+def test_a_day_with_no_margin_figure_is_skipped_never_guessed():
+    from nlt.engine.legs_backtest import MarginNotAvailable
+
+    def no_file(underlying, day, legs, prev_close):
+        raise MarginNotAvailable("We have NIFTY margin files from 1 Dec 2022 only.")
+
+    r = _run(_spec(), _source(OPEN_PRICES, PE_FLAT), margin=no_file, days=(D1,))
+    assert r.trades == []
+    (d,) = [d for d in r.decisions if d.reason_code == "margin_unavailable"]
+    assert "rather than sized on a guess" in d.detail["message"]
+    assert any("1 Dec 2022 only" in w for w in r.warnings)
+
+
+_REAL_SPAN = __import__("pathlib").Path(__file__).resolve().parents[1] / "data/span/NSE"
+
+
+@pytest.mark.skipif(
+    not (_REAL_1M.exists() and _REAL_SPAN.exists()),
+    reason="the F&O 1-minute data or the exchange margin files are not on this machine",
+)
+def test_known_answer_straddle_with_the_real_exchange_margin():
+    """The same 2 Jan 2025 trade through the app's real SPAN margin: one set
+    needs Rs 2,75,317.38 (SPAN 1,51,854.30 + exposure 1,23,463.08, of which
+    61,731.54 is the expiry-day extra) -- within 20% of Rs 25 lakh, so one set,
+    the same fills. A day before the margin files is refused, not guessed."""
+    from app.logic import _backtest_legs_spec, span_margin_fn
+    from nlt.engine.legs_backtest import MarginNotAvailable, MarginQuery
+    from nlt.translate.rules import TranslationResult
+
+    fn = span_margin_fn()
+    expiry = dt.date(2025, 1, 2)
+    b = fn(
+        "NIFTY",
+        expiry,
+        [MarginQuery("CE", 23800.0, expiry, -65), MarginQuery("PE", 23800.0, expiry, -65)],
+        23742.90,
+    )
+    assert b.total == pytest.approx(275317.38)
+    with pytest.raises(MarginNotAvailable):
+        fn("NIFTY", dt.date(2019, 1, 1), [MarginQuery("CE", 18000.0, dt.date(2019, 1, 3), -65)], 1)
+
+    spec = StrategySpec(
+        name="09:20 straddle",
+        description="t",
+        instrument=Instrument(symbol="NIFTY", timeframe="1m", trade_as="option", legs=STRADDLE),
+        entry=AtTime(time=dt.time(9, 20)),
+        exit=ExitRules(exits_on_legs=True),
+        sizing=Sizing(mode="fixed_lots", lots=1),
+        risk=RiskLimits(max_position_pct=20),
+        schedule=Schedule(intraday=True),
+    )
+    r = _backtest_legs_spec(
+        spec,
+        capital=2_500_000,
+        cost_model_label="Index options (NIFTY/BANKNIFTY weekly)",
+        start=expiry,
+        end=expiry,
+        translation=TranslationResult(spec=spec),
+        slippage=Slippage(),
+    )
+    assert r.error is None
+    (t,) = r.backtest.trades
+    assert t.quantity == 65
+    assert t.net_pnl == pytest.approx(5690.85)
+    assert any("NSE's margin file for 2 Jan 2025" in w for w in r.weak_spots)

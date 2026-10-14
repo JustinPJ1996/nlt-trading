@@ -174,6 +174,12 @@ class MarginQuery:
 MarginFn = Callable[[str, dt.date, list[MarginQuery], float], object]
 
 
+class MarginNotAvailable(Exception):
+    """Raised by a `margin_fn` that has no honest figure for that day (no
+    exchange file covers it). The signal is skipped with the message as its
+    reason -- never sized on a guessed margin."""
+
+
 @dataclass
 class _Leg:
     index: int
@@ -232,6 +238,7 @@ class _Counts:
     no_price: int = 0
     no_contract: dict[str, int] = field(default_factory=dict)
     margin: int = 0
+    margin_unavailable: dict[str, int] = field(default_factory=dict)
     concurrency: int = 0
     boundary: int = 0
     expiry_entry: int = 0
@@ -558,14 +565,25 @@ def run_legs_backtest(
                 "set of this position needs, so it was skipped.",
             )
             return
-        one_set, _m, breakdown = margin_needed(priced, 1, day, spot)
-        sets = min(wanted, math.floor(limit / one_set)) if one_set > 0 else wanted
-        need, margin_total = one_set, _m
-        while sets > 0:
-            need, margin_total, breakdown = margin_needed(priced, sets, day, spot)
-            if need <= limit + 1e-9:
-                break
-            sets -= 1
+        try:
+            one_set, _m, breakdown = margin_needed(priced, 1, day, spot)
+            sets = min(wanted, math.floor(limit / one_set)) if one_set > 0 else wanted
+            need, margin_total = one_set, _m
+            while sets > 0:
+                need, margin_total, breakdown = margin_needed(priced, sets, day, spot)
+                if need <= limit + 1e-9:
+                    break
+                sets -= 1
+        except MarginNotAvailable as exc:
+            message = str(exc)
+            counts.margin_unavailable[message] = counts.margin_unavailable.get(message, 0) + 1
+            skip(
+                signal_ts,
+                "margin_unavailable",
+                f"No exchange margin figure exists for this day, so the position was skipped "
+                f"rather than sized on a guess: {message}",
+            )
+            return
         if sets <= 0:
             counts.margin += 1
             what = "margin" if has_sell else "premium"
@@ -650,9 +668,21 @@ def run_legs_backtest(
         open_after = [
             (x.spec, x.contract, x.entry_price) for x in pos.legs if x.is_open and x is not leg
         ] + [(leg.spec, contract, price)]
-        need, _m, breakdown = margin_needed(
-            open_after, pos.sets, ts.date(), float(bars["close"].iloc[i - 1])
-        )
+        try:
+            need, _m, breakdown = margin_needed(
+                open_after, pos.sets, ts.date(), float(bars["close"].iloc[i - 1])
+            )
+        except MarginNotAvailable as exc:
+            counts.reentry_skipped += 1
+            leg.waiting = False
+            skip(
+                signal_ts,
+                "reentry_margin",
+                f"Re-entering the {_label(contract)}: no exchange margin figure exists for "
+                f"this day ({exc}), so the re-entry was skipped.",
+                contract.tradingsymbol,
+            )
+            return
         pct = spec.risk.max_position_pct
         if pct is None:
             pct = SELL_POSITION_PCT if has_sell else BUY_POSITION_PCT
@@ -1174,6 +1204,10 @@ def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec, ca
             )
         else:
             out.append(f"{k} signal(s) skipped: no suitable option contract was listed.")
+    for message, k in sorted(counts.margin_unavailable.items()):
+        out.append(
+            f"{k} signal(s) skipped: no exchange margin figure exists for the day -- {message}"
+        )
     if counts.margin:
         out.append(
             f"{counts.margin} signal(s) skipped: one set of the position needed more money "
@@ -1226,4 +1260,4 @@ def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec, ca
     return out
 
 
-__all__ = ["MarginQuery", "run_legs_backtest"]
+__all__ = ["MarginNotAvailable", "MarginQuery", "run_legs_backtest"]

@@ -856,11 +856,18 @@ def span_margin_fn():
     Imported here, not by the engine, so the engine can be tested with a fixed
     margin and does not depend on the calculator's data files.
     """
-    from nlt.options.margin import MarginLeg, SpanMargin
+    from nlt.engine.legs_backtest import MarginNotAvailable
+    from nlt.options.margin import MarginLeg, MarginUnavailable, SpanMargin
 
     span = SpanMargin()
 
     def margin(underlying, day, legs, index_prev_close):
+        try:
+            return _span_call(underlying, day, legs, index_prev_close)
+        except MarginUnavailable as exc:
+            raise MarginNotAvailable(str(exc)) from exc
+
+    def _span_call(underlying, day, legs, index_prev_close):
         return span.margin(
             underlying,
             day,
