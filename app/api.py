@@ -289,6 +289,9 @@ def _spec_payload(
         "name": spec.name,
         "symbol": spec.instrument.symbol,
         "timeframe": spec.instrument.timeframe,
+        # Candle sizes the Candles box may offer (None = all of them): the rule
+        # for an entry at a set time lives in logic.allowed_timeframes only.
+        "allowed_timeframes": logic.allowed_timeframes(spec),
     }
 
 

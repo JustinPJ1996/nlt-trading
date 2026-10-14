@@ -2914,6 +2914,12 @@ def _parse_legs(
         sources["exit.stop"] = stop_source
     if position.target_source:
         sources["exit.target"] = position.target_source
+    # The combined exits are their own readback parts; they carry the label the
+    # reader gave the exit they were read from.
+    if spec.exit.combined_stop_pct and "exit.stop" in sources:
+        sources["exit.combined_stop"] = sources["exit.stop"]
+    if spec.exit.combined_target_pct and "exit.target" in sources:
+        sources["exit.combined_target"] = sources["exit.target"]
     if position.reentry_said:
         sources["legs.reentry"] = SAID
     return TranslationResult(
