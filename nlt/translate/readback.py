@@ -668,7 +668,7 @@ def _legs_exit_lines(
                 f"Stop loss when the position's loss reaches {_num(e.combined_stop_pct)}% of "
                 f"{whole} (judged with each option at its worst price of the candle; closed at "
                 "the next candle's opening prices)",
-                "exit.stop",
+                "exit.combined_stop",
             )
         )
     lines += [(line, "exit.target") for line in _leg_percent_lines(legs, "target_pct")]
@@ -678,7 +678,7 @@ def _legs_exit_lines(
                 f"Take profit when the position's profit reaches {_num(e.combined_target_pct)}% "
                 f"of {whole} (judged on candle closes; closed at the next candle's opening "
                 "prices)",
-                "exit.target",
+                "exit.combined_target",
             )
         )
     lines += [(line, "legs.reentry") for line in _reentry_lines(legs)]

@@ -55,6 +55,8 @@ export type Understood = {
   name: string;
   symbol: string;
   timeframe: string;
+  // Candle sizes the Candles box may offer; null/absent means all of them.
+  allowed_timeframes?: string[] | null;
 };
 
 export type Choice = { label: string; value: string };
