@@ -125,6 +125,24 @@ export type Trade = {
   why: string | null;
   pnl: number;
   pnl_text: string;
+  // Sold and multi-leg option positions: every option inside this one row.
+  legs?: TradeLeg[];
+};
+
+export type TradeLeg = {
+  label: string;
+  side: string;
+  quantity: number;
+  entered: string;
+  entry_price: string;
+  exited: string;
+  exit_price: string;
+  stop: string | null;
+  reason: string;
+  reentry: number;
+  why: string;
+  pnl: number;
+  pnl_text: string;
 };
 
 // A run's slippage setting: either a percentage of the price or a fixed

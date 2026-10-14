@@ -438,6 +438,61 @@ def _chart(bt_equity: pd.Series, bench_equity: pd.Series) -> list[dict]:
     ]
 
 
+def _signed_inr(value: float) -> str:
+    return ("+" if value >= 0 else "-") + format_inr(abs(value))
+
+
+def _trade_row(t, spec, tf: str) -> dict:
+    """One row of the trade table. A multi-leg position is one row, its options
+    listed under it (`legs`), each with its own prices and reason."""
+    reason = logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason)
+    row = {
+        "symbol": t.symbol or spec.instrument.symbol,
+        "direction": "Buy" if t.direction == "long" else "Short",
+        "entered": _time_text(t.entry_time, tf),
+        "entry_price": format_inr(t.entry_price),
+        "exited": _time_text(t.exit_time, tf),
+        "exit_price": format_inr(t.exit_price),
+        "reason": reason + (" (at its last traded price)" if t.exit_untraded else ""),
+        "why": t.contract_why or None,
+        "pnl": round(float(t.net_pnl), 2),
+        "pnl_text": _signed_inr(t.net_pnl),
+        "legs": [],
+    }
+    if not t.legs:
+        return row
+    credit = t.direction == "short"
+    labels = list(dict.fromkeys(f.label for f in t.legs))
+    row.update(
+        symbol=" + ".join(labels),
+        direction="Net credit" if credit else "Net debit",
+        entry_price=f"{format_inr(t.entry_price)} a unit",
+        exit_price=f"{format_inr(t.exit_price)} a unit to close",
+        reason=f"last option out: {reason}",
+        why=None,
+        legs=[
+            {
+                "label": f.label,
+                "side": "Sold" if f.side == "sell" else "Bought",
+                "quantity": f.quantity,
+                "entered": _time_text(f.entry_time, tf),
+                "entry_price": format_inr(f.entry_price),
+                "exited": _time_text(f.exit_time, tf),
+                "exit_price": format_inr(f.exit_price),
+                "stop": format_inr(f.stop_level) if f.stop_level is not None else None,
+                "reason": logic._EXIT_WORDS.get(f.exit_reason, f.exit_reason)
+                + (" (at its last traded price)" if f.exit_untraded else ""),
+                "reentry": f.reentry,
+                "why": f.why,
+                "pnl": round(float(f.net_pnl), 2),
+                "pnl_text": _signed_inr(f.net_pnl),
+            }
+            for f in sorted(t.legs, key=lambda f: (f.entry_time, f.leg))
+        ],
+    )
+    return row
+
+
 def _time_text(ts, timeframe: str) -> str:
     t = pd.Timestamp(ts)
     if t.tzinfo is not None:
@@ -513,22 +568,7 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
             for k, v in m.items()
         },
         "chart": _chart(bt.equity, bench.equity),
-        "trades": [
-            {
-                "symbol": t.symbol or spec.instrument.symbol,
-                "direction": "Buy" if t.direction == "long" else "Short",
-                "entered": _time_text(t.entry_time, tf),
-                "entry_price": format_inr(t.entry_price),
-                "exited": _time_text(t.exit_time, tf),
-                "exit_price": format_inr(t.exit_price),
-                "reason": logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason)
-                + (" (at its last traded price)" if t.exit_untraded else ""),
-                "why": t.contract_why or None,
-                "pnl": round(float(t.net_pnl), 2),
-                "pnl_text": ("+" if t.net_pnl >= 0 else "-") + format_inr(abs(t.net_pnl)),
-            }
-            for t in bt.trades
-        ],
+        "trades": [_trade_row(t, spec, tf) for t in bt.trades],
         "notes": notes,
         "window_notes": list(result.window_notes),
     }

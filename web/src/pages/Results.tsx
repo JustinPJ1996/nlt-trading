@@ -290,6 +290,20 @@ export function Results({
                           {t.direction} {t.symbol}
                         </div>
                         {t.why && <div className="muted small">{t.why}</div>}
+                        {t.legs && t.legs.length > 0 && (
+                          <ul className="muted small" style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                            {t.legs.map((l, j) => (
+                              <li key={j}>
+                                {l.side} {l.quantity} {l.label}
+                                {l.reentry > 0 ? ` (re-entry ${l.reentry})` : ""} at {l.entry_price}, closed{" "}
+                                {l.exited} at {l.exit_price} -- {l.reason}
+                                {l.stop ? ` (stop ${l.stop})` : ""}:{" "}
+                                <span className={l.pnl > 0 ? "pos" : l.pnl < 0 ? "neg" : ""}>{l.pnl_text}</span>
+                                <div>{l.why}</div>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </td>
                       <td>{t.exited}</td>
                       <td className="num">

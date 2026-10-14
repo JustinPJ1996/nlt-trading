@@ -211,6 +211,46 @@ class Trade:
     # traded price because it did not trade at the moment of closing.
     contract_why: str = ""
     exit_untraded: bool = False
+    # Multi-leg and sold options only (`nlt.engine.legs_backtest`): one Trade is
+    # one whole position, so win rate and trade counts count positions; each
+    # option bought or sold inside it is a `LegFill` here. Empty for everything
+    # else.
+    legs: tuple[LegFill, ...] = ()
+
+
+@dataclass(frozen=True)
+class LegFill:
+    """One option inside a multi-leg position, from its fill to its exit.
+
+    A leg that was stopped and re-entered appears twice, `reentry` counting
+    which time it is (0 = the first fill). `side` is the opening side: a
+    "sell" leg is sold first and bought back at the exit. Prices are what was
+    paid or received after slippage; `raw_*` before it. `basis` is the
+    option's price at the signal, which the leg's stop and target measure from.
+    """
+
+    leg: int
+    symbol: str
+    label: str
+    side: str
+    quantity: int
+    entry_time: pd.Timestamp
+    entry_price: float
+    raw_entry_price: float
+    basis: float
+    exit_time: pd.Timestamp
+    exit_price: float
+    raw_exit_price: float
+    exit_reason: str
+    gross_pnl: float
+    charges: float
+    net_pnl: float
+    stop_level: float | None = None
+    target_level: float | None = None
+    both_hit: bool = False
+    exit_untraded: bool = False
+    why: str = ""
+    reentry: int = 0
 
 
 @dataclass(frozen=True)

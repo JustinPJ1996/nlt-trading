@@ -185,8 +185,10 @@ def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, 
         )
 
     if spec.instrument.is_option and not isinstance(chosen, NseOptionsCharges):
+        sells = any(leg.side == "sell" for leg in spec.instrument.legs)
+        verb = "buys and sells" if sells else "buys"
         return NseOptionsCharges(), (
-            f"Costs: this strategy buys index options, so option charges were applied "
+            f"Costs: this strategy {verb} index options, so option charges were applied "
             f"instead of '{label}'."
         )
 
@@ -531,6 +533,16 @@ def backtest_spec(
     """
     if translation is None:
         translation = TranslationResult(spec=spec)
+    if spec.instrument.legs:
+        return _backtest_legs_spec(
+            spec,
+            capital=capital,
+            cost_model_label=cost_model_label,
+            start=start,
+            end=end,
+            translation=translation,
+            slippage=slippage,
+        )
     if spec.instrument.is_option:
         return _backtest_option_spec(
             spec,
@@ -831,6 +843,164 @@ def _backtest_option_spec(
         )
     except Exception as exc:  # noqa: BLE001 - the UI's last line of defence, as above
         logger.exception("option backtest failed for spec %r", getattr(spec, "name", None))
+        return PipelineResult(
+            translation=translation,
+            spec=spec,
+            error=f"The backtest could not be run: {exc}",
+        )
+
+
+def span_margin_fn():
+    """The exchange-margin calculator (`nlt.options.margin`), shaped for the engine.
+
+    Imported here, not by the engine, so the engine can be tested with a fixed
+    margin and does not depend on the calculator's data files.
+    """
+    from nlt.options.margin import MarginLeg, SpanMargin
+
+    span = SpanMargin()
+
+    def margin(underlying, day, legs, index_prev_close):
+        return span.margin(
+            underlying,
+            day,
+            [
+                MarginLeg(
+                    option_type=leg.option_type,
+                    strike=leg.strike,
+                    expiry=leg.expiry,
+                    quantity=leg.quantity,
+                )
+                for leg in legs
+            ],
+            index_prev_close=index_prev_close,
+        )
+
+    return margin
+
+
+def _backtest_legs_spec(
+    spec: StrategySpec,
+    *,
+    capital: float,
+    cost_model_label: str,
+    start: dt.date | None,
+    end: dt.date | None,
+    translation: TranslationResult,
+    slippage: Slippage,
+    margin_fn=None,
+) -> PipelineResult:
+    """`backtest_spec` for a sold option or several options opened together
+    (`nlt.engine.legs_backtest`).
+
+    The same shape as `_backtest_option_spec`: signals from the index's candles
+    in the F&O dataset (1-minute candles for a 1-minute strategy), the window
+    clamped to the days with option prices and said so at the top, and a
+    second run without charges. `margin_fn` defaults to the exchange-margin
+    calculator.
+    """
+    from nlt.engine.legs_backtest import run_legs_backtest
+    from nlt.engine.loader import load_option_bars, option_window
+    from nlt.options.data import ParquetSource
+    from nlt.options.execution import OptionExecution
+    from nlt.report import method
+
+    try:
+        if margin_fn is None:
+            try:
+                margin_fn = span_margin_fn()
+            except ImportError:
+                return PipelineResult(
+                    translation=translation,
+                    spec=spec,
+                    error="Selling options needs the exchange-margin calculator, which is not "
+                    "installed yet.",
+                )
+        source = ParquetSource()
+        start, end, window_notes = option_window(spec, start, end, source)
+        model, cost_note = charge_model_for_spec(spec, cost_model_label)
+        cf = _adapt_charge_fn(model)
+        data_notes = [cost_note] if cost_note else []
+
+        load_from = max(
+            warmup.padded_start(spec, start),
+            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],
+        )
+        all_bars = load_option_bars(spec, load_from, end, source)
+        if all_bars.empty:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                data_notes=data_notes,
+                window_notes=window_notes,
+                error="There is no price history for that index and date range to test against.",
+            )
+        start_bar = warmup.first_bar_on_or_after(all_bars.index, start)
+        if start_bar is None:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                window_notes=window_notes,
+                error="There is no price history for that index and date range to test against.",
+            )
+
+        def run(charge_fn) -> BacktestResult:
+            execution = OptionExecution(source, spec.instrument.symbol, spec.instrument.timeframe)
+            result = run_legs_backtest(
+                spec,
+                all_bars,
+                execution,
+                margin_fn,
+                capital=capital,
+                charge_fn=charge_fn,
+                slippage=slippage,
+                trade_from=start_bar,
+            )
+            return warmup.trim(result, start_bar, capital)
+
+        backtest = run(cf)
+        before_charges = run(_adapt_charge_fn(ZeroCharges()))
+        bars = all_bars.loc[start_bar:]
+        data_notes = data_notes + list(backtest.warnings)
+        note = warmup.warmup_note(spec, all_bars, start_bar)
+        if note:
+            data_notes.append(note)
+
+        benchmark = buy_and_hold(
+            bars, capital, charge_fn=cf, name=f"holding {spec.instrument.symbol}"
+        )
+        comparison = compare(backtest, benchmark, bars)
+        verdict = assess(backtest, comparison)
+        equity_index = backtest.equity.index
+        stated = (
+            method.assumptions(
+                spec,
+                capital=capital,
+                charge_model=model,
+                first=equity_index[0].date(),
+                last=equity_index[-1].date(),
+                slippage=slippage,
+            )
+            if len(equity_index)
+            else []
+        )
+        spots, data_notes = method.weak_spots(spec, data_notes, slippage=slippage)
+        return PipelineResult(
+            translation=translation,
+            spec=spec,
+            bars=bars,
+            backtest=backtest,
+            benchmark=benchmark,
+            comparison=comparison,
+            verdict=verdict,
+            before_charges=before_charges,
+            assumptions=stated,
+            weak_spots=spots,
+            data_notes=data_notes,
+            window_notes=window_notes,
+        )
+    except Exception as exc:  # noqa: BLE001 - the UI's last line of defence, as above
+        logger.exception("option legs backtest failed for spec %r", getattr(spec, "name", None))
         return PipelineResult(
             translation=translation,
             spec=spec,
@@ -1222,6 +1392,8 @@ _EXIT_WORDS = {
     "square_off": "end-of-day square-off",
     "expiry": "contract expired",
     "end_of_data": "still open when the test ended",
+    "combined_target": "whole-position target reached",
+    "combined_stop": "whole-position stop loss hit",
 }
 
 
