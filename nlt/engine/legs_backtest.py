@@ -127,7 +127,7 @@ from nlt.engine.backtest import (
 from nlt.engine.conditions import EXPIRY_DAY_COLUMN, evaluate, iv_percentile_column
 from nlt.engine.features import build_features
 from nlt.engine.metrics import compute_metrics
-from nlt.engine.options_backtest import _day_end, _past_last_close, _price_at_clock
+from nlt.engine.options_backtest import _day_end, _past_last_close, _price_at_clock, last_day_fn
 from nlt.options.contracts import Contract, format_strike
 from nlt.options.execution import OptionExecution
 from nlt.options.expiry import pick_expiry
@@ -307,11 +307,16 @@ def run_legs_backtest(
         if partial:
             bars = bars.iloc[:-1]
 
+    # A listed expiry that was a market holiday really ended the session before
+    # (NIFTY/BANKNIFTY 30 Mar and 29 Jun 2023); every expiry rule uses that day.
+    last_day = last_day_fn(bars)
     features = build_features(spec, bars)
     conditions = [spec.entry] + ([spec.exit.condition] if spec.exit.condition else [])
     used = [c for cond in conditions for c in _walk(cond)]
     if any(isinstance(c, OnExpiryDay) for c in used):
-        features[EXPIRY_DAY_COLUMN] = _expiry_day_column(bars, execution, legs_spec, underlying)
+        features[EXPIRY_DAY_COLUMN] = _expiry_day_column(
+            bars, execution, legs_spec, underlying, last_day
+        )
     for lookback in sorted({c.lookback_days for c in used if isinstance(c, IvPercentile)}):
         if iv_fn is None:
             from nlt.options.iv import iv_feature as iv_fn
@@ -381,10 +386,10 @@ def run_legs_backtest(
         )
         if is_intraday_spec:
             _assert_no_overnight_carry(leg.entry_time, ts, session)
-        if ts.date() > leg.contract.expiry:
+        if ts.date() > last_day(leg.contract.expiry):
             raise RuntimeError(
                 f"an option leg in {leg.contract.tradingsymbol} was held past its expiry "
-                f"({leg.contract.expiry}) to {ts}"
+                f"({last_day(leg.contract.expiry)}) to {ts}"
             )
         pos.fills.append(
             LegFill(
@@ -618,7 +623,7 @@ def run_legs_backtest(
                 margin_total=margin_total,
                 credit_basis=credit_basis,
                 entry_net=entry_net,
-                expiry=min(leg.contract.expiry for leg in legs),
+                expiry=min(last_day(leg.contract.expiry) for leg in legs),
             )
         )
 
@@ -877,7 +882,7 @@ def run_legs_backtest(
                     leg.waiting = False
                     continue
                 queued = _queue_reentry(
-                    leg, i, ts, bars, execution, timeframe, square_off, skip, counts
+                    leg, i, ts, bars, execution, timeframe, square_off, skip, counts, last_day
                 )
                 if queued is not None:
                     leg.pending = queued
@@ -915,6 +920,7 @@ def run_legs_backtest(
                     counts,
                     decisions,
                     underlying,
+                    last_day,
                 )
 
     # --- 6. anything still open at the end of the data -----------------------
@@ -961,9 +967,14 @@ def _walk(condition):
 
 
 def _expiry_day_column(
-    bars: pd.DataFrame, execution: OptionExecution, legs: list[OptionLeg], underlying: str
+    bars: pd.DataFrame,
+    execution: OptionExecution,
+    legs: list[OptionLeg],
+    underlying: str,
+    last_day,
 ) -> pd.Series:
-    """True on every candle of a day on which one of the legs' expiries falls.
+    """True on every candle of a day on which one of the legs' expiries falls --
+    the day it really expired, the session before a listed holiday.
 
     Which expiry a leg means on a day ("nearest weekly", "monthly") is read
     from the contracts listed THAT day, as when choosing a contract -- never a
@@ -974,7 +985,8 @@ def _expiry_day_column(
     for day in sorted(set(bars.index.date)):
         listing = execution.listing(day)
         expiries = list(listing["expiry"]) if not listing.empty else []
-        by_day[day] = any(pick_expiry(expiries, day, kind, underlying)[0] == day for kind in kinds)
+        picked = [pick_expiry(expiries, day, kind, underlying)[0] for kind in kinds]
+        by_day[day] = any(e is not None and last_day(e) == day for e in picked)
     return pd.Series([by_day[d] for d in bars.index.date], index=bars.index)
 
 
@@ -989,6 +1001,7 @@ def _choose_legs(
     counts,
     decisions,
     underlying,
+    last_day,
 ):
     """Every leg's contract at the signal, or None (recorded) if any cannot be chosen."""
     chosen = []
@@ -1008,7 +1021,7 @@ def _choose_legs(
                 )
             )
             return None
-        if _past_last_close(contract, fill_ts, timeframe, square_off):
+        if _past_last_close(contract, fill_ts, timeframe, square_off, last_day):
             counts.expiry_entry += 1
             decisions.append(
                 Decision(
@@ -1040,7 +1053,7 @@ def _choose_legs(
     return signal_ts, chosen
 
 
-def _queue_reentry(leg, i, ts, bars, execution, timeframe, square_off, skip, counts):
+def _queue_reentry(leg, i, ts, bars, execution, timeframe, square_off, skip, counts, last_day):
     """(signal time, contract, why, basis) if this closed candle re-enters `leg`."""
     if i + 1 >= len(bars):
         return None
@@ -1053,7 +1066,7 @@ def _queue_reentry(leg, i, ts, bars, execution, timeframe, square_off, skip, cou
             return None
         close = float(bar["close"])
         back = close <= leg.first_fill if leg.side == "sell" else close >= leg.first_fill
-        if not back or _past_last_close(leg.contract, fill_ts, timeframe, square_off):
+        if not back or _past_last_close(leg.contract, fill_ts, timeframe, square_off, last_day):
             return None
         return ts, leg.contract, leg.why, close
 
@@ -1061,7 +1074,7 @@ def _queue_reentry(leg, i, ts, bars, execution, timeframe, square_off, skip, cou
     resolution = execution.resolve_leg(ts.to_pydatetime(), float(bars["close"].iloc[i]), leg.spec)
     leg.waiting = False  # "now" or not at all, unless the fill succeeds
     contract = resolution.contract
-    if contract is None or _past_last_close(contract, fill_ts, timeframe, square_off):
+    if contract is None or _past_last_close(contract, fill_ts, timeframe, square_off, last_day):
         counts.reentry_skipped += 1
         skip(
             ts,

@@ -77,7 +77,7 @@ def _index(moves: dict[pd.Timestamp, float] | None = None, days=DAYS) -> pd.Data
     return pd.DataFrame(rows).set_index("timestamp")
 
 
-def _source(prices=None, defaults=None, days=DAYS) -> FrameSource:
+def _source(prices=None, defaults=None, days=DAYS, weekly=WEEKLY) -> FrameSource:
     """`prices[symbol][ts] = (open, high, low, close[, volume])`; volume 0 = no trade.
 
     `defaults[symbol]` replaces the flat 100 for that option on every other candle.
@@ -86,7 +86,7 @@ def _source(prices=None, defaults=None, days=DAYS) -> FrameSource:
     defaults = defaults or {}
     rows = []
     for day in days:
-        for expiry in (WEEKLY, MONTHLY):
+        for expiry in (weekly, MONTHLY):
             if day > expiry:
                 continue
             for strike in STRIKES:
@@ -910,3 +910,73 @@ def test_charges_note_says_the_strategy_sells_options():
 
     _model, note = charge_model_for_spec(_spec(), "Index futures")
     assert "buys and sells index options" in note
+
+
+# ------------------------------------------ an expiry listed on a holiday
+
+# The dataset lists NIFTY's 30 Mar 2023 and 29 Jun 2023 expiries at their
+# nominal dates, which were market holidays: the contracts really expired the
+# session before. Here the weekly is listed for Friday 5 Jan (no session that
+# day; the next is Monday 8 Jan), so it really expires Thursday 4 Jan.
+HOLIDAY = dt.date(2024, 1, 5)
+D8 = dt.date(2024, 1, 8)
+H_DAYS = (D1, D2, D3, D8)
+H_CE, H_PE = sym(21500, "CE", HOLIDAY), sym(21500, "PE", HOLIDAY)
+
+
+def _holiday_source(prices=None):
+    return _source(prices, {H_PE: (80.0,) * 4}, days=H_DAYS, weekly=HOLIDAY)
+
+
+def test_holiday_listed_expiry_closes_on_the_session_before():
+    src = _holiday_source(
+        {H_CE: {_ts(D3, 15, 15): (55.0,) * 4}, H_PE: {_ts(D3, 15, 15): (45.0,) * 4}}
+    )
+    t = _run(_spec(intraday=False), src, days=H_DAYS).trades[0]
+    assert {f.symbol for f in t.legs} == {H_CE, H_PE}
+    assert {(f.exit_reason, f.exit_time) for f in t.legs} == {("expiry", _ts(D3, 15, 15))}
+
+
+def test_holiday_listed_expiry_day_is_the_session_before_for_conditions_and_entries():
+    spec = _spec(entry=All(conditions=[AtTime(time=dt.time(9, 20)), OnExpiryDay()]))
+    r = _run(spec, _holiday_source(), days=H_DAYS)
+    assert [t.entry_time.date() for t in r.trades] == [D3]
+    late = _spec(entry=AtTime(time=dt.time(15, 15)), intraday=False)
+    r = _run(late, _source(days=(D3, D8), weekly=HOLIDAY), days=(D3, D8))
+    skipped = [(d.time.date(), d.reason_code) for d in r.decisions if d.kind == "signal_skipped"]
+    assert (D3, "expiry") in skipped
+
+
+def test_batch_1_bought_option_also_closes_on_the_real_last_day():
+    """The same bug existed in `run_option_backtest`: a bought call held
+    overnight into a holiday-listed expiry was never closed on its real last
+    day, and the engine then failed holding it past expiry."""
+    from nlt.engine.options_backtest import run_option_backtest
+    from nlt.spec.models import Compare, Const, Ref
+
+    spec = StrategySpec(
+        name="t",
+        description="t",
+        instrument=Instrument(
+            symbol="NIFTY",
+            timeframe="5m",
+            trade_as="option",
+            option_type="CE",
+            expiry="nearest_weekly",
+        ),
+        entry=Compare(op="gt", left=Ref(name="close"), right=Const(value=21500.0)),
+        exit=ExitRules(stop_pct=90.0),
+        sizing=Sizing(mode="fixed_lots", lots=1),
+        risk=RiskLimits(max_lots=1, max_position_pct=10.0),
+        schedule=Schedule(intraday=False),
+    )
+    src = _holiday_source({H_CE: {_ts(D3, 15, 15): (55.0,) * 4}})
+    index = _index({_ts(D1, 10, 0): 21510.0}, days=H_DAYS)
+    ex = OptionExecution(src, "NIFTY", "5m", "CE", 0, "nearest_weekly")
+    (t,) = run_option_backtest(spec, index, ex, capital=CAPITAL).trades
+    assert (t.symbol, t.exit_reason, t.exit_time, t.exit_price) == (
+        H_CE,
+        "expiry",
+        _ts(D3, 15, 15),
+        55.0,
+    )
