@@ -85,8 +85,19 @@ function PromptGuide() {
 }
 
 type SpecShape = {
-  instrument: { timeframe: string; symbol: string; trade_as: string };
-  exit: { stop_pct: number | null; trailing_stop_pct: number | null; target_pct: number | null };
+  instrument: {
+    timeframe: string;
+    symbol: string;
+    trade_as: string;
+    legs?: { side: string; stop_pct: number | null }[];
+  };
+  exit: {
+    stop_pct: number | null;
+    trailing_stop_pct: number | null;
+    target_pct: number | null;
+    combined_target_pct?: number | null;
+    combined_stop_pct?: number | null;
+  };
 };
 
 const CANDLES: [string, string][] = [
@@ -104,12 +115,14 @@ const CANDLES: [string, string][] = [
 // hold, so it always says what will be tested.
 function AdjustBoxes({
   spec,
+  allowedTimeframes,
   edits,
   onEdit,
   busy,
   error,
 }: {
   spec: SpecShape;
+  allowedTimeframes: string[] | null;
   edits: Record<string, string>;
   onEdit: (key: string, value: string) => void;
   busy: boolean;
@@ -117,17 +130,53 @@ function AdjustBoxes({
 }) {
   const value = (key: string, current: number | string | null) =>
     key in edits ? edits[key] : current == null ? "" : String(current);
+  const legs = spec.instrument.legs ?? [];
+  const isLegs = legs.length > 0;
+  const sold = legs.filter((l) => l.side === "sell");
+  const soldStop =
+    sold.length > 0 && sold[0].stop_pct != null && sold.every((l) => l.stop_pct === sold[0].stop_pct)
+      ? sold[0].stop_pct
+      : null;
+  const candles = allowedTimeframes ? CANDLES.filter(([v]) => allowedTimeframes.includes(v)) : CANDLES;
   return (
     <details className="adjust" open={Object.keys(edits).length > 0}>
       <summary>Change the numbers before testing</summary>
       <div className="adjust-grid">
-        {spec.exit.stop_pct != null && (
+        {isLegs && soldStop != null && (
+          <label className="field">
+            <span className="label">Stop loss on each sold option (%)</span>
+            <input inputMode="decimal" value={value("leg_stop_pct", soldStop)} onChange={(e) => onEdit("leg_stop_pct", e.target.value)} />
+          </label>
+        )}
+        {isLegs && sold.length > 0 && (
+          <label className="field">
+            <span className="label">Take profit (% of the credit)</span>
+            <input
+              inputMode="decimal"
+              placeholder="None"
+              value={value("combined_target_pct", spec.exit.combined_target_pct ?? null)}
+              onChange={(e) => onEdit("combined_target_pct", e.target.value)}
+            />
+            <span className="hint">Leave empty for no take profit.</span>
+          </label>
+        )}
+        {isLegs && spec.exit.combined_stop_pct != null && (
+          <label className="field">
+            <span className="label">Combined stop (% of the credit)</span>
+            <input
+              inputMode="decimal"
+              value={value("combined_stop_pct", spec.exit.combined_stop_pct)}
+              onChange={(e) => onEdit("combined_stop_pct", e.target.value)}
+            />
+          </label>
+        )}
+        {!isLegs && spec.exit.stop_pct != null && (
           <label className="field">
             <span className="label">Stop loss (%)</span>
             <input inputMode="decimal" value={value("stop_pct", spec.exit.stop_pct)} onChange={(e) => onEdit("stop_pct", e.target.value)} />
           </label>
         )}
-        {spec.exit.trailing_stop_pct != null && (
+        {!isLegs && spec.exit.trailing_stop_pct != null && (
           <label className="field">
             <span className="label">Trailing stop (%)</span>
             <input
@@ -137,20 +186,22 @@ function AdjustBoxes({
             />
           </label>
         )}
-        <label className="field">
-          <span className="label">Target (%)</span>
-          <input
-            inputMode="decimal"
-            placeholder="None"
-            value={value("target_pct", spec.exit.target_pct)}
-            onChange={(e) => onEdit("target_pct", e.target.value)}
-          />
-          <span className="hint">Leave empty for no target.</span>
-        </label>
+        {!isLegs && (
+          <label className="field">
+            <span className="label">Target (%)</span>
+            <input
+              inputMode="decimal"
+              placeholder="None"
+              value={value("target_pct", spec.exit.target_pct)}
+              onChange={(e) => onEdit("target_pct", e.target.value)}
+            />
+            <span className="hint">Leave empty for no target.</span>
+          </label>
+        )}
         <label className="field">
           <span className="label">Candles</span>
           <select value={value("timeframe", spec.instrument.timeframe)} onChange={(e) => onEdit("timeframe", e.target.value)}>
-            {CANDLES.map(([v, label]) => (
+            {candles.map(([v, label]) => (
               <option key={v} value={v}>
                 {label}
               </option>
@@ -410,6 +461,7 @@ export function Build({
                   {original && (
                     <AdjustBoxes
                       spec={original.spec as SpecShape}
+                      allowedTimeframes={original.allowed_timeframes ?? null}
                       edits={state.edits}
                       onEdit={(key, value) =>
                         set({ edits: { ...state.edits, [key]: value }, confirmed: false })

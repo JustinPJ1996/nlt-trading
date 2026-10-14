@@ -22,6 +22,18 @@ contracts.
   **in the money**, the opposite direction. Running off either end of the
   listed strikes is refused, never clamped -- a clamped "+5" that quietly
   becomes "+2" is a wrong contract reported as a right one.
+
+## Points from spot (Phase 2, batch 2: `resolve_points`)
+
+"Sell the put 200 points below spot" is a different rule from an offset:
+the target is the signal candle's close plus the signed points (-200 is
+below, +300 above), and the contract is the listed strike nearest that
+target, a tie going to the lower strike, exactly as for ATM. If nothing is
+listed within one strike gap of the target -- the target is off the end of
+the listed strikes -- the signal is refused, never clamped to the last strike:
+"200 points below" quietly becoming "120 points below" changes the trade.
+One strike gap is the spacing between the chosen strike and its nearest
+listed neighbour, so BANKNIFTY's wider far-out spacing is respected.
 """
 
 from __future__ import annotations
@@ -36,6 +48,7 @@ from nlt.options.expiry import pick_expiry
 
 REASON_NO_LISTING = "no_listing"
 REASON_OFFSET_OUT_OF_RANGE = "offset_out_of_range"
+REASON_POINTS_OUT_OF_RANGE = "points_out_of_range"
 
 _EXPIRY_KIND_WORDS = {
     "nearest_weekly": "nearest weekly",
@@ -101,28 +114,19 @@ def _nearest_strike(strikes: list[float], spot_close: float) -> float:
     return best
 
 
-def resolve(
+def _chain_for(
     listing: pd.DataFrame,
     underlying: str,
     signal_time: dt.datetime,
-    spot_close: float,
     option_type: str,
-    offset: int,
     expiry_kind: str,
-) -> Resolution:
-    """Pick a contract at signal time, or explain in plain English why none exists.
-
-    `listing` is `nlt.options.data.listing(underlying, signal_time.date())` (or
-    `FrameSource`'s equivalent) -- the options listed on the signal day, and
-    nothing later.
-    """
+) -> tuple[dt.date, pd.DataFrame, list[float]] | Resolution:
+    """(expiry, that expiry's chain of `option_type`, its sorted strikes), or a
+    refusal saying why there is none."""
     if option_type not in ("CE", "PE"):
         raise ValueError(f"option_type must be 'CE' or 'PE', not {option_type!r}")
 
     day = signal_time.date()
-    candle_time = signal_time.strftime("%H:%M")
-    level = format_level(spot_close)
-
     all_expiries = list(listing["expiry"]) if not listing.empty else []
     expiry, reason = pick_expiry(all_expiries, day, expiry_kind, underlying)
 
@@ -150,6 +154,31 @@ def resolve(
             "could be chosen."
         )
         return Resolution(None, REASON_NO_LISTING, why)
+
+    return expiry, chain, strikes
+
+
+def resolve(
+    listing: pd.DataFrame,
+    underlying: str,
+    signal_time: dt.datetime,
+    spot_close: float,
+    option_type: str,
+    offset: int,
+    expiry_kind: str,
+) -> Resolution:
+    """Pick a contract at signal time, or explain in plain English why none exists.
+
+    `listing` is `nlt.options.data.listing(underlying, signal_time.date())` (or
+    `FrameSource`'s equivalent) -- the options listed on the signal day, and
+    nothing later.
+    """
+    picked = _chain_for(listing, underlying, signal_time, option_type, expiry_kind)
+    if isinstance(picked, Resolution):
+        return picked
+    expiry, chain, strikes = picked
+    candle_time = signal_time.strftime("%H:%M")
+    level = format_level(spot_close)
 
     atm = _nearest_strike(strikes, spot_close)
     atm_index = strikes.index(atm)
@@ -197,5 +226,72 @@ def resolve(
         f"{underlying} closed at {level} on the {candle_time} candle; "
         f"{strike_note}, so the {expiry:%d %b %Y} {format_strike(strike)} "
         f"{option_type} ({kind_word} expiry) was chosen."
+    )
+    return Resolution(contract, None, why)
+
+
+def _strike_gap(strikes: list[float], strike: float) -> float:
+    """The spacing between `strike` and its nearest listed neighbour."""
+    i = strikes.index(strike)
+    gaps = [strikes[j + 1] - strikes[j] for j in (i - 1, i) if 0 <= j < len(strikes) - 1]
+    return min(gaps) if gaps else 0.0
+
+
+def resolve_points(
+    listing: pd.DataFrame,
+    underlying: str,
+    signal_time: dt.datetime,
+    spot_close: float,
+    option_type: str,
+    points: int,
+    expiry_kind: str,
+) -> Resolution:
+    """The listed strike nearest `spot_close + points`, or a refusal saying why.
+
+    A tie goes to the lower strike. A target further than one strike gap from
+    every listed strike is refused rather than clamped -- see the module
+    docstring.
+    """
+    picked = _chain_for(listing, underlying, signal_time, option_type, expiry_kind)
+    if isinstance(picked, Resolution):
+        return picked
+    expiry, chain, strikes = picked
+    candle_time = signal_time.strftime("%H:%M")
+    level = format_level(spot_close)
+    target = spot_close + points
+    where = (
+        f"{abs(points):,} points {'above' if points > 0 else 'below'} that is "
+        f"{format_level(target)}"
+        if points
+        else f"the target is the close itself, {format_level(target)}"
+    )
+
+    strike = _nearest_strike(strikes, target)
+    gap = _strike_gap(strikes, strike)
+    if abs(strike - target) > gap:
+        why = (
+            f"{underlying} closed at {level} on the {candle_time} candle; {where}, but "
+            f"the nearest listed {_OPTION_TYPE_WORDS[option_type]} strike for the "
+            f"{expiry:%d %b %Y} expiry was {format_strike(strike)}, more than one strike "
+            "away, so no contract was chosen -- another strike is never used instead."
+        )
+        return Resolution(None, REASON_POINTS_OUT_OF_RANGE, why)
+
+    tie = sum(1 for s in strikes if abs(s - target) == abs(strike - target)) > 1
+    row = chain[chain["strike"] == strike].iloc[0]
+    contract = Contract(
+        underlying=underlying,
+        tradingsymbol=row["tradingsymbol"],
+        option_type=option_type,
+        strike=strike,
+        expiry=expiry,
+        lot_size=lot_size(underlying, "option"),
+    )
+    tie_note = " (a tie; the lower strike was chosen)" if tie else ""
+    why = (
+        f"{underlying} closed at {level} on the {candle_time} candle; {where}; the "
+        f"nearest listed strike was {format_strike(strike)}{tie_note}, so the "
+        f"{expiry:%d %b %Y} {format_strike(strike)} {option_type} "
+        f"({_EXPIRY_KIND_WORDS[expiry_kind]} expiry) was chosen."
     )
     return Resolution(contract, None, why)

@@ -55,6 +55,8 @@ export type Understood = {
   name: string;
   symbol: string;
   timeframe: string;
+  // Candle sizes the Candles box may offer; null/absent means all of them.
+  allowed_timeframes?: string[] | null;
 };
 
 export type Choice = { label: string; value: string };
@@ -123,6 +125,24 @@ export type Trade = {
   reason: string;
   // Options only: why this contract was chosen, in words.
   why: string | null;
+  pnl: number;
+  pnl_text: string;
+  // Sold and multi-leg option positions: every option inside this one row.
+  legs?: TradeLeg[];
+};
+
+export type TradeLeg = {
+  label: string;
+  side: string;
+  quantity: number;
+  entered: string;
+  entry_price: string;
+  exited: string;
+  exit_price: string;
+  stop: string | null;
+  reason: string;
+  reentry: number;
+  why: string;
   pnl: number;
   pnl_text: string;
 };

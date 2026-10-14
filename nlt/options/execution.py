@@ -43,6 +43,7 @@ import pandas as pd
 from nlt.data.source import IST
 from nlt.options.contracts import Contract, Resolution
 from nlt.options.contracts import resolve as _resolve_contract
+from nlt.options.contracts import resolve_points as _resolve_points
 from nlt.options.data import CONTRACT_NATIVE_TIMEFRAME, OptionSource
 
 SESSION_OPEN = dt.time(9, 15)
@@ -179,10 +180,13 @@ class OptionExecution:
         source: OptionSource,
         underlying: str,
         timeframe: str,
-        option_type: str,
-        offset: int,
-        expiry_kind: str,
+        option_type: str = "CE",
+        offset: int = 0,
+        expiry_kind: str = "nearest_weekly",
     ) -> None:
+        """`option_type` / `offset` / `expiry_kind` describe batch 1's single
+        bought option, for `resolve`. A multi-leg run passes each leg to
+        `resolve_leg` instead and can leave them at their defaults."""
         self.source = source
         self.underlying = underlying
         self.timeframe = timeframe
@@ -195,10 +199,19 @@ class OptionExecution:
         # day's, which would silently amputate the history a square-off
         # lookback (`last_trade`) needs to see past its own calling day.
         self._signal_day: dict[str, dt.date] = {}
+        self._listing_cache: dict[dt.date, pd.DataFrame] = {}
+
+    def listing(self, day: dt.date) -> pd.DataFrame:
+        """The options listed on `day` (and nothing later), read once per day."""
+        cached = self._listing_cache.get(day)
+        if cached is None:
+            cached = self.source.listing(self.underlying, day)
+            self._listing_cache[day] = cached
+        return cached
 
     def resolve(self, signal_time: dt.datetime, spot_close: float) -> Resolution:
         day = signal_time.date()
-        chain = self.source.listing(self.underlying, day)
+        chain = self.listing(day)
         resolution = _resolve_contract(
             chain,
             self.underlying,
@@ -208,6 +221,39 @@ class OptionExecution:
             self.offset,
             self.expiry_kind,
         )
+        if resolution.contract is not None:
+            self._signal_day.setdefault(resolution.contract.tradingsymbol, day)
+        return resolution
+
+    def resolve_leg(self, signal_time: dt.datetime, spot_close: float, leg) -> Resolution:
+        """Pick one leg's contract (`nlt.spec.models.OptionLeg`) at the signal.
+
+        `leg.strike_points` set: the listed strike nearest spot + points
+        (`resolve_points`); otherwise `leg.strike_offset` listed strikes out
+        of the money for the leg's own type (`resolve`, batch 1's rule).
+        """
+        day = signal_time.date()
+        chain = self.listing(day)
+        if leg.strike_points is not None:
+            resolution = _resolve_points(
+                chain,
+                self.underlying,
+                signal_time,
+                spot_close,
+                leg.option_type,
+                leg.strike_points,
+                leg.expiry,
+            )
+        else:
+            resolution = _resolve_contract(
+                chain,
+                self.underlying,
+                signal_time,
+                spot_close,
+                leg.option_type,
+                leg.strike_offset,
+                leg.expiry,
+            )
         if resolution.contract is not None:
             self._signal_day.setdefault(resolution.contract.tradingsymbol, day)
         return resolution

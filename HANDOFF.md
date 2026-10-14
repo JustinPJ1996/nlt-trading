@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,275 tests passing (2026-10-12, Phase 1b both batches)
+- **State:** 1,760 tests passing (2026-10-14, Phase 2 batch 2)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -142,6 +142,9 @@ Ask before changing any of these; each was a deliberate decision.
 | `app/` | Streamlit dashboard, 4 pages |
 | `nlt/options/` | Option contracts: data, expiry, strike choice, prices (Phase 2) |
 | `nlt/engine/options_backtest.py` | Buying one call or put: signals on the index, trades in the contract |
+| `nlt/engine/legs_backtest.py` | Sold and multi-leg option positions (batch 2), held on exchange margin |
+| `nlt/options/margin.py`, `span_store.py` | Exchange SPAN + exposure margin for any past day, matched to Zerodha's calculator |
+| `nlt/options/iv.py` | ATM implied volatility and its percentile, from option prices |
 | `nlt/risk/`, `nlt/broker/` | **Empty. Phase 4.** |
 
 ---
@@ -271,7 +274,7 @@ futures backtest crashed on a missing lot size; and a raw code dict leaked into
 its assumptions list. Our sizing, charges, benchmark and stop rule exist to
 prevent exactly these.
 
-### Phase 2 — Options — **batch 1 BUILT (2026-10-13): buying one call or put**
+### Phase 2 — Options — **batches 1 and 2 BUILT (2026-10-13/14): buying; selling and multi-leg**
 
 Plan: `~/.claude/plans/let-s-start-planning-phase-compiled-swan.md`. Branch
 `phase-2-options-batch-1`. Justin's decisions, each offered as a trade-off:
@@ -334,11 +337,87 @@ Open after batch 1, for Justin:
   it even for alerts, where it does nothing.
 - A year of 15-minute signals takes about a minute to run.
 
-**Batch 2 (selling, multi-leg)** needs SPAN margin research: NSE/BSE daily SPAN
-files plus exposure margin, the extra expiry-day margin from Nov 2024, hedge
-benefit on spreads, a check against Zerodha's calculator on ~20 positions, and
-a decision on historical vs today's rates. IV percentile (#37) needs IV
-computed from premium, index level and time to expiry.
+**Batch 2 reading (2026-10-14, workstream C).** `options_words.read` now reads
+a sold call or put, sold straddles and strangles, iron condors and iron
+butterflies, and positions written leg by leg into `Instrument.legs`;
+`read_position_exits` / `read_position_timing` read "25% stop on each leg",
+"50% of the credit received", re-entry, "at 09:20", "every Monday", "on expiry
+day", "IV percentile above 70", "hold it to expiry". `rules._parse_legs` wires
+them; the AI reader is never asked about a leg position. Questions with
+buttons: the stop for an unprotected sold option (20/30/50%), each-option-or-
+total for "N% of the premium", and how to re-enter. Tradl #19, #20, #34, #35,
+#40 now read on the rules path; #28 asks for a stop, #33 how to re-enter, #37
+each-or-total; #26 still refused. The 70: still 3 specs, 0 wrong (#21 asks
+each-or-total; #8 refused for its fixed strike). Every rule was broken on
+purpose (33 mutations) and a test failed. `tests/test_options_sell_parse.py`.
+
+**Batch 2 -- selling and multi-leg -- BUILT 2026-10-14**, branch
+`phase-2-options-batch-2`, plan `~/.claude/plans/phase-2-batch-2.md`. Justin's
+decisions, each offered as a trade-off:
+
+| Topic | Decision |
+| --- | --- |
+| Margin | **That day's** exchange file (NSE `nsccl.YYYYMMDD.i1`, BSE `BSERISKYYYYMMDD-00`, the start-of-day files Zerodha uses) plus the exposure rules in force then |
+| Answer key | Zerodha's SPAN calculator (Justin's suggestion). Today only -- it has no past dates |
+| Unprotected sells (straddle, strangle, single sell) | Allowed; **stop required**; the readback and report warn a jump can blow past it |
+| Protected positions (every sold option covered by a bought one: same type and expiry, further out, at least as many lots) | **No stop needed** -- the hedge is the stop (`is_defined_risk`) |
+| Margin cap | **20%** of capital per position, like futures |
+| "Re-enter a leg" without saying how | A question with buttons (same strike at cost / fresh strike now) |
+| "Exposure" basis | NSE's rule (index previous close), not Zerodha's calculator, which used a stale index level on 14 Oct 2026 |
+
+My calls, stated to Justin: "at 09:20" is the 09:20 price (signal on the candle
+*ending* 09:20); "hold to expiry" still closes at 15:15 on expiry day; IV
+percentile from the ATM options, not India VIX; a time-only sell with no
+candle size runs on 1-minute candles ("We worked out").
+
+What exists:
+- **Spec** (`nlt/spec/models.py`): `OptionLeg`, `Instrument.legs` (up to 4),
+  `ExitRules.combined_target_pct / combined_stop_pct / exits_on_legs`,
+  conditions `AtTime`, `OnExpiryDay`, `IvPercentile`.
+- **Margin** (`nlt/options/margin.py`): worst of the 16 scenarios + calendar
+  charge, max with the short-option minimum, less net option value; exposure 2%
+  on sold legs (3% beyond 10% OTM, 5% past 9 months), +2% on a sold leg's
+  expiry day from 20 Nov 2024 (confirmed by Zerodha's support article, hedged
+  legs included), expiring legs margined separately from 10 Feb 2025. `total`
+  excludes bought premium (paid in cash). **Matched Zerodha's calculator on 23
+  positions to within Rs 0.41** (`tests/fixtures/zerodha_span_calibration.json`).
+  Store: `data/span/` (272 MB, `scripts/fetch_span.py`); only gap NSE 2 Jun 2025
+  (NSE's archive file is truncated) -> 30 May end-of-day, said in the report.
+  The expiry-day rules were not checked against the calculator (14 Oct was no
+  expiry day): re-run `scripts/calibrate_span_zerodha.py` on an expiry morning.
+- **Engine** (`nlt/engine/legs_backtest.py`): every leg must trade in the fill
+  candle or nothing opens; a sold leg's stop is its fill + N% of its signal
+  price (the standing rule, mirrored); one leg stopped, the others stay;
+  combined stop judged with every leg at its worst price of the candle, combined
+  target on closes, both filled at the next open; re-entry per leg; one `Trade`
+  per position with `Trade.legs`; no equity floor for sold positions (a "LOSS
+  LARGER THAN THE ACCOUNT" warning instead); margin checked at entry only (a
+  weak spot in the report).
+- **Holiday-moved expiries**: the dataset lists 30 Mar and 29 Jun 2023 expiries
+  on holidays; both option engines and the IV now use the real last session.
+- **IV** (`nlt/options/iv.py`, cache `data/fno/iv/`, `scripts/build_iv.py`):
+  Black-Scholes on the last traded 1-minute prices of the ATM call and put at
+  the close; day D uses D-1's IV ranked against the 252 before it, so the
+  percentile starts Dec 2023 (NIFTY/BANKNIFTY), Aug 2025 (SENSEX). Tracks India
+  VIX (correlation 0.74).
+- **Known answers**: NIFTY 09:20 straddle on 2 Jan 2025 (`test_legs_engine.py`)
+  and NIFTY ATM IV on 7 Jun 2024 (`test_options_iv.py`), both by hand from raw
+  rows.
+- Readback fixed twice while checking the real app: a sold leg's stop was said
+  as "rises 25% above its price at the signal" (untrue -- it is measured from
+  the fill), and the combined exits now say they are judged on the signal
+  prices and filled at the next open.
+
+Open after batch 2, for Justin:
+- IV: top reading is 99.6, not 100; BANKNIFTY after Nov 2024 ranks monthly IV
+  against older weekly IV; 1-day-to-expiry IV is jumpy; a day without IV
+  blocks the next day.
+- Stop question buttons for a sold option are 20/30/50%.
+- The CSV export is one row per position, without the legs.
+- Some vendor 1-minute prices are not on the 5-paise tick (e.g. 40.54); used as
+  they are.
+- Bought straddles/strangles, debit/calendar/ratio spreads, fixed strikes and
+  #26 (gap trigger) are still refused.
 
 The charge model already handles the exercised-ITM STT trap, but batch 1 never
 needs it: no option is held to settlement.
@@ -674,7 +753,7 @@ corporate events, multi-user, the factual-questions surface Justin chose
 | Corporate events | 7 | Phase 5 |
 | Futures / MCX | 5 | Futures built (2026-10-07); all 5 still refused, each for a specific missing rule |
 | Single stocks | 3 | Works |
-| Multi-leg options | 2 | Phase 2 |
+| Multi-leg options | 2 | Batch 2 built: #21 reads after one question (each-or-total stop); #8 refused for its fixed strike |
 | Robo / portfolio | 3 | Out of scope |
 
 Five stock sentences are blocked on VWAP, which is **deliberately refused on

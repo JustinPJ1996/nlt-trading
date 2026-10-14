@@ -7,11 +7,12 @@
 
 PY := .venv/bin/python
 
-.PHONY: check fix lint format test mutation secrets hooks clean-cache help web serve
+.PHONY: check fix lint format types test mutation secrets hooks clean-cache help web serve
 
 help:
 	@echo "make check     lint + format check + the full test suite (the gate)"
 	@echo "make fix       autofix lint and rewrite formatting -- run before reading errors"
+	@echo "make types     type check with ty (report only -- not part of the gate yet)"
 	@echo "make test      the test suite alone"
 	@echo "make mutation  mutation testing: do the tests FAIL when the code breaks? (slow)"
 	@echo "make secrets   scan the whole git history for leaked credentials"
@@ -30,6 +31,13 @@ format:
 fix:
 	@$(PY) -m ruff check . --fix
 	@$(PY) -m ruff format .
+
+# Not in `check` yet: the first run found ~700 issues, most of them "this might
+# be None" warnings on code that is guarded some other way. Putting it in the
+# gate before those are worked through would block every commit and teach
+# --no-verify. Add it to `check` once the count is zero.
+types:
+	@.venv/bin/ty check
 
 test:
 	@$(PY) -m pytest -q

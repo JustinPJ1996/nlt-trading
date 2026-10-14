@@ -267,7 +267,11 @@ def listing(underlying: str, day: dt.date) -> pd.DataFrame:
         underlying,
         [year],
         columns=["timestamp", "tradingsymbol", "instrument_type", "expiry", "strike"],
-        extra_filter=ds.field("instrument_type").isin(list(OPTION_TYPES)),
+        # The day's own rows only, so the year's file is not read whole for each
+        # day; the exact-date check below still decides what counts.
+        extra_filter=ds.field("instrument_type").isin(list(OPTION_TYPES))
+        & (ds.field("timestamp") >= _day_start(day))
+        & (ds.field("timestamp") < _day_start(day + dt.timedelta(days=1))),
     )
     if df.empty:
         return df.assign(expiry=pd.Series(dtype="datetime64[ns]"))
@@ -281,6 +285,22 @@ def listing(underlying: str, day: dt.date) -> pd.DataFrame:
     )
     out["expiry"] = pd.to_datetime(out["expiry"]).dt.date
     return out.reset_index(drop=True)
+
+
+def _day_start(day: dt.date) -> pd.Timestamp:
+    return pd.Timestamp(dt.datetime.combine(day, dt.time(0, 0)), tz=IST)
+
+
+def _months_filter(start: dt.date, end: dt.date) -> ds.Expression:
+    """Only the `month=M` partitions between `start` and `end`: reading one
+    contract no longer scans a whole year of every contract's minutes."""
+    expr = None
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        one = (ds.field("year") == y) & (ds.field("month") == m)
+        expr = one if expr is None else expr | one
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return expr
 
 
 # -------------------------------------------------------------- contract bars
@@ -320,7 +340,7 @@ def contract_bars(
             "oi",
             "bad_ohlc",
         ],
-        extra_filter=ds.field("tradingsymbol") == tradingsymbol,
+        extra_filter=(ds.field("tradingsymbol") == tradingsymbol) & _months_filter(start, end),
     )
     empty_cols = [
         "open",

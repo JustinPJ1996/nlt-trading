@@ -17,11 +17,14 @@ import pandas as pd
 from nlt.spec.models import (
     All,
     Any_,
+    AtTime,
     Compare,
     Condition,
     Const,
     IsTrue,
+    IvPercentile,
     Not,
+    OnExpiryDay,
     Operand,
     PercentChange,
     Ref,
@@ -36,6 +39,16 @@ def evaluate(condition: Condition, features: pd.DataFrame) -> pd.Series:
         result = _resolve(condition.ref, features).astype(bool)
     elif isinstance(condition, PercentChange):
         result = _evaluate_percent_change(condition, features)
+    elif isinstance(condition, AtTime):
+        result = _evaluate_at_time(condition, features)
+    elif isinstance(condition, OnExpiryDay):
+        result = _supplied(EXPIRY_DAY_COLUMN, features, "expiry day").astype(bool)
+    elif isinstance(condition, IvPercentile):
+        result = _compare_scalar(
+            _supplied(iv_percentile_column(condition.lookback_days), features, "IV percentile"),
+            condition.op,
+            condition.value,
+        )
     elif isinstance(condition, All):
         result = pd.concat([evaluate(c, features) for c in condition.conditions], axis=1).all(
             axis=1
@@ -52,6 +65,66 @@ def evaluate(condition: Condition, features: pd.DataFrame) -> pd.Series:
     # Any stray NaN surviving to here (e.g. from an `All` mixing a warmed-up
     # child with a still-NaN one via bool coercion) is treated as "no signal".
     return result.fillna(False).astype(bool)
+
+
+# Columns the options engine adds to the feature table for conditions that
+# cannot be computed from the index's own candles. Leading underscore: no
+# indicator id can collide with them (ids are validated identifiers).
+EXPIRY_DAY_COLUMN = "_expiry_day"
+
+
+def iv_percentile_column(lookback_days: int) -> str:
+    return f"_iv_percentile_{lookback_days}"
+
+
+def _supplied(column: str, features: pd.DataFrame, what: str) -> pd.Series:
+    if column not in features.columns:
+        raise KeyError(
+            f"a condition on {what} needs the column {column!r}, which only the options "
+            "engine supplies"
+        )
+    return features[column]
+
+
+def _evaluate_at_time(condition: AtTime, features: pd.DataFrame) -> pd.Series:
+    """True on the candle that closes at `condition.time` (its start + the candle length).
+
+    The candle length is the smallest gap between two candles of one day. A
+    time no candle closes at -- 09:20 on 15-minute candles -- is refused
+    rather than moved to a nearby candle.
+    """
+    index = features.index
+    if len(index) < 2:
+        return pd.Series(False, index=index)
+    stamps = pd.Series(index, index=index)
+    same_day = stamps.dt.date == stamps.shift(-1).dt.date
+    gaps = (stamps.shift(-1) - stamps)[same_day]
+    if gaps.empty:
+        raise ValueError("a time-of-day entry needs intraday candles, not daily ones")
+    length = gaps.min()
+    if length >= pd.Timedelta(days=1):
+        raise ValueError("a time-of-day entry needs intraday candles, not daily ones")
+    target = condition.time
+    minutes = target.hour * 60 + target.minute - (9 * 60 + 15)
+    step = int(length / pd.Timedelta(minutes=1))
+    if minutes % step:
+        raise ValueError(
+            f"no {step}-minute candle closes at {target:%H:%M}; use a candle size that does"
+        )
+    ends = (stamps + length).dt.time
+    return pd.Series(ends == target, index=index)
+
+
+def _compare_scalar(series: pd.Series, op: str, value: float) -> pd.Series:
+    if op == "lt":
+        return series < value
+    if op == "lte":
+        return series <= value
+    if op == "gt":
+        return series > value
+    if op == "gte":
+        return series >= value
+    raise ValueError(f"unknown op {op!r}")
 
 
 def _resolve(ref: Ref, features: pd.DataFrame) -> pd.Series:

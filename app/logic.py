@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
+from pydantic import ValidationError
 
 from nlt.costs.charges import (
     ChargeModel,
@@ -185,8 +186,10 @@ def charge_model_for_spec(spec: StrategySpec, label: str) -> tuple[ChargeModel, 
         )
 
     if spec.instrument.is_option and not isinstance(chosen, NseOptionsCharges):
+        sells = any(leg.side == "sell" for leg in spec.instrument.legs)
+        verb = "buys and sells" if sells else "buys"
         return NseOptionsCharges(), (
-            f"Costs: this strategy buys index options, so option charges were applied "
+            f"Costs: this strategy {verb} index options, so option charges were applied "
             f"instead of '{label}'."
         )
 
@@ -531,6 +534,16 @@ def backtest_spec(
     """
     if translation is None:
         translation = TranslationResult(spec=spec)
+    if spec.instrument.legs:
+        return _backtest_legs_spec(
+            spec,
+            capital=capital,
+            cost_model_label=cost_model_label,
+            start=start,
+            end=end,
+            translation=translation,
+            slippage=slippage,
+        )
     if spec.instrument.is_option:
         return _backtest_option_spec(
             spec,
@@ -831,6 +844,171 @@ def _backtest_option_spec(
         )
     except Exception as exc:  # noqa: BLE001 - the UI's last line of defence, as above
         logger.exception("option backtest failed for spec %r", getattr(spec, "name", None))
+        return PipelineResult(
+            translation=translation,
+            spec=spec,
+            error=f"The backtest could not be run: {exc}",
+        )
+
+
+def span_margin_fn():
+    """The exchange-margin calculator (`nlt.options.margin`), shaped for the engine.
+
+    Imported here, not by the engine, so the engine can be tested with a fixed
+    margin and does not depend on the calculator's data files.
+    """
+    from nlt.engine.legs_backtest import MarginNotAvailable
+    from nlt.options.margin import MarginLeg, MarginUnavailable, SpanMargin
+
+    span = SpanMargin()
+
+    def margin(underlying, day, legs, index_prev_close):
+        try:
+            return _span_call(underlying, day, legs, index_prev_close)
+        except MarginUnavailable as exc:
+            raise MarginNotAvailable(str(exc)) from exc
+
+    def _span_call(underlying, day, legs, index_prev_close):
+        return span.margin(
+            underlying,
+            day,
+            [
+                MarginLeg(
+                    option_type=leg.option_type,
+                    strike=leg.strike,
+                    expiry=leg.expiry,
+                    quantity=leg.quantity,
+                )
+                for leg in legs
+            ],
+            index_prev_close=index_prev_close,
+        )
+
+    return margin
+
+
+def _backtest_legs_spec(
+    spec: StrategySpec,
+    *,
+    capital: float,
+    cost_model_label: str,
+    start: dt.date | None,
+    end: dt.date | None,
+    translation: TranslationResult,
+    slippage: Slippage,
+    margin_fn=None,
+) -> PipelineResult:
+    """`backtest_spec` for a sold option or several options opened together
+    (`nlt.engine.legs_backtest`).
+
+    The same shape as `_backtest_option_spec`: signals from the index's candles
+    in the F&O dataset (1-minute candles for a 1-minute strategy), the window
+    clamped to the days with option prices and said so at the top, and a
+    second run without charges. `margin_fn` defaults to the exchange-margin
+    calculator.
+    """
+    from nlt.engine.legs_backtest import run_legs_backtest
+    from nlt.engine.loader import load_option_bars, option_window
+    from nlt.options.data import ParquetSource
+    from nlt.options.execution import OptionExecution
+    from nlt.report import method
+
+    try:
+        if margin_fn is None:
+            try:
+                margin_fn = span_margin_fn()
+            except ImportError:
+                return PipelineResult(
+                    translation=translation,
+                    spec=spec,
+                    error="Selling options needs the exchange-margin calculator, which is not "
+                    "installed yet.",
+                )
+        source = ParquetSource()
+        start, end, window_notes = option_window(spec, start, end, source)
+        model, cost_note = charge_model_for_spec(spec, cost_model_label)
+        cf = _adapt_charge_fn(model)
+        data_notes = [cost_note] if cost_note else []
+
+        load_from = max(
+            warmup.padded_start(spec, start),
+            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],
+        )
+        all_bars = load_option_bars(spec, load_from, end, source)
+        if all_bars.empty:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                data_notes=data_notes,
+                window_notes=window_notes,
+                error="There is no price history for that index and date range to test against.",
+            )
+        start_bar = warmup.first_bar_on_or_after(all_bars.index, start)
+        if start_bar is None:
+            return PipelineResult(
+                translation=translation,
+                spec=spec,
+                window_notes=window_notes,
+                error="There is no price history for that index and date range to test against.",
+            )
+
+        def run(charge_fn) -> BacktestResult:
+            execution = OptionExecution(source, spec.instrument.symbol, spec.instrument.timeframe)
+            result = run_legs_backtest(
+                spec,
+                all_bars,
+                execution,
+                margin_fn,
+                capital=capital,
+                charge_fn=charge_fn,
+                slippage=slippage,
+                trade_from=start_bar,
+            )
+            return warmup.trim(result, start_bar, capital)
+
+        backtest = run(cf)
+        before_charges = run(_adapt_charge_fn(ZeroCharges()))
+        bars = all_bars.loc[start_bar:]
+        data_notes = data_notes + list(backtest.warnings)
+        note = warmup.warmup_note(spec, all_bars, start_bar)
+        if note:
+            data_notes.append(note)
+
+        benchmark = buy_and_hold(
+            bars, capital, charge_fn=cf, name=f"holding {spec.instrument.symbol}"
+        )
+        comparison = compare(backtest, benchmark, bars)
+        verdict = assess(backtest, comparison)
+        equity_index = backtest.equity.index
+        stated = (
+            method.assumptions(
+                spec,
+                capital=capital,
+                charge_model=model,
+                first=equity_index[0].date(),
+                last=equity_index[-1].date(),
+                slippage=slippage,
+            )
+            if len(equity_index)
+            else []
+        )
+        spots, data_notes = method.weak_spots(spec, data_notes, slippage=slippage)
+        return PipelineResult(
+            translation=translation,
+            spec=spec,
+            bars=bars,
+            backtest=backtest,
+            benchmark=benchmark,
+            comparison=comparison,
+            verdict=verdict,
+            before_charges=before_charges,
+            assumptions=stated,
+            weak_spots=spots,
+            data_notes=data_notes,
+            window_notes=window_notes,
+        )
+    except Exception as exc:  # noqa: BLE001 - the UI's last line of defence, as above
+        logger.exception("option legs backtest failed for spec %r", getattr(spec, "name", None))
         return PipelineResult(
             translation=translation,
             spec=spec,
@@ -1222,6 +1400,8 @@ _EXIT_WORDS = {
     "square_off": "end-of-day square-off",
     "expiry": "contract expired",
     "end_of_data": "still open when the test ended",
+    "combined_target": "whole-position target reached",
+    "combined_stop": "whole-position stop loss hit",
 }
 
 
@@ -1537,14 +1717,69 @@ _EDIT_PARTS = {
     "trailing_stop_pct": "exit.trailing_stop",
     "target_pct": "exit.target",
     "timeframe": "timeframe",
+    # Option legs. The combined exits have their own readback parts so that
+    # changing one never relabels the per-leg line beside it.
+    "leg_stop_pct": "exit.stop",
+    "combined_target_pct": "exit.combined_target",
+    "combined_stop_pct": "exit.combined_stop",
 }
+
+_CANDLE_MINUTES = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
+
+
+def _has_at_time(condition) -> bool:
+    kind = getattr(condition, "kind", None)
+    if kind == "at_time":
+        return True
+    if kind in ("all", "any"):
+        return any(_has_at_time(c) for c in condition.conditions)
+    if kind == "not":
+        return _has_at_time(condition.condition)
+    return False
+
+
+def allowed_timeframes(spec: StrategySpec) -> list[str] | None:
+    """The candle sizes an option-legs strategy can use; None for any other strategy.
+
+    An entry "at 09:20" is the candle that ends at 09:20, so the candle length
+    must divide the minutes since 09:15 (the engine refuses otherwise), and
+    daily candles have no time of day at all.
+    """
+    if not spec.instrument.legs:
+        return None
+    if not _has_at_time(spec.entry):
+        return list(TIMEFRAMES)
+    times = []
+
+    def collect(c) -> None:
+        if getattr(c, "kind", None) == "at_time":
+            times.append(c.time)
+        for child in getattr(c, "conditions", None) or []:
+            collect(child)
+        if getattr(c, "kind", None) == "not":
+            collect(c.condition)
+
+    collect(spec.entry)
+    minutes = [t.hour * 60 + t.minute - (9 * 60 + 15) for t in times]
+    return [tf for tf, m in _CANDLE_MINUTES.items() if all(x % m == 0 for x in minutes)]
+
+
+_CANDLE_NAMES = [
+    ("1m", "1-minute"),
+    ("3m", "3-minute"),
+    ("5m", "5-minute"),
+    ("15m", "15-minute"),
+    ("30m", "30-minute"),
+    ("1h", "hourly"),
+    ("1d", "daily"),
+]
 
 
 class AdjustError(ValueError):
     """A box holds something the strategy cannot run with; the text says why."""
 
 
-def _percent(raw, label: str, *, optional: bool) -> float | None:
+def _percent(raw, label: str, *, optional: bool, top: float = 50) -> float | None:
     text = str(raw if raw is not None else "").strip().removesuffix("%").strip()
     if not text:
         if optional:
@@ -1554,8 +1789,8 @@ def _percent(raw, label: str, *, optional: bool) -> float | None:
         value = float(text)
     except ValueError:
         raise AdjustError(f"The {label} must be a number, like 1.5.") from None
-    if not 0 < value <= 50:
-        raise AdjustError(f"The {label} must be more than 0% and at most 50%.")
+    if not 0 < value <= top:
+        raise AdjustError(f"The {label} must be more than 0% and at most {top:g}%.")
     return value
 
 
@@ -1576,20 +1811,55 @@ def adjust_spec(
 
     exit_updates: dict = {}
     typed: dict[str, str] = {}
-    if "stop_pct" in edits and spec.exit.stop_pct is not None:
+    legs = list(spec.instrument.legs)
+    new_legs = None
+    if legs:
+        sold = [leg for leg in legs if leg.side == "sell"]
+        same_stop = len({leg.stop_pct for leg in sold}) == 1 and sold[0].stop_pct is not None
+        if "leg_stop_pct" in edits and sold and same_stop:
+            value = _percent(
+                edits["leg_stop_pct"], "stop loss on each sold option", optional=False, top=1000
+            )
+            new_legs = [
+                leg.model_copy(update={"stop_pct": value}) if leg.side == "sell" else leg
+                for leg in legs
+            ]
+        if "combined_target_pct" in edits and sold:
+            exit_updates["combined_target_pct"] = _percent(
+                edits["combined_target_pct"],
+                "take profit",
+                optional=True,
+                top=100,
+            )
+        if "combined_stop_pct" in edits and spec.exit.combined_stop_pct is not None:
+            exit_updates["combined_stop_pct"] = _percent(
+                edits["combined_stop_pct"], "combined stop", optional=False, top=1000
+            )
+    elif "stop_pct" in edits and spec.exit.stop_pct is not None:
         exit_updates["stop_pct"] = _percent(edits["stop_pct"], "stop loss", optional=False)
-    if "trailing_stop_pct" in edits and spec.exit.trailing_stop_pct is not None:
+    if "trailing_stop_pct" in edits and spec.exit.trailing_stop_pct is not None and not legs:
         exit_updates["trailing_stop_pct"] = _percent(
             edits["trailing_stop_pct"], "trailing stop", optional=False
         )
-    if "target_pct" in edits:
+    if "target_pct" in edits and not legs:
         exit_updates["target_pct"] = _percent(edits["target_pct"], "target", optional=True)
 
     instrument = spec.instrument
+    if new_legs is not None:
+        instrument = instrument.model_copy(update={"legs": new_legs})
     if "timeframe" in edits:
         timeframe = str(edits["timeframe"])
         if timeframe not in TIMEFRAMES:
             raise AdjustError("That candle size is not one this platform runs.")
+        allowed = allowed_timeframes(spec)
+        if allowed is not None and timeframe not in allowed:
+            raise AdjustError(
+                "This strategy enters at a set time of day, and "
+                f"{dict(_CANDLE_NAMES).get(timeframe, timeframe)} candles do not end at that "
+                "time. Pick a candle size that does: "
+                + ", ".join(dict(_CANDLE_NAMES)[t] for t in allowed)
+                + "."
+            )
         if timeframe != "1d" and instrument.is_universe:
             raise AdjustError("A basket of stocks can only be tested on daily candles.")
         instrument = instrument.model_copy(update={"timeframe": timeframe})
@@ -1602,7 +1872,12 @@ def adjust_spec(
             raise AdjustError(refusal.text)
 
     for key in _EDIT_PARTS:
-        if key in edits and (key in exit_updates or key == "timeframe"):
+        in_effect = (
+            key in exit_updates
+            or key == "timeframe"
+            or (key == "leg_stop_pct" and new_legs is not None)
+        )
+        if key in edits and in_effect:
             typed[f"form.{key}"] = str(edits[key])
 
     try:
@@ -1613,14 +1888,17 @@ def adjust_spec(
                 "exit": {**spec.exit.model_dump(), **exit_updates},
             }
         )
-    except Exception as exc:  # pydantic's message, which names the rule broken
+    except ValidationError as exc:  # the rule broken, without pydantic's wrapping
+        reason = exc.errors()[0]["msg"].removeprefix("Value error, ")
+        raise AdjustError(f"That does not make a valid strategy: {reason}") from None
+    except Exception as exc:
         raise AdjustError(f"That does not make a valid strategy: {exc}") from None
 
     if sources is not None:
         sources = dict(sources)
         for key, part in _EDIT_PARTS.items():
             if f"form.{key}" in typed:
-                if key == "target_pct" and exit_updates.get("target_pct") is None:
+                if key in ("target_pct", "combined_target_pct") and exit_updates.get(key) is None:
                     sources.pop(part, None)
                 else:
                     sources[part] = SAID

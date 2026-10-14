@@ -37,6 +37,11 @@ The rules, each one Justin's or the engine's own (see `HANDOFF.md`):
     day is closed at the square-off time that day, priced the same way. So an
     option is never exercised or settled, and the STT charged on an exercised
     in-the-money option can never arise (`settled_at_expiry` is always False).
+  * **A listed expiry that fell on a market holiday really ended the session
+    before** (NIFTY/BANKNIFTY 30 Mar 2023 and 29 Jun 2023 are listed at their
+    nominal dates). Every expiry rule here -- the expiry-day close, no entry
+    after the last close, never held past expiry -- uses that real last
+    trading day (`last_day_fn`, the rule `nlt.options.iv` uses).
   * **No entry after the contract's last close time.** A signal that would
     fill in a contract at or after its expiry-day square-off is skipped.
   * Lot size is **today's** lot (`nlt.data.instruments`), not the data's.
@@ -82,6 +87,7 @@ from nlt.engine.features import build_features
 from nlt.engine.metrics import compute_metrics
 from nlt.options.contracts import Contract, format_strike
 from nlt.options.execution import OptionExecution
+from nlt.options.iv import _last_trading_day
 from nlt.spec.models import StrategySpec
 
 _DEFAULT_INTRADAY_BARS_PER_YEAR = 252 * 75
@@ -183,6 +189,7 @@ def run_option_backtest(
         if partial:
             bars = bars.iloc[:-1]
 
+    last_day = last_day_fn(bars)
     features = build_features(spec, bars)
     entry_signal = evaluate(spec.entry, features)
     exit_signal = (
@@ -221,10 +228,10 @@ def run_option_backtest(
         realized_pnl += net
         if is_intraday_spec:
             _assert_no_overnight_carry(pos.entry_time, ts, session)
-        if ts.date() > pos.contract.expiry:
+        if ts.date() > last_day(pos.contract.expiry):
             raise RuntimeError(
                 f"an option position in {pos.contract.tradingsymbol} was held past its "
-                f"expiry ({pos.contract.expiry}) to {ts}"
+                f"expiry ({last_day(pos.contract.expiry)}) to {ts}"
             )
         trades.append(
             Trade(
@@ -337,6 +344,7 @@ def run_option_backtest(
                 is_intraday_spec,
                 bool(last_bar_of_session[i]),
                 square_off,
+                last_day,
             )
             if outcome is None:
                 pos.bars_held += 1
@@ -395,7 +403,7 @@ def run_option_backtest(
                             {"why": resolution.why, "message": resolution.why},
                         )
                     )
-                elif _past_last_close(contract, fill_ts, timeframe, square_off):
+                elif _past_last_close(contract, fill_ts, timeframe, square_off, last_day):
                     counts.expiry_entry += 1
                     decisions.append(
                         Decision(
@@ -455,8 +463,30 @@ def _contract_label(contract: Contract) -> str:
     return f"{contract.underlying} {format_strike(contract.strike)} {contract.option_type}"
 
 
+def last_day_fn(bars: pd.DataFrame):
+    """expiry -> the session it really expired on, from the index's own sessions.
+
+    A listed expiry that was a market holiday is the session before it
+    (`nlt.options.iv._last_trading_day`); one past the last session in `bars`
+    is taken as listed.
+    """
+    sessions = sorted(set(bars.index.date))
+    cache: dict[dt.date, dt.date] = {}
+
+    def last_day(expiry: dt.date) -> dt.date:
+        if expiry not in cache:
+            cache[expiry] = _last_trading_day(expiry, sessions)
+        return cache[expiry]
+
+    return last_day
+
+
 def _past_last_close(
-    contract: Contract, fill_ts: pd.Timestamp, timeframe: str, square_off: dt.time
+    contract: Contract,
+    fill_ts: pd.Timestamp,
+    timeframe: str,
+    square_off: dt.time,
+    last_day=lambda expiry: expiry,
 ) -> bool:
     """Would a fill at `fill_ts` be at or after the contract's final close time?
 
@@ -464,11 +494,12 @@ def _past_last_close(
     square-off, so only a day after expiry is too late.
     """
     day = fill_ts.date()
-    if day > contract.expiry:
+    expiry = last_day(contract.expiry)
+    if day > expiry:
         return True
     if timeframe == "1d":
         return False
-    return day == contract.expiry and fill_ts.time() >= square_off
+    return day == expiry and fill_ts.time() >= square_off
 
 
 def _open(
@@ -543,6 +574,7 @@ def _check_exit(
     is_intraday_spec: bool,
     is_last_bar_of_session: bool,
     square_off: dt.time,
+    last_day=lambda expiry: expiry,
 ) -> tuple[str, float, bool, bool] | None:
     """(reason, raw price before slippage, stop-and-target-both-hit, untraded) or None.
 
@@ -555,7 +587,7 @@ def _check_exit(
     if traded:
         pos.last_price = float(bar["close"])
 
-    on_expiry_day = ts.date() == pos.contract.expiry
+    on_expiry_day = ts.date() == last_day(pos.contract.expiry)
     clock_reached = is_intraday_tf and ts.time() >= square_off
     forced = None
     if is_intraday_spec and (clock_reached or is_last_bar_of_session):

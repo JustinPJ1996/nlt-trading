@@ -129,15 +129,83 @@
     "n": 19,
     "name": "9:20 Short Straddle",
     "text": "Sell the NIFTY weekly ATM straddle at 09:20 with a 25% stop on each leg. Square off at 15:15. Backtest the last 1 year.",
-    "klass": "options-later",
-    "needs": "options (Phase 2)"
+    "klass": "strategy",
+    "needs": "options (Phase 2)",
+    "expect": {
+      "symbol": "NIFTY",
+      "timeframe": "1m",
+      "intraday": true,
+      "legs": [
+        {
+          "side": "sell",
+          "option_type": "CE",
+          "strike_offset": 0,
+          "strike_points": null,
+          "expiry": "nearest_weekly",
+          "stop_pct": 25.0,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "sell",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": null,
+          "expiry": "nearest_weekly",
+          "stop_pct": 25.0,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        }
+      ],
+      "combined_target_pct": null,
+      "combined_stop_pct": null,
+      "entry_time": "09:20"
+    }
   },
   {
     "n": 20,
     "name": "Bull Put Spread",
     "text": "At 09:30, sell the NIFTY weekly put 200 points below spot and buy the put 400 points below. Exit at 50% of the credit received or at 15:15. Backtest the last 1 year.",
-    "klass": "options-later",
-    "needs": "options (Phase 2)"
+    "klass": "strategy",
+    "needs": "options (Phase 2)",
+    "expect": {
+      "symbol": "NIFTY",
+      "timeframe": "1m",
+      "intraday": true,
+      "legs": [
+        {
+          "side": "sell",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": -200,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "buy",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": -400,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        }
+      ],
+      "combined_target_pct": 50.0,
+      "combined_stop_pct": null,
+      "entry_time": "09:30"
+    }
   },
   {
     "n": 21,
@@ -213,7 +281,7 @@
     "n": 28,
     "name": "Weekly Put Sell to Expiry",
     "text": "Every Monday at 09:30, sell the NIFTY weekly put 300 points below spot and hold it to expiry. Backtest the last 1 year.",
-    "klass": "options-later",
+    "klass": "no-stop",
     "needs": "options (Phase 2)"
   },
   {
@@ -272,22 +340,138 @@
     "n": 33,
     "name": "Straddle with Re-entry",
     "text": "Sell the NIFTY weekly ATM straddle at 09:20 with a 25% stop on each leg, and re-enter a leg once if it gets stopped out. Square off at 15:15. Backtest the last 1 year.",
-    "klass": "options-later",
+    "klass": "needs-answer",
     "needs": "options (Phase 2)"
   },
   {
     "n": 34,
     "name": "Iron Condor",
     "text": "At 09:30, sell a NIFTY weekly iron condor with short strikes 200 points out and wings 100 points beyond them. Exit at 50% of the credit received or at 15:15. Backtest the last 1 year.",
-    "klass": "options-later",
-    "needs": "options (Phase 2)"
+    "klass": "strategy",
+    "needs": "options (Phase 2)",
+    "expect": {
+      "symbol": "NIFTY",
+      "timeframe": "1m",
+      "intraday": true,
+      "legs": [
+        {
+          "side": "sell",
+          "option_type": "CE",
+          "strike_offset": 0,
+          "strike_points": 200,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "sell",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": -200,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "buy",
+          "option_type": "CE",
+          "strike_offset": 0,
+          "strike_points": 300,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "buy",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": -300,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        }
+      ],
+      "combined_target_pct": 50.0,
+      "combined_stop_pct": null,
+      "entry_time": "09:30"
+    }
   },
   {
     "n": 35,
     "name": "Iron Butterfly",
     "text": "At 09:20, sell the NIFTY weekly ATM call and put and buy wings 200 points on either side. Take profit at 40% of the net credit. Square off at 15:15. Backtest the last 1 year.",
-    "klass": "options-later",
-    "needs": "options (Phase 2)"
+    "klass": "strategy",
+    "needs": "options (Phase 2)",
+    "expect": {
+      "symbol": "NIFTY",
+      "timeframe": "1m",
+      "intraday": true,
+      "legs": [
+        {
+          "side": "sell",
+          "option_type": "CE",
+          "strike_offset": 0,
+          "strike_points": 0,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "sell",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": 0,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "buy",
+          "option_type": "CE",
+          "strike_offset": 0,
+          "strike_points": 200,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "buy",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": -200,
+          "expiry": "nearest_weekly",
+          "stop_pct": null,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        }
+      ],
+      "combined_target_pct": 40.0,
+      "combined_stop_pct": null,
+      "entry_time": "09:20"
+    }
   },
   {
     "n": 36,
@@ -310,7 +494,7 @@
     "n": 37,
     "name": "High IV Straddle",
     "text": "Sell the NIFTY weekly ATM straddle at 09:20 only on days when IV percentile is above 70. Stop at 30% of the premium collected. Square off at 15:15. Backtest the last 1 year.",
-    "klass": "options-later",
+    "klass": "needs-answer",
     "needs": "options (Phase 2)"
   },
   {
@@ -345,8 +529,42 @@
     "n": 40,
     "name": "Sensex Straddle",
     "text": "Sell the SENSEX weekly ATM straddle at 09:20 with a 30% stop on each leg. Square off at 15:15. Backtest the last 6 months.",
-    "klass": "options-later",
-    "needs": "options (Phase 2)"
+    "klass": "strategy",
+    "needs": "options (Phase 2)",
+    "expect": {
+      "symbol": "SENSEX",
+      "timeframe": "1m",
+      "intraday": true,
+      "legs": [
+        {
+          "side": "sell",
+          "option_type": "CE",
+          "strike_offset": 0,
+          "strike_points": null,
+          "expiry": "nearest_weekly",
+          "stop_pct": 30.0,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        },
+        {
+          "side": "sell",
+          "option_type": "PE",
+          "strike_offset": 0,
+          "strike_points": null,
+          "expiry": "nearest_weekly",
+          "stop_pct": 30.0,
+          "target_pct": null,
+          "reentry": "none",
+          "reentry_max": 0,
+          "lots": 1
+        }
+      ],
+      "combined_target_pct": null,
+      "combined_stop_pct": null,
+      "entry_time": "09:20"
+    }
   },
   {
     "n": 41,

@@ -190,14 +190,18 @@ def test_the_ai_reader_applies_the_options_refusal_itself() -> None:
     assert _fields(result) == {"instrument.strike_offset"}
 
 
-def test_the_ai_reader_applies_the_sell_option_refusal_itself() -> None:
-    """A sold option is refused the same way, never read as a backtestable trade."""
+def test_the_ai_reader_never_reads_a_sold_option() -> None:
+    """A sold option is a position of legs, read by the rules alone: the model
+    is never asked, and the rules' own question ("bank" was not understood)
+    stands."""
     fake = Scripted(GOOD)
-    result = llm.parse_llm(
-        "Sell the NIFTY weekly ATM call, bank 50% of the premium, SL 2%", transport=fake
-    )
+    text = "Sell the NIFTY weekly ATM call, bank 50% of the premium, SL 2%"
+    assert llm.parse_llm(text, transport=fake) is None
+    result = llm.translate(text, transport=fake)
     assert fake.calls == []
-    assert _fields(result) == {"instrument.trade_as"}
+    assert result.spec is None
+    assert result.source == "rules"
+    assert _fields(result) == {"unparsed"}
 
 
 def test_futures_are_refused_without_asking_the_model() -> None:

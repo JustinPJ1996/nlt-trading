@@ -68,7 +68,9 @@ def assumptions(
         "within the safety limits shown with the strategy.",
         fill_line,
     ]
-    if spec.instrument.is_option:
+    if spec.instrument.legs:
+        out.extend(_legs_assumptions(spec))
+    elif spec.instrument.is_option:
         out.append(
             f"The signal is judged on {spec.instrument.symbol}'s own candles. The option is "
             "chosen at that moment: the listed strike nearest the index's close on the signal "
@@ -110,11 +112,77 @@ def assumptions(
     return out
 
 
+def _legs_assumptions(spec: StrategySpec) -> list[str]:
+    """What `nlt.engine.legs_backtest` does, for sold and multi-leg option positions."""
+    legs = spec.instrument.legs
+    sym = spec.instrument.symbol
+    sells = any(leg.side == "sell" for leg in legs)
+    out = [
+        f"The signal is judged on {sym}'s own candles. Every option in the position is chosen "
+        "at that moment from the index's close on the signal candle: strikes counted from the "
+        "nearest listed strike, or the listed strike nearest the number of points asked for. "
+        "If nothing is listed close enough, the signal is skipped -- the strike is never moved.",
+        "Option prices come from real trades only, minute by minute. Every option in the "
+        "position must trade in the candle the trade is placed in, or none of them is opened; "
+        "another strike is never used.",
+    ]
+    if any(leg.stop_pct or leg.target_pct for leg in legs):
+        out.append(
+            "Each option's stop loss and target are percentages of that option's own price at "
+            "the close of the signal candle. A sold option's stop is above the price it was "
+            "sold at. A stop on one option closes only that option; the others stay open."
+        )
+    if spec.exit.combined_target_pct or spec.exit.combined_stop_pct:
+        out.append(
+            "The whole position's profit or loss is compared with the premium at the signal. "
+            "Candles cannot show when inside them each option was at its high or low, so the "
+            "combined stop assumes every option was at its worst at the same moment, and the "
+            "combined target counts only closing prices. When either is met, every option is "
+            "closed at the next candle's opening price."
+        )
+    for leg in legs:
+        if leg.reentry == "none":
+            continue
+        how = (
+            "the same option is sold again once its price comes back to where it was first sold"
+            if leg.reentry == "same_strike_at_cost"
+            else "a strike is chosen afresh straight away and sold"
+        )
+        if leg.side == "buy":
+            how = how.replace("sold again", "bought again").replace("and sold", "and bought")
+        out.append(
+            f"After the {leg.option_type} option's own stop loss, {how}, up to "
+            f"{leg.reentry_max} time(s), never at or after "
+            f"{spec.schedule.no_entry_after:%H:%M}, and only if the money for it fits. Its "
+            "new stop is measured from its new price."
+        )
+        break
+    out.append(
+        f"A same-day square-off closes every option at the {spec.schedule.square_off:%H:%M} "
+        "price itself. A position still open on its nearest option's expiry day is closed "
+        "then, every option together, so no option is ever held to settlement."
+    )
+    if sells:
+        pct = spec.risk.max_position_pct or 20
+        out.append(
+            "Selling is held on margin: the exchange margin for the position is worked out for "
+            f"the day it opened, and as many sets are opened as keep it within {pct:g}% of the "
+            "account and within the money left spare. Premium for bought options is paid in "
+            "full on top of the margin."
+        )
+    out.append(
+        f"The comparison is with simply holding {sym}. For a strategy that sells options that "
+        "is only a reference point: the two make money in different ways."
+    )
+    return out
+
+
 # Notes the engine and loader already write, which belong in the weak spots.
 # Matched by their opening words, so the wording stays in one place.
 _WEAK_SPOT_NOTE_STARTS = (
     "Sized at today's lot of",
     "FUTURES ON MARGIN",
+    "MARGIN AT ENTRY",
 )
 _WEAK_SPOT_NOTE_CONTAINS = ("the backtest only sees survivors",)
 
@@ -179,6 +247,25 @@ def weak_spots(
             "Charges use today's tax rates for every year tested; the tax on selling an "
             "option was lower in the years tested than it is today."
         )
+        legs = spec.instrument.legs
+        if any(leg.side == "sell" for leg in legs):
+            from nlt.spec.models import is_defined_risk
+
+            if not is_defined_risk(legs):
+                spots.append(
+                    "A sold option with nothing bought to protect it can lose far more than its "
+                    "stop loss: a sudden jump can blow straight past the stop, and the loss is "
+                    "whatever the price jumped to."
+                )
+            spots.append(
+                "The exchange's extra margin for sold options on their expiry day is counted "
+                "only from 20 Nov 2024, when it began."
+            )
+        if spec.exit.combined_target_pct or spec.exit.combined_stop_pct:
+            spots.append(
+                "A whole-position exit is decided when a candle closes and placed at the next "
+                "candle's open, so in a fast market it can fill well past its level."
+            )
         if spec.instrument.symbol == "SENSEX":
             spots.append(
                 "SENSEX trades on BSE, but is charged here at NSE's rates; BSE's exchange "

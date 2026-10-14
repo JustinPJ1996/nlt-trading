@@ -21,14 +21,19 @@ from nlt.indicators.registry import get as get_indicator
 from nlt.spec.models import (
     All,
     Any_,
+    AtTime,
     Compare,
     Condition,
     Const,
     IsTrue,
+    IvPercentile,
     Not,
+    OnExpiryDay,
+    OptionLeg,
     PercentChange,
     Ref,
     StrategySpec,
+    is_defined_risk,
 )
 
 _TIMEFRAME_WORDS = {
@@ -209,6 +214,15 @@ def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe:
             return f"{ref} rises {amount} over {bars}"
         return f"{ref}'s change over {bars} {_OP_WORDS[cond.op]} {_num(cond.value)}%"
 
+    if isinstance(cond, AtTime):
+        return f"the time is {cond.time:%H:%M}"
+
+    if isinstance(cond, OnExpiryDay):
+        return "it is expiry day"
+
+    if isinstance(cond, IvPercentile):
+        return f"the IV percentile {_OP_WORDS[cond.op]} {_num(cond.value)}"
+
     if isinstance(cond, All):
         parts = [_wrap(c, indicators, timeframe) for c in cond.conditions]
         return " and ".join(parts)
@@ -387,6 +401,17 @@ def _lot_size_for(spec: StrategySpec) -> int:
 
 def _sizing_desc(spec: StrategySpec) -> str:
     s = spec.sizing
+    if spec.instrument.legs and s.mode == "fixed_lots":
+        lot_size = _lot_size_for(spec)
+        if all(leg.lots == 1 for leg in spec.instrument.legs):
+            return (
+                f"{_plural(s.lots, 'lot')} of each option per trade (quantity "
+                f"{s.lots * lot_size:,} each, today's lot of {lot_size})"
+            )
+        return (
+            f"{_plural(s.lots, 'set')} of the options above per trade, each option's lots as "
+            f"listed (today's lot of {lot_size})"
+        )
     if s.mode == "fixed_lots" and spec.instrument.is_future:
         # Futures are ordered in lots, and "quantity 100" of gold would be 100
         # lots of 10 grams to anyone reading it. Say lots, and what they are.
@@ -423,7 +448,8 @@ def _risk_lines(spec: StrategySpec) -> list[str]:
     # fixed count cannot bound risk across a market priced from Rs 50 to
     # Rs 20,000 a share -- the rupee limits above do that instead, and stating
     # a cap that is not enforced would be the readback lying again.
-    if r.max_position_pct is not None and spec.instrument.is_future:
+    sells = any(leg.side == "sell" for leg in spec.instrument.legs)
+    if r.max_position_pct is not None and (spec.instrument.is_future or sells):
         # A futures lot ties up its exchange margin, not its value (see
         # `nlt.engine.backtest._margin_rate`); say what the limit measures.
         lines.append(
@@ -462,6 +488,10 @@ _FIXED_SOURCES = {
     "option.expiry_close": WORKED_OUT,
     "option.skip_if_no_trade": WORKED_OUT,
     "option.banknifty_weekly_note": WORKED_OUT,
+    "option.entry_fill": WORKED_OUT,
+    "option.iv_method": WORKED_OUT,
+    "option.hedge": WORKED_OUT,
+    "option.naked": WORKED_OUT,
 }
 
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
@@ -471,13 +501,294 @@ def _numbers(text: str) -> set[float]:
     return {float(n) for n in _NUMBER.findall(text.replace(",", ""))}
 
 
+_WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_EVERY_WEEKDAY = [0, 1, 2, 3, 4]
+
+
+def _weekdays_words(weekdays: list[int]) -> str | None:
+    """ "every Monday" / "on Mondays and Thursdays", or None for every weekday."""
+    if weekdays == _EVERY_WEEKDAY:
+        return None
+    names = [_WEEKDAY_NAMES[d] for d in weekdays]
+    if len(names) == 1:
+        return f"every {names[0]}"
+    plural = [f"{n}s" for n in names]
+    return "on " + ", ".join(plural[:-1]) + f" and {plural[-1]}"
+
+
+def _entry_line(spec: StrategySpec, indicators: dict, timeframe: str) -> str:
+    """ "At 09:20 each day", "At 09:35 on expiry day", or "When <condition>".
+
+    A time of day leads the line because that is how it was said; every other
+    part of the rule follows "only when".
+    """
+    conditions = spec.entry.conditions if isinstance(spec.entry, All) else [spec.entry]
+    at = next((c for c in conditions if isinstance(c, AtTime)), None)
+    days = _weekdays_words(spec.schedule.weekdays)
+    if at is None:
+        line = f"When {_describe_condition(spec.entry, indicators, timeframe)}"
+        return f"{line}, only {days}" if days else line
+    rest = [c for c in conditions if c is not at]
+    expiry_day = any(isinstance(c, OnExpiryDay) for c in rest)
+    others = [c for c in rest if not isinstance(c, OnExpiryDay)]
+    parts = [f"At {at.time:%H:%M}"]
+    if expiry_day:
+        parts.append("on expiry day")
+    if days:
+        parts.append(days)
+    if not expiry_day and not days:
+        parts.append("each day")
+    line = " ".join(parts)
+    if others:
+        line += ", only when " + " and ".join(_wrap(c, indicators, timeframe) for c in others)
+    return line
+
+
+def _conditions_in(condition) -> list:
+    if isinstance(condition, (All, Any_)):
+        return [x for c in condition.conditions for x in _conditions_in(c)]
+    if isinstance(condition, Not):
+        return _conditions_in(condition.condition)
+    return [condition]
+
+
+_EXPIRY_ADJ = {
+    "nearest_weekly": "nearest-weekly",
+    "next_weekly": "next-weekly",
+    "monthly": "monthly",
+}
+_TYPE_WORD = {"CE": "call", "PE": "put"}
+
+
+def _leg_strike(leg: OptionLeg) -> str:
+    if leg.strike_points is not None:
+        if leg.strike_points == 0:
+            return "at-the-money (the strike nearest the index)"
+        where = "above" if leg.strike_points > 0 else "below"
+        return f"strike nearest {abs(leg.strike_points)} points {where} the index"
+    if leg.strike_offset == 0:
+        return "at-the-money"
+    way = "out of the money" if leg.strike_offset > 0 else "in the money"
+    return f"{_plural(abs(leg.strike_offset), 'strike')} {way}"
+
+
+def _leg_desc(leg: OptionLeg) -> str:
+    """ "Sell the nearest-weekly put, strike nearest 200 points below the index"."""
+    side = "Sell" if leg.side == "sell" else "Buy"
+    lots = f"{_plural(leg.lots, 'lot')} of " if leg.lots != 1 else ""
+    return f"{side} {lots}the {_EXPIRY_ADJ[leg.expiry]} {_TYPE_WORD[leg.option_type]}, {_leg_strike(leg)}"
+
+
+def _leg_short(leg: OptionLeg) -> str:
+    """ "the sold call (at-the-money)" -- enough to tell legs apart in an exit line."""
+    side = "sold" if leg.side == "sell" else "bought"
+    return f"the {side} {_TYPE_WORD[leg.option_type]} ({_leg_strike(leg)})"
+
+
+def _times(n: int) -> str:
+    return {1: "once", 2: "twice"}.get(n, f"{n} times")
+
+
+def _leg_move(v: str, side: str, rises: bool) -> str:
+    """How far a leg's price must move, said the way the engine measures it.
+
+    The distance is a percentage of the option's price at the signal, counted
+    from the price we actually got (the engine's rule for every strategy: the
+    levels belong to the setup, see HANDOFF.md). "Rises 25% above its price at
+    the signal" would be a different, untrue level whenever the fill differs
+    from the signal price.
+    """
+    where = "where we sold it" if side == "sell" else "where we bought it"
+    direction = "rises above" if rises else "falls below"
+    return f"its price {direction} {where} by {v}% of its price at the signal"
+
+
+def _leg_percent_lines(legs: list[OptionLeg], attr: str) -> list[str]:
+    """One line for a stop (or target) shared by every sold option, else one per leg."""
+    with_value = [leg for leg in legs if getattr(leg, attr) is not None]
+    if not with_value:
+        return []
+    sold = [leg for leg in legs if leg.side == "sell"]
+    values = {getattr(leg, attr) for leg in with_value}
+    is_stop = attr == "stop_pct"
+    title = "Stop loss" if is_stop else "Take profit"
+    if with_value == sold and len(values) == 1:
+        move = _leg_move(_num(values.pop()), "sell", rises=is_stop)
+        if len(sold) == 1:
+            return [f"{title}: the sold option is closed if {move}"]
+        return [f"{title} on each sold option: closed if {move}"]
+    lines = []
+    for leg in with_value:
+        # A sold option loses when its price rises; a bought one when it falls.
+        rises = (leg.side == "sell") == is_stop
+        move = _leg_move(_num(getattr(leg, attr)), leg.side, rises=rises)
+        lines.append(f"{title} on {_leg_short(leg)}: closed if {move}")
+    return lines
+
+
+def _reentry_lines(legs: list[OptionLeg]) -> list[str]:
+    lines = []
+    groups: dict[tuple[str, int], list[OptionLeg]] = {}
+    for leg in legs:
+        if leg.reentry != "none":
+            groups.setdefault((leg.reentry, leg.reentry_max), []).append(leg)
+    for (kind, count), group in groups.items():
+        if kind == "same_strike_at_cost":
+            how = "re-sell the same option when its price comes back to where we first sold it"
+        elif all(_leg_strike(leg).startswith("at-the-money") for leg in group):
+            how = "sell a fresh at-the-money option at the next candle"
+        else:
+            how = "sell a fresh option at the next candle, its strike picked again the same way"
+        if len(group) == len([leg for leg in legs if leg.side == "sell"]):
+            who = "a sold option's"
+        else:
+            who = " or ".join(f"{_leg_short(leg)}'s" for leg in group)
+        lines.append(f"After {who} stop loss closes it, {how} -- at most {_times(count)}")
+    return lines
+
+
+def _legs_exit_lines(
+    spec: StrategySpec, indicators: dict[str, dict], timeframe: str
+) -> list[tuple[str, str]]:
+    from nlt.translate.options_words import _credit_shape
+
+    legs = spec.instrument.legs
+    e = spec.exit
+    lines: list[tuple[str, str]] = []
+    credit = _credit_shape(legs)
+    lines += [(line, "exit.stop") for line in _leg_percent_lines(legs, "stop_pct")]
+    # Said exactly as `nlt.engine.legs_backtest._combined_decision` judges it:
+    # against the premium at the SIGNAL prices (not the fills), the stop at
+    # every option's worst price of the candle, the target on closes, and
+    # either one filled at the next candle's open.
+    whole = "the credit at the signal prices" if credit else "the premium paid at the signal prices"
+    if e.combined_stop_pct:
+        lines.append(
+            (
+                f"Stop loss when the position's loss reaches {_num(e.combined_stop_pct)}% of "
+                f"{whole} (judged with each option at its worst price of the candle; closed at "
+                "the next candle's opening prices)",
+                "exit.combined_stop",
+            )
+        )
+    lines += [(line, "exit.target") for line in _leg_percent_lines(legs, "target_pct")]
+    if e.combined_target_pct:
+        lines.append(
+            (
+                f"Take profit when the position's profit reaches {_num(e.combined_target_pct)}% "
+                f"of {whole} (judged on candle closes; closed at the next candle's opening "
+                "prices)",
+                "exit.combined_target",
+            )
+        )
+    lines += [(line, "legs.reentry") for line in _reentry_lines(legs)]
+    if e.condition is not None:
+        condition = _describe_condition(e.condition, indicators, timeframe)
+        lines.append((f"Exit when {condition}", "exit.condition"))
+    if e.max_bars_held:
+        bars = _plural(e.max_bars_held, _bar_word(timeframe))
+        lines.append((f"Exit after {bars} if still open", "exit.max_bars_held"))
+
+    if any(leg.side == "sell" for leg in legs):
+        if is_defined_risk(legs):
+            lines.append(
+                ("The bought options cap the worst loss, so no stop loss is needed", "option.hedge")
+            )
+        else:
+            lines.append(
+                (
+                    "Selling an option without a bought one to protect it: a sudden jump can "
+                    "blow straight past the stop",
+                    "option.naked",
+                )
+            )
+
+    square_off = spec.schedule.square_off.strftime("%H:%M")
+    if spec.schedule.intraday and timeframe != "1d":
+        lines.append((f"Square off at {square_off} if still open", "schedule"))
+        lines.append(
+            (
+                f"If still open on expiry day, closed at {square_off} "
+                "(the opening price of that candle, never held to settlement)",
+                "option.expiry_close",
+            )
+        )
+    else:
+        held = f"held until expiry day, then closed at {square_off} that day (never left to settle)"
+        other_exits = any(part.startswith("exit.") for _line, part in lines)
+        lines.append(
+            (f"Otherwise {held}" if other_exits else held[0].upper() + held[1:], "schedule")
+        )
+    lines.append(
+        (
+            "If any of the chosen options didn't trade in the candle we'd open in, that signal "
+            "is skipped -- never a different strike",
+            "option.skip_if_no_trade",
+        )
+    )
+    return lines
+
+
+def _legs_sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
+    indicators = {i.id: i for i in spec.indicators}
+    timeframe = spec.instrument.timeframe
+    legs = spec.instrument.legs
+    trades = [(f"{spec.instrument.symbol} options", "instrument")]
+    trades += [(_leg_desc(leg), "option.legs") for leg in legs]
+    if spec.instrument.symbol == "BANKNIFTY" and any(leg.expiry != "monthly" for leg in legs):
+        from nlt.translate.options_words import BANKNIFTY_WEEKLY_LAST_EXPIRY
+
+        trades.append(
+            (
+                "BANKNIFTY weekly options stopped trading after "
+                f"{BANKNIFTY_WEEKLY_LAST_EXPIRY:%d %b %Y} -- a weekly expiry won't find a real "
+                "contract after that date.",
+                "option.banknifty_weekly_note",
+            )
+        )
+    trades.append((_timeframe_desc(spec), "timeframe"))
+
+    entry = [(_entry_line(spec, indicators, timeframe), "entry")]
+    parts = _conditions_in(spec.entry)
+    at = next((c for c in parts if isinstance(c, AtTime)), None)
+    if at is not None:
+        t = f"{at.time:%H:%M}"
+        entry.append(
+            (
+                f"Opens at the {t} price; the strikes are picked from the index's close on the "
+                f"candle ending {t}",
+                "option.entry_fill",
+            )
+        )
+    for iv in (c for c in parts if isinstance(c, IvPercentile)):
+        past = (
+            "the past year" if iv.lookback_days == 252 else f"the past {iv.lookback_days} sessions"
+        )
+        word = {"gt": "above", "gte": "at or above", "lt": "below", "lte": "at or below"}[iv.op]
+        entry.append(
+            (
+                f"IV percentile {word} {_num(iv.value)} (implied volatility of the at-the-money "
+                f"options at the previous day's close, ranked against {past})",
+                "option.iv_method",
+            )
+        )
+    return [
+        ("WHAT IT TRADES", trades),
+        ("WHEN IT OPENS THE POSITION", entry),
+        ("WHEN IT CLOSES THE POSITION", _legs_exit_lines(spec, indicators, timeframe)),
+        ("HOW MUCH", [(_sizing_desc(spec), "sizing")]),
+        ("SAFETY LIMITS", [(line, "risk") for line in _risk_lines(spec)]),
+    ]
+
+
 def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
     """(heading, [(line, part)]) -- the one place the readback's lines are made."""
+    if spec.instrument.legs:
+        return _legs_sections(spec)
     indicators = {i.id: i for i in spec.indicators}
     timeframe = spec.instrument.timeframe
     entry_verb = "BUYS" if spec.direction == "long" else "SHORTS"
     exit_verb = "SELLS" if spec.direction == "long" else "COVERS"
-    entry = _describe_condition(spec.entry, indicators, timeframe)
     trades = [(_instrument_desc(spec), "instrument")]
     if spec.instrument.is_future:
         trades.append((_contract_desc(spec), "contract"))
@@ -499,7 +810,7 @@ def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
     trades.append((_timeframe_desc(spec), "timeframe"))
     return [
         ("WHAT IT TRADES", trades),
-        (f"WHEN IT {entry_verb}", [(f"When {entry}", "entry")]),
+        (f"WHEN IT {entry_verb}", [(_entry_line(spec, indicators, timeframe), "entry")]),
         (f"WHEN IT {exit_verb}", _exit_lines(spec, indicators, timeframe)),
         ("HOW MUCH", [(_sizing_desc(spec), "sizing")]),
         ("SAFETY LIMITS", [(line, "risk") for line in _risk_lines(spec)]),
