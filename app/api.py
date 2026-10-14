@@ -438,6 +438,16 @@ def _chart(bt_equity: pd.Series, bench_equity: pd.Series) -> list[dict]:
     ]
 
 
+def _price_inr(value: float) -> str:
+    """An option's price, to the paisa: "Rs 0.20", "Rs 1,234.50".
+
+    Rounded to whole rupees an option bought back at 20 paise reads "Rs 0", and
+    a stop at Rs 135.43 reads as if it were Rs 135 -- untrue on the screen.
+    """
+    rupees, paise = f"{abs(value):.2f}".split(".")
+    return ("-" if value < 0 else "") + f"{format_inr(int(rupees))}.{paise}"
+
+
 def _signed_inr(value: float) -> str:
     return ("+" if value >= 0 else "-") + format_inr(abs(value))
 
@@ -446,13 +456,14 @@ def _trade_row(t, spec, tf: str) -> dict:
     """One row of the trade table. A multi-leg position is one row, its options
     listed under it (`legs`), each with its own prices and reason."""
     reason = logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason)
+    price = _price_inr if spec.instrument.is_option else format_inr
     row = {
         "symbol": t.symbol or spec.instrument.symbol,
         "direction": "Buy" if t.direction == "long" else "Short",
         "entered": _time_text(t.entry_time, tf),
-        "entry_price": format_inr(t.entry_price),
+        "entry_price": price(t.entry_price),
         "exited": _time_text(t.exit_time, tf),
-        "exit_price": format_inr(t.exit_price),
+        "exit_price": price(t.exit_price),
         "reason": reason + (" (at its last traded price)" if t.exit_untraded else ""),
         "why": t.contract_why or None,
         "pnl": round(float(t.net_pnl), 2),
@@ -466,8 +477,8 @@ def _trade_row(t, spec, tf: str) -> dict:
     row.update(
         symbol=" + ".join(labels),
         direction="Net credit" if credit else "Net debit",
-        entry_price=f"{format_inr(t.entry_price)} a unit",
-        exit_price=f"{format_inr(t.exit_price)} a unit to close",
+        entry_price=f"{_price_inr(t.entry_price)} a unit",
+        exit_price=f"{_price_inr(t.exit_price)} a unit to close",
         reason=f"last option out: {reason}",
         why=None,
         legs=[
@@ -476,10 +487,10 @@ def _trade_row(t, spec, tf: str) -> dict:
                 "side": "Sold" if f.side == "sell" else "Bought",
                 "quantity": f.quantity,
                 "entered": _time_text(f.entry_time, tf),
-                "entry_price": format_inr(f.entry_price),
+                "entry_price": _price_inr(f.entry_price),
                 "exited": _time_text(f.exit_time, tf),
-                "exit_price": format_inr(f.exit_price),
-                "stop": format_inr(f.stop_level) if f.stop_level is not None else None,
+                "exit_price": _price_inr(f.exit_price),
+                "stop": _price_inr(f.stop_level) if f.stop_level is not None else None,
                 "reason": logic._EXIT_WORDS.get(f.exit_reason, f.exit_reason)
                 + (" (at its last traded price)" if f.exit_untraded else ""),
                 "reentry": f.reentry,

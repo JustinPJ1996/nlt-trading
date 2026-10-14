@@ -17,6 +17,7 @@ for bought units -- the real SPAN module is tested on its own.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -825,6 +826,11 @@ def test_trade_table_lists_every_leg_of_a_position():
         ("Sold", "NIFTY 21,500 CE", "stop loss hit"),
         ("Sold", "NIFTY 21,500 PE", "end-of-day square-off"),
     ]
+    # Option prices to the paisa, on the position and on every leg.
+    shown = [row["entry_price"], row["exit_price"]] + [
+        leg[k] for leg in row["legs"] for k in ("entry_price", "exit_price", "stop")
+    ]
+    assert all(re.search(r"Rs [\d,]+\.\d\d", text) for text in shown), shown
 
 
 # --------------------------------------------- known answer, on the real data
@@ -1050,3 +1056,26 @@ def test_known_answer_straddle_with_the_real_exchange_margin():
     assert t.quantity == 65
     assert t.net_pnl == pytest.approx(5690.85)
     assert any("NSE's margin file for 2 Jan 2025" in w for w in r.weak_spots)
+
+
+def test_margin_sources_are_listed_first_to_last_opened_not_alphabetically() -> None:
+    from nlt.engine.legs_backtest import _count_warnings, _Counts
+
+    counts = _Counts()
+    for source in (
+        "NSE's file for 31 Dec 2024",
+        "NSE's file for 2 Jan 2025",
+        "NSE's file for 1 Apr 2025",
+    ):
+        counts.margin_sources[source] = 1
+    text = " ".join(_count_warnings(counts, dt.time(15, 15), _spec(), 2_500_000))
+    assert "(NSE's file for 31 Dec 2024 ... NSE's file for 1 Apr 2025)" in text
+
+
+def test_option_prices_show_paise_never_round_to_zero():
+    from app.api import _price_inr
+
+    assert _price_inr(0.2) == "Rs 0.20"
+    assert _price_inr(135.425) in ("Rs 135.42", "Rs 135.43")
+    assert _price_inr(1999.999) == "Rs 2,000.00"
+    assert _price_inr(-12345.5) == "-Rs 12,345.50"

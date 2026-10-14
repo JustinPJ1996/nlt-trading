@@ -1164,7 +1164,10 @@ def _combined_decision(pos, spec, execution, ts) -> tuple[str, bool] | None:
 def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec, capital: float):
     out: list[str] = []
     if counts.margin_sources:
-        sources = sorted(counts.margin_sources)
+        # In the order positions opened (a dict keeps insertion order), so
+        # first ... last is a date range. Sorting the text would put
+        # "1 Apr" before "31 Dec" and state a range that never happened.
+        sources = list(counts.margin_sources)
         shown = sources[0] if len(sources) == 1 else f"{sources[0]} ... {sources[-1]}"
         out.append(
             "MARGIN AT ENTRY: each selling position was held on the margin worked out for the "
