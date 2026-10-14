@@ -100,6 +100,54 @@ class PercentChange(Base):
     value: float
 
 
+class AtTime(Base):
+    """True on the closed candle that ENDS at `time`, so the fill is at `time`'s price.
+
+    "Sell the straddle at 09:20" is a signal on the candle that closes at 09:20
+    and a fill at the next candle's open -- the 09:20 price itself -- which keeps
+    the closed-candle / next-open rule intact. A candle size whose candles
+    never end at `time` (09:20 on 15-minute candles) cannot express it; the
+    engine raises rather than drifting to a nearby candle.
+    """
+
+    kind: Literal["at_time"] = "at_time"
+    time: dt.time
+
+    @field_validator("time")
+    @classmethod
+    def _inside_the_session(cls, v: dt.time) -> dt.time:
+        if not dt.time(9, 16) <= v <= dt.time(15, 29):
+            raise ValueError(f"an entry time of {v:%H:%M} is outside the 09:15-15:30 session")
+        if v.second or v.microsecond:
+            raise ValueError("an entry time is a whole minute")
+        return v
+
+
+class OnExpiryDay(Base):
+    """True on candles of a day on which the strategy's option contract expires.
+
+    Which expiry is the legs' own (`Instrument.expiry` / each leg's `expiry`);
+    the engine supplies the calendar from the dataset's listed expiries.
+    """
+
+    kind: Literal["expiry_day"] = "expiry_day"
+
+
+class IvPercentile(Base):
+    """Compares the day's implied-volatility percentile against `value`.
+
+    The IV is worked out from the at-the-money option's own price (never India
+    VIX) and ranked against the previous `lookback_days` sessions. Only values
+    known before the candle closes may be used -- the engine supplies the
+    series and is responsible for that.
+    """
+
+    kind: Literal["iv_percentile"] = "iv_percentile"
+    op: Literal["lt", "lte", "gt", "gte"]
+    value: float = Field(ge=0, le=100)
+    lookback_days: int = Field(default=252, ge=20, le=500)
+
+
 class All(Base):
     kind: Literal["all"] = "all"
     conditions: list[Condition] = Field(min_length=1, max_length=10)
@@ -116,7 +164,7 @@ class Not(Base):
 
 
 Condition = Annotated[
-    Compare | IsTrue | PercentChange | All | Any_ | Not,
+    Compare | IsTrue | PercentChange | AtTime | OnExpiryDay | IvPercentile | All | Any_ | Not,
     Field(discriminator="kind"),
 ]
 
@@ -186,6 +234,20 @@ class ExitRules(Base):
     condition: Condition | None = None
     max_bars_held: int | None = Field(default=None, ge=1, le=5000)
 
+    # Multi-leg option positions only: exits on the whole position's P&L,
+    # as a percentage of the net premium at the signal -- the credit received
+    # for a selling position, the debit paid for a buying one. "Exit at 50% of
+    # the credit received" is `combined_target_pct=50`; "stop at 30% of the
+    # premium collected" is `combined_stop_pct=30` (a loss of 30% of it).
+    combined_target_pct: float | None = Field(default=None, gt=0, le=100)
+    combined_stop_pct: float | None = Field(default=None, gt=0, le=1000)
+
+    # Set by a caller that knows every exit lives elsewhere -- a multi-leg
+    # position whose only exits are its legs' own stops, or a hedged position
+    # closed by the square-off. The spec-level check below then cannot see
+    # them, so `StrategySpec._legs_are_consistent` re-checks it with the legs.
+    exits_on_legs: bool = False
+
     @model_validator(mode="after")
     def _has_an_exit(self):
         if not any(
@@ -196,6 +258,9 @@ class ExitRules(Base):
                 self.stop_atr_mult,
                 self.condition,
                 self.max_bars_held,
+                self.combined_target_pct,
+                self.combined_stop_pct,
+                self.exits_on_legs,
             ]
         ):
             raise ValueError(
@@ -208,7 +273,9 @@ class ExitRules(Base):
 
     @property
     def has_stop(self) -> bool:
-        return bool(self.stop_pct or self.trailing_stop_pct or self.stop_atr_mult)
+        return bool(
+            self.stop_pct or self.trailing_stop_pct or self.stop_atr_mult or self.combined_stop_pct
+        )
 
 
 # ------------------------------------------------------------------ sizing
@@ -307,6 +374,51 @@ INDICES = ("NIFTY", "BANKNIFTY")
 OPTION_UNDERLYINGS = (*INDICES, "SENSEX")
 
 
+class OptionLeg(Base):
+    """One option in a multi-leg (or single sold) position (Phase 2, batch 2).
+
+    The strike is chosen at the signal, from the index's close on the signal
+    candle, exactly as for a bought single option, in one of two ways:
+
+    * `strike_offset` -- listed strikes away from at-the-money; +1 is one
+      strike out of the money *for this leg's type* (higher for a call, lower
+      for a put).
+    * `strike_points` -- index points from the spot, signed by direction:
+      -200 is "200 points below spot", +300 "300 points above". The listed
+      strike nearest spot + points is taken; a target with no listed strike
+      within one strike gap is refused, never clamped.
+
+    `stop_pct` / `target_pct` are this leg's own exits, as a percentage of its
+    price at the signal: a sold leg is stopped when its price RISES by
+    `stop_pct`, a bought leg when it falls.
+    """
+
+    side: Literal["buy", "sell"]
+    option_type: Literal["CE", "PE"]
+    strike_offset: int = Field(default=0, ge=-10, le=10)
+    strike_points: int | None = Field(default=None, ge=-5000, le=5000)
+    expiry: Literal["nearest_weekly", "next_weekly", "monthly"] = "nearest_weekly"
+    lots: int = Field(default=1, ge=1, le=10, description="Lots per set; a ratio, not a size.")
+    stop_pct: float | None = Field(default=None, gt=0, le=1000)
+    target_pct: float | None = Field(default=None, gt=0, le=100)
+    # What happens after this leg's own stop closes it. "same_strike_at_cost"
+    # re-sells the same contract when its price comes back to the first fill;
+    # "fresh_strike_now" re-picks the strike at the next candle. Never guessed:
+    # the reader asks which one when the words do not say.
+    reentry: Literal["none", "same_strike_at_cost", "fresh_strike_now"] = "none"
+    reentry_max: int = Field(default=0, ge=0, le=5)
+
+    @model_validator(mode="after")
+    def _one_strike_rule(self):
+        if self.strike_points is not None and self.strike_offset != 0:
+            raise ValueError(
+                "a leg's strike is either strikes from ATM or points from spot, not both"
+            )
+        if (self.reentry == "none") != (self.reentry_max == 0):
+            raise ValueError("re-entry needs both a kind and a count (or neither)")
+        return self
+
+
 class Instrument(Base):
     """What the signal is computed on, and what actually gets traded.
 
@@ -346,6 +458,11 @@ class Instrument(Base):
         description="Strikes away from at-the-money. 0 = ATM, +1 = one strike OTM.",
     )
     expiry: Literal["nearest_weekly", "next_weekly", "monthly"] = "nearest_weekly"
+
+    # Batch 2: a sold option or several options opened together. Empty for
+    # everything else, including batch 1's single bought option, which keeps
+    # `option_type` / `strike_offset` above and its own engine.
+    legs: list[OptionLeg] = Field(default_factory=list, max_length=4)
 
     @field_validator("symbol")
     @classmethod
@@ -414,6 +531,26 @@ class Instrument(Base):
                     f"{', '.join(OPTION_UNDERLYINGS)}"
                 )
         return self
+
+    @model_validator(mode="after")
+    def _legs_are_options(self):
+        if not self.legs:
+            return self
+        if self.trade_as != "option":
+            raise ValueError("option legs need trade_as='option'")
+        if self.option_type != "auto" or self.strike_offset != 0:
+            raise ValueError("a multi-leg position describes its options in `legs` only")
+        if self.symbol not in OPTION_UNDERLYINGS:
+            raise ValueError(
+                f"{self.symbol} options are not supported; supported: {', '.join(OPTION_UNDERLYINGS)}"
+            )
+        if len(set(self.legs)) != len(self.legs):
+            raise ValueError("two legs are identical -- write them as one leg with more lots")
+        return self
+
+    @property
+    def is_multi_leg(self) -> bool:
+        return bool(self.legs)
 
     @property
     def is_future(self) -> bool:
@@ -502,11 +639,102 @@ class StrategySpec(Base):
         """
         if self.instrument.trade_as == "option" and self.instrument.option_type != "auto":
             if self.direction != "long":
-                raise ValueError("selling (writing) an option is not supported -- only buying one")
+                raise ValueError(
+                    "a sold option is written as a leg (instrument.legs), not as direction='short'"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _legs_are_consistent(self):
+        """The safety rules for selling (Justin, 2026-10-14).
+
+        * Every position needs a way to lose no more than it can bear. A
+          **defined-risk** position -- every sold option covered by a bought
+          one of the same type and expiry, at least as many lots, further out
+          -- is protected by its hedge, so it needs no stop loss. Anything
+          else (a plain sell, a straddle, a strangle) must have a stop: on
+          every sold leg, or on the combined position.
+        * `direction` is "long" by convention: each leg carries its own side.
+        * Per-leg exits make no sense on a single-option spec's own fields, and
+          the stock-style exits measured from the index make no sense on legs.
+        """
+        legs = self.instrument.legs
+        if not legs:
+            if self.exit.combined_target_pct or self.exit.combined_stop_pct:
+                raise ValueError("combined exits apply only to multi-leg option positions")
+            if self.exit.exits_on_legs:
+                raise ValueError("exits_on_legs applies only to multi-leg option positions")
+            return self
+        if self.direction != "long":
+            raise ValueError("a multi-leg position keeps direction='long'; each leg has its side")
+        if self.exit.stop_pct or self.exit.target_pct or self.exit.trailing_stop_pct:
+            raise ValueError(
+                "on a multi-leg position, a stop or target is per leg (legs[].stop_pct) "
+                "or on the combined premium (combined_stop_pct)"
+            )
+        if self.exit.stop_atr_mult:
+            raise ValueError("an ATR stop is in index points and cannot apply to option legs")
+        if not is_defined_risk(legs):
+            unstopped = [leg for leg in legs if leg.side == "sell" and leg.stop_pct is None]
+            if unstopped and self.exit.combined_stop_pct is None:
+                raise ValueError(
+                    "a sold option without a bought one protecting it needs a stop loss -- "
+                    "on each sold leg, or on the combined premium"
+                )
+        if self.exit.exits_on_legs and not (
+            any(leg.stop_pct or leg.target_pct for leg in legs)
+            or (self.schedule.intraday and self.instrument.timeframe != "1d")
+        ):
+            raise ValueError(
+                "exits_on_legs is set, but no leg has a stop or target and there is no "
+                "same-day square-off"
+            )
+        if any(leg.reentry != "none" and leg.stop_pct is None for leg in legs):
+            raise ValueError("a leg can only re-enter after its own stop loss closes it")
         return self
 
     def indicator_ids(self) -> list[str]:
         return [i.id for i in self.indicators]
+
+
+def is_defined_risk(legs: list[OptionLeg]) -> bool:
+    """True when every sold option is covered by a bought one that caps its loss.
+
+    Covered means: a bought leg of the same type and expiry, with at least as
+    many lots in total, further out of the money than the sold one. Whether a
+    strike is "further out" can only be known for strikes fixed relative to one
+    another *in the same unit* -- both counted in listed strikes, or both in
+    points -- so mixed units are treated as not covered (refuse, never assume).
+    A ratio position (sell 2, buy 1) is not covered.
+    """
+    sells = [leg for leg in legs if leg.side == "sell"]
+    buys = [leg for leg in legs if leg.side == "buy"]
+    if not sells:
+        return True
+    for kind in ("CE", "PE"):
+        for expiry in {leg.expiry for leg in sells}:
+            s_legs = [x for x in sells if x.option_type == kind and x.expiry == expiry]
+            b_legs = [x for x in buys if x.option_type == kind and x.expiry == expiry]
+            if not s_legs:
+                continue
+            for s_leg in s_legs:
+                if not any(_further_out(b, s_leg) for b in b_legs):
+                    return False
+            if sum(x.lots for x in b_legs) < sum(x.lots for x in s_legs):
+                return False
+    return True
+
+
+def _further_out(bought: OptionLeg, sold: OptionLeg) -> bool:
+    if (bought.strike_points is None) != (sold.strike_points is None):
+        return False
+    if bought.strike_points is not None:
+        # Points are signed by direction: above spot is +, below is -.
+        if sold.option_type == "CE":
+            return bought.strike_points > sold.strike_points
+        return bought.strike_points < sold.strike_points
+    # Offsets count strikes out of the money for the leg's own type.
+    return bought.strike_offset > sold.strike_offset
 
 
 def _walk_refs(condition) -> list[Ref]:

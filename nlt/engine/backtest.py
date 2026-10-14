@@ -81,11 +81,14 @@ from nlt.engine.metrics import compute_metrics
 from nlt.spec.models import (
     All,
     Any_,
+    AtTime,
     Compare,
     Condition,
     Const,
     IsTrue,
+    IvPercentile,
     Not,
+    OnExpiryDay,
     Operand,
     PercentChange,
     Ref,
@@ -1265,6 +1268,13 @@ def _describe(condition: Condition) -> str:
             f"{ref} changed {verbs[condition.op]} {condition.value}% "
             f"over {condition.lookback} bar(s)"
         )
+    if isinstance(condition, AtTime):
+        return f"the clock reached {condition.time:%H:%M}"
+    if isinstance(condition, OnExpiryDay):
+        return "expiry day"
+    if isinstance(condition, IvPercentile):
+        verbs = {"lt": "<", "lte": "<=", "gt": ">", "gte": ">="}
+        return f"IV percentile {verbs[condition.op]} {condition.value:g}"
     if isinstance(condition, All):
         return " and ".join(_describe(c) for c in condition.conditions)
     if isinstance(condition, Any_):

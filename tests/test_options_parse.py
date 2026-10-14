@@ -369,8 +369,8 @@ def test_sensex_futures_still_gets_the_ordinary_futures_refusal() -> None:
 
 
 def test_options_long_only_at_the_model_level() -> None:
-    """Defence in depth: even built directly, a sold option is rejected."""
-    with pytest.raises(ValidationError, match="selling"):
+    """A sold single option is never `direction="short"`: it is written as a leg."""
+    with pytest.raises(ValidationError, match="written as a leg"):
         StrategySpec.model_validate(
             {
                 "name": "x",
