@@ -24,16 +24,19 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TEMPLATES = json.loads((FIXTURES / "template_prompts.json").read_text())
 _REPLIES_PATH = FIXTURES / "llm_template_replies.json"
 
-# Never a strategy: a screen is a list of stocks, selling/multi-leg options
-# (and the one single-leg prompt with a time trigger rules can't express, #26)
-# are refused with the "coming in the next update" question, a prompt without
-# a stop must get the stop-loss question, and a stop at "the opening range
-# low" is not something the engine can hold yet.
-_NEVER_A_STRATEGY = {"screen", "options-later", "no-stop", "unsupported-stop"}
+# Never a strategy: a screen is a list of stocks, the one single-leg prompt
+# with a gap trigger rules can't express (#26) is refused, a prompt without a
+# stop must get the stop-loss question (#28: a naked sold put), a stop at "the
+# opening range low" is not something the engine can hold yet, and a
+# "needs-answer" prompt asks a question with buttons first (#33 how to
+# re-enter, #37 whether the stop is on each option or the total).
+_NEVER_A_STRATEGY = {"screen", "options-later", "no-stop", "unsupported-stop", "needs-answer"}
 
 # Pinned so coverage cannot drift silently. Raise it deliberately, after reading
 # each new readback against its sentence by hand.
-_EXPECTED_RULES_SPECS: list[int] = []
+# 19, 20, 34, 35, 40 joined with selling and multi-leg options (Phase 2 batch
+# 2, 2026-10-14): read by the rules alone, each readback checked by hand.
+_EXPECTED_RULES_SPECS: list[int] = [19, 20, 34, 35, 40]
 # Grew from 0 when the test period, "hourly" and "hold overnight" were read
 # (2026-10-12). Each readback was checked against its sentence by hand.
 # 29 joined when the daily average on an intraday chart was built (A6), its
@@ -43,10 +46,29 @@ _EXPECTED_RULES_SPECS: list[int] = []
 # the verb after the instrument clause), but the AI path reads the indicator
 # condition and `options_words` resolves the option fields; each readback
 # checked by hand against its sentence.
-_EXPECTED_AI_SPECS = [22, 23, 29, 30, 31, 36, 38, 39, 41, 42]
+# The leg positions above come from the rules, so the AI path returns them too
+# (the model is never asked about a leg position).
+_EXPECTED_AI_SPECS = [19, 20, 22, 23, 29, 30, 31, 34, 35, 36, 38, 39, 40, 41, 42]
 
 
 def _facts(spec) -> dict:
+    if spec.instrument.legs:
+        # Every leg is a fact: which side, call or put, which strike rule,
+        # which expiry, its own stop/target and re-entry. A position with
+        # one leg different is a different position.
+        from nlt.spec.models import All, AtTime
+
+        conds = spec.entry.conditions if isinstance(spec.entry, All) else [spec.entry]
+        at = next((c for c in conds if isinstance(c, AtTime)), None)
+        return {
+            "symbol": spec.instrument.symbol,
+            "timeframe": spec.instrument.timeframe,
+            "intraday": spec.schedule.intraday,
+            "legs": [leg.model_dump() for leg in spec.instrument.legs],
+            "combined_target_pct": spec.exit.combined_target_pct,
+            "combined_stop_pct": spec.exit.combined_stop_pct,
+            "entry_time": f"{at.time:%H:%M}" if at else None,
+        }
     facts = {
         "symbol": spec.instrument.symbol,
         "timeframe": spec.instrument.timeframe,
