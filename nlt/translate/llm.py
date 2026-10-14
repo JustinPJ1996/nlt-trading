@@ -220,12 +220,11 @@ _REFUSALS: dict[str, tuple[str, str]] = {
         "Leaving the event part out would test a different strategy from the one you described.",
     ),
     "options": (
-        "Selling options and trades with more than one option (straddles, spreads, condors) "
-        "are coming in the next update. Today you can test buying one call or one put, e.g. "
-        "'On NIFTY 15-minute bars, buy the weekly ATM call when RSI crosses above 60. "
-        "Stop 30%, target 60% on the premium.'",
-        "Selling or combining options needs margin and risk rules this platform does not "
-        "model yet -- testing it as a single bought option would be a different trade with a "
+        "I can't read that option position. Options I can test: buying one call or put "
+        "('On NIFTY 15-minute bars, buy the weekly ATM call when RSI crosses above 60. Stop "
+        "30%, target 60% on the premium.'), or selling, written like 'Sell the NIFTY weekly "
+        "ATM straddle at 09:20 with a 25% stop on each leg. Square off at 15:15.'",
+        "Testing a different combination of options from the one you meant would give a "
         "different, misleadingly confident-looking result.",
     ),
     "unsupported_instrument": (
@@ -681,6 +680,13 @@ def parse_llm(
         lowered
     ):
         return _refusal("options")
+    # A position of option legs (a sold option, a straddle, a condor) is read
+    # by the rules alone: its legs, strikes, stops, targets, re-entry and entry
+    # time all come from `options_words`. The model is never asked, so it can
+    # never invent a leg; whatever the rules said (usually "I didn't
+    # understand this part") stands.
+    if rules_kwargs.get("legs"):
+        return None
 
     masked, timeframe, timeframe_refusal = rules._extract_timeframe(lowered)
     if timeframe_refusal:

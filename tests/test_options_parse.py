@@ -283,47 +283,42 @@ def test_a_stop_loss_is_still_required_on_an_option() -> None:
 # -------------------------------------------------------- refused: selling
 
 
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Sell the NIFTY weekly ATM call, bank 50% of the premium, SL 2%",
-        "Short the NIFTY weekly ATM put when RSI crosses below 30, stop 30%",
-        "Write a NIFTY weekly ATM call when RSI crosses above 60, stop 30%",
-    ],
-)
-def test_selling_an_option_is_refused(text) -> None:
-    result = _refused(text)
-    assert result.questions[0].field == "instrument.trade_as"
-    assert "next update" in result.questions[0].text
+# Selling and multi-leg positions are read by batch 2 -- see
+# `tests/test_options_sell_parse.py`. What is still refused by name:
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "Sell the NIFTY weekly ATM straddle at 09:20, stop 30% on each leg",
-        "Buy a NIFTY strangle when IV spikes, stop 30%",
-        "Sell a NIFTY iron condor at 09:20, stop 30%",
         "Sell a NIFTY butterfly spread at 09:20, stop 30%",
-        "Sell the NIFTY weekly ATM call and put at 09:20, stop 30%",
         "Sell a NIFTY credit spread at 09:20, stop 30%",
         "Hedge my NIFTY call with a put, stop 30%",
     ],
 )
-def test_multi_leg_options_are_refused(text) -> None:
+def test_option_shapes_not_read_yet_are_refused(text) -> None:
     result = _refused(text)
     assert result.questions[0].field == "instrument.trade_as"
-    assert "next update" in result.questions[0].text
+    assert "can't read that option position" in result.questions[0].text
 
 
-def test_the_70s_two_option_sell_sentences_stay_refused() -> None:
-    """The same two sentences HANDOFF.md names (#8, #21) -- still refused,
-    this time for the real reason instead of "options aren't supported at all"."""
-    for text in [
-        "Sell the 25000 Nifty Call, hedge it with the 25100. Close at 50% of the max profit",
-        "Sell the at-the-money straddle at 9:35 on expiry day. Stop at 25% of premium, square-off at 3:10 PM",
-    ]:
-        result = _refused(text)
-        assert result.questions[0].field == "instrument.trade_as"
+def test_buying_two_options_together_is_refused() -> None:
+    result = _refused("Buy a NIFTY strangle when IV spikes, stop 30%")
+    assert result.questions[0].field == "instrument.trade_as"
+    assert "Buying two or more options together" in result.questions[0].text
+
+
+def test_the_70s_two_option_sell_sentences_still_ask() -> None:
+    """#8 names a fixed strike: refused for that. #21 is read, but asks whether
+    its 25% stop is on each option or the total premium."""
+    fixed = _refused(
+        "Sell the 25000 Nifty Call, hedge it with the 25100. Close at 50% of the max profit"
+    )
+    assert fixed.questions[0].field == "instrument.strike_offset"
+    straddle = _refused(
+        "Sell the at-the-money straddle at 9:35 on expiry day. Stop at 25% of premium, "
+        "square-off at 3:10 PM"
+    )
+    assert straddle.questions[0].field == "exit.stop_basis"
 
 
 # ---------------------------------------------- refused: fixed strike / points
@@ -414,7 +409,7 @@ def test_a_tradeable_option_must_be_on_a_supported_underlying() -> None:
 # ----------------------------------------------------------- 0-wrong, options
 
 
-def test_the_43_options_prompts_that_are_not_single_leg_buys_never_become_a_spec() -> None:
+def test_the_43_options_prompts_still_waiting_never_become_a_spec() -> None:
     import json
     from pathlib import Path
 
