@@ -455,7 +455,7 @@ def _extract_instrument(
     # offset -- is refused by `options_words.read` before it ever reaches here.
     from nlt.translate import options_words
 
-    opt = options_words.read(text, answers)
+    opt = options_words.read(text, answers, kwargs.get("symbol"))
     if opt.is_option:
         # The underlying is checked before anything else an option question
         # might ask -- there is no point asking "which strike?" of a sentence
@@ -476,6 +476,9 @@ def _extract_instrument(
         kwargs.update(opt.kwargs)
         if symbol is not None:
             kwargs["symbol"] = symbol
+        if opt.expiry_worked_out:
+            # Not an `Instrument` field: `parse` pops it for the readback label.
+            kwargs["_legs_expiry_worked_out"] = True
         # Else: no underlying named at all. Leave "symbol" out of kwargs
         # entirely -- `Instrument`'s own field default ("NIFTY") then applies
         # exactly the way it does for every other instrument, which is also
@@ -1642,7 +1645,12 @@ _TRAILING_PATTERN = re.compile(
 _MAX_BARS_PATTERN = re.compile(
     r"(?:hold|max)\s*(?:for\s*)?(?:a\s*)?(?:max\s*(?:of\s*)?)?(?P<v>\d+)\s*days?"
 )
-_SQUARE_OFF_PATTERN = re.compile(r"square\s*off\s*at\s*(?P<h>\d{1,2}):(?P<m>\d{2})")
+# "square off at 15:15", "square-off at 3:10 PM". A PM is turned into the
+# 24-hour clock; a bare "3:10" stays 03:10, which no schedule accepts, so it
+# is asked about rather than guessed to be the afternoon.
+_SQUARE_OFF_PATTERN = re.compile(
+    r"square[\s-]*off\s*at\s*(?P<h>\d{1,2}):(?P<m>\d{2})(?:\s*(?P<ampm>am|pm)\b)?"
+)
 _EOD_PATTERN = re.compile(r"end of (?:the )?day|intraday only|eod")
 
 
@@ -1700,7 +1708,10 @@ def _extract_exit_rest(text: str, ind: _Indicators) -> tuple[str, dict, list[str
     if m:
         import datetime as dt
 
-        square_off = dt.time(int(m.group("h")), int(m.group("m")))
+        hour = int(m.group("h"))
+        if m.group("ampm") == "pm" and hour < 12:
+            hour += 12
+        square_off = dt.time(hour, int(m.group("m")))
 
     text, m = _consume(text, _EOD_PATTERN)
     intraday = bool(m) or square_off is not None
@@ -2231,6 +2242,7 @@ BASKET_DEFAULT_CONCURRENT = 5
 # straight past the stop that made the size look safe.
 STOCK_MAX_POSITION_PCT = 20.0
 FNO_MAX_POSITION_PCT = 10.0
+SOLD_OPTION_MAX_MARGIN_PCT = 20.0
 
 
 # MCX trades until 23:30 (23:55 in winter); NSE's 15:00 / 15:15 defaults would
@@ -2269,22 +2281,28 @@ def _default_risk(instrument_kwargs: dict) -> RiskLimits:
     from nlt.data.universe import is_universe
 
     symbol = instrument_kwargs.get("symbol", "")
+    legs = instrument_kwargs.get("legs") or []
     # A lot cap belongs to instruments that trade in lots. Applying one to a
     # stock caps the position at that many SHARES, which is never what anyone
     # means -- the account balance and the per-trade loss limit already bound a
     # stock position, and unlike a lot count they scale with the share price.
-    lot_cap = 2 if instrument_kwargs.get("trade_as") == "option" else None
+    # A position of legs has none: its size is the lots of each leg, and the
+    # margin cap below bounds it.
+    lot_cap = 2 if instrument_kwargs.get("trade_as") == "option" and not legs else None
 
     # How much of the account one position may occupy. Options get the tighter
     # limit: an option can lose its whole premium in a session. Futures get the
     # share limit, Justin's call (2026-10-07), measured against the lot's
     # exchange margin rather than its value (his call, 2026-10-12: margin is
-    # set by the exchange and is not borrowing).
-    position_pct = (
-        FNO_MAX_POSITION_PCT
-        if instrument_kwargs.get("trade_as") == "option"
-        else STOCK_MAX_POSITION_PCT
-    )
+    # set by the exchange and is not borrowing). A position that sells options
+    # is held on margin like a future and gets the same 20%, measured against
+    # its margin (Justin, 2026-10-14).
+    if any(leg.side == "sell" for leg in legs):
+        position_pct = SOLD_OPTION_MAX_MARGIN_PCT
+    elif instrument_kwargs.get("trade_as") == "option":
+        position_pct = FNO_MAX_POSITION_PCT
+    else:
+        position_pct = STOCK_MAX_POSITION_PCT
 
     if symbol and is_universe(symbol):
         return RiskLimits(
@@ -2335,6 +2353,13 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if instrument_question is not None:
         return TranslationResult(
             spec=None, questions=[instrument_question], notes=notes, source="rules"
+        )
+    legs_expiry_worked_out = bool(instrument_kwargs.pop("_legs_expiry_worked_out", False))
+    if instrument_kwargs.get("legs"):
+        # A position of option legs: each leg carries its own side, and the
+        # verbs were read with the legs. By the spec's convention it is "long".
+        return _parse_legs(
+            original, text, instrument_kwargs, answers, notes, symbol_said, legs_expiry_worked_out
         )
     text, direction, direction_explicit = _extract_direction(text)
     if not direction_explicit and re.search(r"death cross", text):
@@ -2591,6 +2616,311 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     )
 
 
+def _parse_legs(
+    original: str,
+    text: str,
+    instrument_kwargs: dict,
+    answers: dict[str, str],
+    notes: list[str],
+    symbol_said: bool,
+    expiry_worked_out: bool,
+) -> TranslationResult:
+    """A position of option legs: a sold option, a straddle, a spread, a condor.
+
+    Same steps as `parse`, in the same order, with the words only such a
+    position has read by `options_words` -- and nothing reaching `ExitRules`'
+    own stop/target, which mean a move in the index, not in an option.
+    """
+    from nlt.spec.models import AtTime, is_defined_risk
+    from nlt.translate import options_words
+    from nlt.translate.readback import SAID, WORKED_OUT
+
+    def ask(question: Question, unparsed: list[str] | None = None) -> TranslationResult:
+        return TranslationResult(
+            spec=None, questions=[question], notes=notes, unparsed=unparsed or [], source="rules"
+        )
+
+    def plain(message: str, field_name: str) -> Question:
+        return Question(
+            text=message,
+            why="Guessing would test a different trade from the one you described.",
+            suggestion=None,
+            field=field_name,
+        )
+
+    exit_ind = _Indicators()
+    text, rest_exits, exit_notes = _extract_exit_rest(text, exit_ind)
+    notes.extend(exit_notes)
+    if rest_exits.get("stop_atr_mult") or rest_exits.get("trailing_stop_pct"):
+        return ask(
+            plain(
+                "A trailing stop or an ATR stop is measured on the index, so it can't be put "
+                "on options. Use a stop on each sold option, e.g. 'a 25% stop on each leg'.",
+                "exit.rule",
+            )
+        )
+
+    text, timeframe, timeframe_refusal = _extract_timeframe(text)
+    if timeframe_refusal:
+        return ask(
+            Question(
+                text=timeframe_refusal,
+                why=(
+                    "Silently rounding to the nearest bar size we do support would run a "
+                    "different strategy than the one described."
+                ),
+                suggestion=None,
+                field="instrument.timeframe",
+            )
+        )
+    text, backtest_note, period = _extract_backtest_window(text)
+    if backtest_note:
+        notes.append(backtest_note)
+    text, overnight = _extract_overnight(text)
+
+    position = options_words.read_position_exits(text, instrument_kwargs["legs"], answers)
+    if position.question is not None:
+        return ask(position.question)
+    text, legs = position.text, position.legs
+    timing = options_words.read_position_timing(text)
+    if timing.question is not None:
+        return ask(timing.question)
+    text = timing.text
+
+    square_off = rest_exits.get("_square_off")
+    if position.square_off is not None:
+        if square_off is not None and square_off != position.square_off:
+            return ask(plain("That gives two square-off times. Say just one.", "schedule"))
+        square_off = position.square_off
+    same_day = bool(rest_exits.get("_intraday") or square_off)
+    holds = overnight or timing.hold_to_expiry
+    if holds and same_day:
+        picked = overnight_answer(answers)
+        if picked is None:
+            return ask(_overnight_conflict_question())
+        if picked == "square_off":
+            holds = False
+
+    text, exit_condition, exit_cond_inds, exit_cond_notes, exit_ambiguous = _extract_exit_condition(
+        text, "long", answers.get("exit.condition")
+    )
+    if exit_ambiguous:
+        return ask(exit_ambiguous)
+    notes.extend(exit_cond_notes)
+
+    sizing_said = _sizing_said(text)
+    text, sizing = _extract_sizing(text, instrument_kwargs)
+    if sizing.mode != "fixed_lots":
+        return ask(
+            plain(
+                "A position of options is sized in lots of each option, e.g. '2 lots'.",
+                "sizing",
+            )
+        )
+
+    # "at RSI 30" and a bare "harami" take their meaning from the trade's
+    # direction; a position of legs has none to take it from.
+    if _AT_RSI_LEVEL.search(text) or any(
+        re.search(rf"\b{word}\b", text) for word in _DIRECTIONAL_PATTERNS
+    ):
+        return ask(
+            plain(
+                "On an options position there is no buy-or-sell direction to read 'at RSI 30' "
+                "or a harami/marubozu by. Say e.g. 'RSI crosses below 30' or 'bullish harami'.",
+                "entry.condition",
+            )
+        )
+    entry_condition, entry_inds, entry_notes, entry_leftover, entry_refusal = _parse_condition_text(
+        text, "long"
+    )
+    notes.extend(entry_notes)
+    if entry_refusal:
+        return ask(
+            Question(
+                text=f"I don't recognise part of that: {entry_refusal}",
+                why="Guessing at an unsupported indicator could trade on rules you never asked for.",
+                suggestion=None,
+                field="entry.condition",
+            )
+        )
+    unparsed: list[str] = []
+    for frag in entry_leftover:
+        unparsed.extend(_leftover_fragments(frag))
+    if unparsed:
+        return ask(
+            Question(
+                text=f'I didn\'t understand this part: "{"; ".join(unparsed)}". Did you mean something specific?',
+                why="Silently ignoring words you typed could mean the strategy misses a rule you intended.",
+                suggestion=None,
+                field="unparsed",
+            ),
+            unparsed,
+        )
+
+    at_time = next((c for c in timing.conditions if isinstance(c, AtTime)), None)
+    if at_time is None and entry_condition is None:
+        return ask(
+            Question(
+                text=(
+                    "When should the position open? Say a time, e.g. 'at 09:20', or a "
+                    "condition, e.g. 'when RSI crosses above 60'."
+                ),
+                why="Without an entry rule there is nothing for the strategy to act on.",
+                suggestion=None,
+                field="entry.condition",
+            )
+        )
+
+    # Candle size. A position opened only by the clock is watched minute by
+    # minute (Justin, 2026-10-14): 1-minute candles, labelled "We worked out".
+    # With an indicator in the rule the candle size changes what it means, so
+    # it is asked, as for a bought option.
+    timeframe_worked_out = False
+    if timeframe:
+        instrument_kwargs["timeframe"] = timeframe
+    else:
+        picked = answers.get("instrument.timeframe", "").strip()
+        if picked in {"1m", "3m", "5m", "15m", "30m", "1h", "1d"}:
+            timeframe = picked
+            instrument_kwargs["timeframe"] = picked
+        elif at_time is not None and entry_condition is None and exit_condition is None:
+            instrument_kwargs["timeframe"] = "1m"
+            timeframe_worked_out = True
+        else:
+            return ask(options_words._candle_size_question())
+    tf = instrument_kwargs["timeframe"]
+
+    if at_time is not None:
+        clock = at_time.time
+        if tf == "1d":
+            return ask(
+                plain(
+                    f"Opening at {clock:%H:%M} needs intraday candles, not daily ones.",
+                    "instrument.timeframe",
+                )
+            )
+        step = _TIMEFRAME_MINUTES[tf]
+        if (clock.hour * 60 + clock.minute - (9 * 60 + 15)) % step:
+            return ask(
+                plain(
+                    f"No {step}-minute candle closes at {clock:%H:%M}, so the position could "
+                    "not open at that time. Use a candle size that does (1-minute candles "
+                    "always do), or another time.",
+                    "instrument.timeframe",
+                )
+            )
+        if clock >= Schedule().no_entry_after:
+            return ask(
+                plain(
+                    f"{clock:%H:%M} is after {Schedule().no_entry_after:%H:%M}, the last time "
+                    "a position may open.",
+                    "entry.condition",
+                )
+            )
+        if square_off is not None and square_off <= clock:
+            return ask(
+                plain(
+                    f"The square-off at {square_off:%H:%M} is not after the opening time "
+                    f"{clock:%H:%M}.",
+                    "schedule",
+                )
+            )
+
+    all_indicators = _merge_indicators(entry_inds, exit_ind.as_list(), exit_cond_inds)
+    vwap_question = _vwap_refusal(all_indicators, instrument_kwargs)
+    if vwap_question is not None:
+        return ask(vwap_question)
+
+    # The stop loss. A position whose every sold option is covered by a
+    # bought one needs none (the hedge caps the loss); anything else needs a
+    # stop on every sold option or on the whole -- never assumed.
+    stop_source = position.stop_source
+    unstopped = [leg for leg in legs if leg.side == "sell" and leg.stop_pct is None]
+    if not is_defined_risk(legs) and position.combined_stop_pct is None and unstopped:
+        answered = _float_answer(answers, "exit.stop_pct")
+        if not answered or not 0 < answered <= 1000:
+            return ask(options_words.sold_stop_question())
+        legs = [
+            leg.model_copy(update={"stop_pct": answered}) if leg in unstopped else leg
+            for leg in legs
+        ]
+        stop_source = SAID
+
+    exit_kwargs: dict = {}
+    if position.combined_target_pct is not None:
+        exit_kwargs["combined_target_pct"] = position.combined_target_pct
+    if position.combined_stop_pct is not None:
+        exit_kwargs["combined_stop_pct"] = position.combined_stop_pct
+    if exit_condition is not None:
+        exit_kwargs["condition"] = exit_condition
+    if rest_exits.get("max_bars_held"):
+        exit_kwargs["max_bars_held"] = rest_exits["max_bars_held"]
+    if not exit_kwargs:
+        # Every exit is on the legs or is the square-off; the spec re-checks it.
+        exit_kwargs["exits_on_legs"] = True
+        leg_exits = any(leg.stop_pct or leg.target_pct for leg in legs)
+        if not leg_exits and (holds or tf == "1d"):
+            return ask(
+                plain(
+                    "How should this position close? Say a target, e.g. 'exit at 50% of the "
+                    "credit received', or a square-off time, e.g. 'square off at 15:15'.",
+                    "exit.rule",
+                )
+            )
+
+    schedule_kwargs = _schedule_kwargs(instrument_kwargs, square_off, same_day, overnight=holds)
+    if timing.weekdays:
+        schedule_kwargs["weekdays"] = timing.weekdays
+
+    conditions = [*timing.conditions, *([entry_condition] if entry_condition is not None else [])]
+    entry = conditions[0] if len(conditions) == 1 else All(conditions=conditions)
+    instrument_kwargs["legs"] = legs
+
+    try:
+        spec = StrategySpec(
+            name=_name_from(original),
+            description=original,
+            instrument=Instrument(**instrument_kwargs),
+            indicators=_indicator_dicts_to_specs(all_indicators),
+            direction="long",
+            entry=entry,
+            exit=ExitRules(**exit_kwargs),
+            sizing=sizing,
+            risk=_default_risk(instrument_kwargs),
+            schedule=Schedule(**schedule_kwargs),
+        )
+    except ValidationError as exc:
+        return ask(
+            Question(
+                text=f"That description doesn't quite make a valid strategy yet: {exc.errors()[0]['msg']}",
+                why="The platform double-checks every strategy before it can trade; this one failed that check.",
+                suggestion=None,
+                field="spec",
+            )
+        )
+
+    spec = spec.model_copy(update={"name": strategy_name(spec)})
+    sources = recipe_sources(
+        spec,
+        symbol_said=symbol_said,
+        timeframe_said=bool(timeframe),
+        sizing_said=sizing_said,
+        schedule_said=bool(square_off or same_day or holds),
+    )
+    if timeframe_worked_out:
+        sources["timeframe"] = WORKED_OUT
+    sources["option.legs"] = WORKED_OUT if expiry_worked_out else SAID
+    if stop_source:
+        sources["exit.stop"] = stop_source
+    if position.target_source:
+        sources["exit.target"] = position.target_source
+    if position.reentry_said:
+        sources["legs.reentry"] = SAID
+    return TranslationResult(
+        spec=spec, questions=[], notes=notes, source="rules", period=period, sources=sources
+    )
+
+
 def recipe_sources(
     spec: StrategySpec,
     *,
@@ -2685,6 +3015,17 @@ def strategy_name(spec: StrategySpec) -> str:
             label = _SHORT_LABELS.get(ind.type) or get_indicator(ind.type).label
             if label not in families:
                 families.append(label)
+    if spec.instrument.legs:
+        # "Sell NIFTY call + put, buy call + put" -- what the legs are, in order.
+        words = {"CE": "call", "PE": "put"}
+        parts = []
+        for side in ("sell", "buy"):
+            kinds = [words[leg.option_type] for leg in spec.instrument.legs if leg.side == side]
+            if kinds:
+                parts.append(f"{side} " + " + ".join(kinds))
+        text = ", ".join(parts)
+        name = f"{text[0].upper()}{text[1:]}".replace(" ", f" {spec.instrument.symbol} ", 1)
+        return (f"{name} · {' + '.join(families)}" if families else name)[:80]
     verb = "Buy" if spec.direction == "long" else "Short"
     what = " + ".join(families) if families else "price rule"
     return f"{verb} {spec.instrument.symbol} · {what}"[:80]

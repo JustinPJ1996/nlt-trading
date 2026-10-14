@@ -334,6 +334,20 @@ Open after batch 1, for Justin:
   it even for alerts, where it does nothing.
 - A year of 15-minute signals takes about a minute to run.
 
+**Batch 2 reading (2026-10-14, workstream C).** `options_words.read` now reads
+a sold call or put, sold straddles and strangles, iron condors and iron
+butterflies, and positions written leg by leg into `Instrument.legs`;
+`read_position_exits` / `read_position_timing` read "25% stop on each leg",
+"50% of the credit received", re-entry, "at 09:20", "every Monday", "on expiry
+day", "IV percentile above 70", "hold it to expiry". `rules._parse_legs` wires
+them; the AI reader is never asked about a leg position. Questions with
+buttons: the stop for an unprotected sold option (20/30/50%), each-option-or-
+total for "N% of the premium", and how to re-enter. Tradl #19, #20, #34, #35,
+#40 now read on the rules path; #28 asks for a stop, #33 how to re-enter, #37
+each-or-total; #26 still refused. The 70: still 3 specs, 0 wrong (#21 asks
+each-or-total; #8 refused for its fixed strike). Every rule was broken on
+purpose (33 mutations) and a test failed. `tests/test_options_sell_parse.py`.
+
 **Batch 2 (selling, multi-leg)** needs SPAN margin research: NSE/BSE daily SPAN
 files plus exposure margin, the extra expiry-day margin from Nov 2024, hedge
 benefit on spreads, a check against Zerodha's calculator on ~20 positions, and
