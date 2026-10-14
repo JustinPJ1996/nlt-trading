@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,745 tests passing (2026-10-14, Phase 2 batch 2)
+- **State:** 1,760 tests passing (2026-10-14, Phase 2 batch 2)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
