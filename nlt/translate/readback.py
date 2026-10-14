@@ -589,6 +589,20 @@ def _times(n: int) -> str:
     return {1: "once", 2: "twice"}.get(n, f"{n} times")
 
 
+def _leg_move(v: str, side: str, rises: bool) -> str:
+    """How far a leg's price must move, said the way the engine measures it.
+
+    The distance is a percentage of the option's price at the signal, counted
+    from the price we actually got (the engine's rule for every strategy: the
+    levels belong to the setup, see HANDOFF.md). "Rises 25% above its price at
+    the signal" would be a different, untrue level whenever the fill differs
+    from the signal price.
+    """
+    where = "where we sold it" if side == "sell" else "where we bought it"
+    direction = "rises above" if rises else "falls below"
+    return f"its price {direction} {where} by {v}% of its price at the signal"
+
+
 def _leg_percent_lines(legs: list[OptionLeg], attr: str) -> list[str]:
     """One line for a stop (or target) shared by every sold option, else one per leg."""
     with_value = [leg for leg in legs if getattr(leg, attr) is not None]
@@ -599,22 +613,16 @@ def _leg_percent_lines(legs: list[OptionLeg], attr: str) -> list[str]:
     is_stop = attr == "stop_pct"
     title = "Stop loss" if is_stop else "Take profit"
     if with_value == sold and len(values) == 1:
-        v = _num(values.pop())
-        move = f"rises {v}% above" if is_stop else f"falls {v}% below"
+        move = _leg_move(_num(values.pop()), "sell", rises=is_stop)
         if len(sold) == 1:
-            return [
-                f"{title}: the sold option is closed if its price {move} its price at the signal"
-            ]
-        return [f"{title} on each sold option: closed if its price {move} its price at the signal"]
+            return [f"{title}: the sold option is closed if {move}"]
+        return [f"{title} on each sold option: closed if {move}"]
     lines = []
     for leg in with_value:
-        v = _num(getattr(leg, attr))
         # A sold option loses when its price rises; a bought one when it falls.
         rises = (leg.side == "sell") == is_stop
-        move = f"rises {v}% above" if rises else f"falls {v}% below"
-        lines.append(
-            f"{title} on {_leg_short(leg)}: closed if its price {move} its price at the signal"
-        )
+        move = _leg_move(_num(getattr(leg, attr)), leg.side, rises=rises)
+        lines.append(f"{title} on {_leg_short(leg)}: closed if {move}")
     return lines
 
 
@@ -649,24 +657,30 @@ def _legs_exit_lines(
     lines: list[tuple[str, str]] = []
     credit = _credit_shape(legs)
     lines += [(line, "exit.stop") for line in _leg_percent_lines(legs, "stop_pct")]
+    # Said exactly as `nlt.engine.legs_backtest._combined_decision` judges it:
+    # against the premium at the SIGNAL prices (not the fills), the stop at
+    # every option's worst price of the candle, the target on closes, and
+    # either one filled at the next candle's open.
+    whole = "the credit at the signal prices" if credit else "the premium paid at the signal prices"
     if e.combined_stop_pct:
-        whole = "the credit received" if credit else "the net premium paid at the signal"
         lines.append(
             (
-                f"Stop loss when the position has lost {_num(e.combined_stop_pct)}% of {whole}",
+                f"Stop loss when the position's loss reaches {_num(e.combined_stop_pct)}% of "
+                f"{whole} (judged with each option at its worst price of the candle; closed at "
+                "the next candle's opening prices)",
                 "exit.stop",
             )
         )
     lines += [(line, "exit.target") for line in _leg_percent_lines(legs, "target_pct")]
     if e.combined_target_pct:
-        v = _num(e.combined_target_pct)
-        line = (
-            f"Take profit when the position has kept {v}% of the credit received"
-            if credit
-            else f"Take profit when the position's profit reaches {v}% of the net premium paid "
-            "at the signal"
+        lines.append(
+            (
+                f"Take profit when the position's profit reaches {_num(e.combined_target_pct)}% "
+                f"of {whole} (judged on candle closes; closed at the next candle's opening "
+                "prices)",
+                "exit.target",
+            )
         )
-        lines.append((line, "exit.target"))
     lines += [(line, "legs.reentry") for line in _reentry_lines(legs)]
     if e.condition is not None:
         condition = _describe_condition(e.condition, indicators, timeframe)

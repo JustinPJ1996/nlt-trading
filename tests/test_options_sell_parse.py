@@ -115,8 +115,8 @@ def test_short_straddle_at_0920_reads_back_line_by_line() -> None:
             WORKED_OUT,
         ),
         (
-            "Stop loss on each sold option: closed if its price rises 25% above its price at "
-            "the signal",
+            "Stop loss on each sold option: closed if its price rises above where we sold it "
+            "by 25% of its price at the signal",
             SAID,
         ),
         (
@@ -151,7 +151,13 @@ def test_bull_put_spread_is_hedged_and_needs_no_stop() -> None:
     lines = dict(_lines(result))
     assert lines["Sell the nearest-weekly put, strike nearest 200 points below the index"] == SAID
     assert lines["Buy the nearest-weekly put, strike nearest 400 points below the index"] == SAID
-    assert lines["Take profit when the position has kept 50% of the credit received"] == SAID
+    assert (
+        lines[
+            "Take profit when the position's profit reaches 50% of the credit at the signal prices "
+            "(judged on candle closes; closed at the next candle's opening prices)"
+        ]
+        == SAID
+    )
     assert lines["The bought options cap the worst loss, so no stop loss is needed"] == WORKED_OUT
     assert not any("without a bought one" in line for line in lines)
     assert lines["Square off at 15:15 if still open"] == SAID
@@ -185,7 +191,10 @@ def test_iron_butterfly_writes_the_atm_shorts_in_points_so_the_hedge_is_seen() -
     assert result.spec.exit.combined_target_pct == 40
     lines = dict(_lines(result))
     assert "Sell the nearest-weekly call, at-the-money (the strike nearest the index)" in lines
-    assert "Take profit when the position has kept 40% of the credit received" in lines
+    assert (
+        "Take profit when the position's profit reaches 40% of the credit at the signal prices "
+        "(judged on candle closes; closed at the next candle's opening prices)"
+    ) in lines
     assert "The bought options cap the worst loss, so no stop loss is needed" in lines
 
 
@@ -229,8 +238,8 @@ def test_answering_the_stop_question_reads_the_put_to_expiry() -> None:
     assert lines["At 09:30 every Monday"] == SAID
     assert (
         lines[
-            "Stop loss: the sold option is closed if its price rises 30% above its price at the "
-            "signal"
+            "Stop loss: the sold option is closed if its price rises above where we sold it by "
+            "30% of its price at the signal"
         ]
         == SAID
     )
@@ -272,7 +281,14 @@ def test_answering_total_puts_the_stop_on_the_whole_position() -> None:
     assert _legs(result.spec) == [("sell", "CE", 0, None, None), ("sell", "PE", 0, None, None)]
     assert result.spec.exit.combined_stop_pct == 30
     lines = dict(_lines(result, answers))
-    assert lines["Stop loss when the position has lost 30% of the credit received"] == SAID
+    assert (
+        lines[
+            "Stop loss when the position's loss reaches 30% of the credit at the signal prices "
+            "(judged with each option at its worst price of the candle; closed at the next "
+            "candle's opening prices)"
+        ]
+        == SAID
+    )
 
 
 def test_words_that_say_total_need_no_question() -> None:
@@ -536,3 +552,37 @@ def test_the_ai_reader_is_never_asked_about_legs() -> None:
     assert calls == []
     assert result.spec is None and result.source == "rules"
     assert result.questions[0].field == "unparsed"
+
+
+def test_targets_and_bought_stops_read_back_as_falls_from_the_fill() -> None:
+    """Every leg level is said as the engine sets it: from our fill, by a % of the signal price."""
+    from nlt.spec.models import StrategySpec
+    from nlt.translate.readback import _leg_percent_lines
+
+    spec = StrategySpec.model_validate(
+        {
+            "name": "x",
+            "description": "x",
+            "instrument": {
+                "symbol": "NIFTY",
+                "trade_as": "option",
+                "timeframe": "1m",
+                "legs": [
+                    {"side": "sell", "option_type": "PE", "strike_offset": 1, "target_pct": 40},
+                    {"side": "buy", "option_type": "PE", "strike_offset": 3, "stop_pct": 50},
+                ],
+            },
+            "entry": {"kind": "at_time", "time": "09:20"},
+            "exit": {"exits_on_legs": True},
+        }
+    )
+    legs = spec.instrument.legs
+    stop = _leg_percent_lines(legs, "stop_pct")
+    target = _leg_percent_lines(legs, "target_pct")
+    assert len(stop) == 1 and stop[0].endswith(
+        "closed if its price falls below where we bought it by 50% of its price at the signal"
+    )
+    assert target == [
+        "Take profit: the sold option is closed if its price falls below where we sold it by "
+        "40% of its price at the signal"
+    ]
