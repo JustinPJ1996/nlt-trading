@@ -520,9 +520,10 @@ def test_expiry_closes_at_the_last_candle_and_a_fill_on_expiry_day_goes_to_next_
         store, "If Nifty goes below 22000, buy 2 lots Nifty Futures", f"{expiry} 10:00:30"
     )
     run(store, feed, f"{eve} 15:40")
-    run(store, feed, f"{expiry} 15:33")  # the session is over, but not the grace period
+    # F&O closes at 15:40 since 3 Aug 2026; the expiry close waits 5 minutes more.
+    run(store, feed, f"{expiry} 15:43")  # the session is over, but not the grace period
     assert events(store, "exited", first) == []
-    run(store, feed, f"{expiry} 15:36")
+    run(store, feed, f"{expiry} 15:46")
     (ex,) = events(store, "exited", first)
     assert ex["detail"]["reason"] == "expiry"
     assert ex["price"] == 22500  # the expiry close, no slippage

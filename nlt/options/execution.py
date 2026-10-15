@@ -292,6 +292,16 @@ class OptionExecution:
             return bars.loc[ts]
         return None
 
+    def bar_times(
+        self, contract: Contract, after: dt.datetime, until: dt.time
+    ) -> list[pd.Timestamp]:
+        """Start times of the contract's candles later than `after` and before
+        `until` on the same day -- the option candles after the index's last."""
+        bars = self._contract_bars(contract, after.date())
+        after = pd.Timestamp(after)
+        end = pd.Timestamp(dt.datetime.combine(after.date(), until), tz=after.tz)
+        return list(bars.index[(bars.index > after) & (bars.index < end)])
+
     def traded(self, contract: Contract, ts: dt.datetime) -> bool:
         row = self.bar(contract, ts)
         return bool(row is not None and row["traded"])

@@ -330,17 +330,15 @@ def vix_iv_fn(
     be built for a paper run. India VIX is published every day and measures
     NIFTY's implied volatility, so a NIFTY strategy's "IV percentile" is read
     from it instead -- with the same rule as `nlt.options.iv.iv_percentile`:
-    day D uses D-1's close, ranked against the sessions before it. Only NIFTY:
-    VIX says nothing about BANKNIFTY or SENSEX (`app.logic.paper_problem`
-    refuses those).
+    day D uses D-1's close, ranked against the sessions before it. Justin
+    (2026-10-15, later the same day): for BANKNIFTY and SENSEX too, though VIX
+    is built from NIFTY's options -- `app.logic.paper_notes` says so.
     """
     from nlt.options.iv import iv_feature
 
     now = pd.Timestamp(now).tz_convert(IST)
 
     def iv_fn(underlying: str, bars: pd.DataFrame, lookback_days: int) -> pd.Series:
-        if underlying != "NIFTY":
-            raise ValueError("India VIX stands in for NIFTY's implied volatility only")
         first = bars.index.min().date() if len(bars) else now.date()
         start = first - dt.timedelta(days=int(lookback_days * 1.6) + 30)
         vix = client.index_bars("INDIA VIX", "1d", start, now.date())

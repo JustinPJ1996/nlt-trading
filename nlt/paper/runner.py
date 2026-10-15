@@ -304,7 +304,7 @@ def _run_option_engine(
         # Justin (2026-10-15): in paper, an option open on its expiry day is
         # held to the close and frozen at its last traded price -- unlike a
         # backtest, which closes it at the square-off time.
-        "expiry_at_close": NSE_FNO.close_time,
+        "fno_close": NSE_FNO.close_time,
     }
     if instrument.legs:
         execution = OptionExecution(source, instrument.symbol, instrument.timeframe)

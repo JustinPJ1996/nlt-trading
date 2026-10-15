@@ -276,7 +276,7 @@ def run_legs_backtest(
     trade_from: pd.Timestamp | None = None,
     blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
     final_session_in_progress: bool = False,
-    expiry_at_close: dt.time | None = None,
+    fno_close: dt.time | None = None,
     iv_fn: Callable[[str, pd.DataFrame, int], pd.Series] | None = None,
 ) -> BacktestResult:
     """Run a multi-leg (or sold) option `spec`: signals on the index `bars`,
@@ -285,7 +285,7 @@ def run_legs_backtest(
     `iv_fn(underlying, index_bars, lookback_days)` supplies the IV percentile
     for an `IvPercentile` condition; it defaults to `nlt.options.iv.iv_feature`.
     The other arguments mean what they mean for `run_option_backtest`,
-    `expiry_at_close` (paper trading's expiry rule) included.
+    `fno_close` (paper trading's expiry rule) included.
     """
     legs_spec = spec.instrument.legs
     if not legs_spec:
@@ -772,10 +772,8 @@ def run_legs_backtest(
 
     def forced_price(leg: _Leg, ts, bar, clock_reached, forced) -> tuple[float, bool]:
         """(raw price, untraded) for closing a leg at a square-off or expiry close."""
-        if forced == "expiry" and expiry_at_close is not None:
-            price, untraded = expiry_close_price(
-                execution, leg.contract, ts.date(), expiry_at_close
-            )
+        if forced == "expiry" and fno_close is not None:
+            price, untraded = expiry_close_price(execution, leg.contract, ts.date(), fno_close)
             return (leg.last_price if price is None else price), untraded
         if not is_intraday_tf:
             price = _price_at_clock(execution, leg.contract, ts.date(), square_off)
@@ -794,6 +792,79 @@ def run_legs_backtest(
             return float(bar["open"]), False
         last = execution.last_trade(leg.contract, ts.to_pydatetime())
         return (last[0] if last else leg.last_price), True
+
+    def after_close(pos: _Position, i: int, ts: pd.Timestamp) -> None:
+        """Paper only (`fno_close`): a position still open after the index's
+        last candle of the day, on its options' own candles up to the F&O close.
+
+        An exit decided on that last candle (combined target or stop, the exit
+        rule) fills at the next option candle's open; each leg's own stop and
+        target are watched; a combined exit decided on these candles fills at
+        the one after. Re-entries wait for the next day. On expiry day, what
+        is still open is valued at its last trade before the close.
+        """
+        stamps = sorted(
+            {
+                at
+                for leg in pos.legs
+                if leg.is_open
+                for at in execution.bar_times(leg.contract, ts, fno_close)
+            }
+        )
+        for at in stamps:
+            bars_now = {id(leg): execution.bar(leg.contract, at) for leg in pos.legs if leg.is_open}
+            for leg in pos.legs:
+                bar = bars_now.get(id(leg))
+                if leg.is_open and bar is not None and bool(bar["traded"]):
+                    leg.last_price = float(bar["close"])
+            if pos.pending_exit is not None:
+                reason = pos.pending_exit
+                for leg in pos.legs:
+                    if leg.is_open:
+                        raw, untraded = open_price(leg, at, bars_now.get(id(leg)))
+                        close_leg(pos, leg, at, reason, raw, untraded=untraded)
+                    leg.waiting = False
+                    leg.pending = None
+                finalize(pos)
+                return
+            for leg in pos.legs:
+                bar = bars_now.get(id(leg))
+                if not leg.is_open or bar is None or not bool(bar["traded"]):
+                    continue
+                hit = leg_exit(leg, bar)
+                if hit is None:
+                    continue
+                reason, raw, both = hit
+                close_leg(pos, leg, at, reason, raw, both=both)
+                if reason == "stop" and leg.reentries < leg.spec.reentry_max:
+                    leg.waiting = True
+                    leg.stopped_at = i
+                else:
+                    leg.waiting = False
+            if not any(leg.is_open for leg in pos.legs):
+                break
+            decided = _combined_decision(pos, spec, execution, at)
+            if decided is not None:
+                pos.pending_exit, both = decided
+                pos.pending_both = pos.pending_both or both
+                counts.combined_both += int(both)
+
+        if ts.date() == pos.expiry:
+            if any(leg.is_open for leg in pos.legs):
+                counts.expiry_exit += 1
+            for leg in pos.legs:
+                if leg.is_open:
+                    price, untraded = expiry_close_price(
+                        execution, leg.contract, ts.date(), fno_close
+                    )
+                    at = stamps[-1] if stamps else ts
+                    raw = leg.last_price if price is None else price
+                    close_leg(pos, leg, at, "expiry", raw, untraded=untraded)
+                leg.waiting = False
+                leg.pending = None
+            finalize(pos)
+        elif not any(leg.is_open or leg.waiting for leg in pos.legs):
+            finalize(pos)
 
     def reentry_allowed_at(i: int, ts: pd.Timestamp) -> bool:
         """Do the strategy's own rules still allow a re-entry after this candle?
@@ -833,9 +904,10 @@ def run_legs_backtest(
             forced = None
             if is_intraday_spec and (clock_reached or bool(last_bar_of_session[i])):
                 forced = "square_off"
-            elif on_expiry_day and expiry_at_close is not None:
-                # Paper: held to the close; stops and targets watched until then.
-                if not is_intraday_tf or bool(last_bar_of_session[i]):
+            elif on_expiry_day and fno_close is not None:
+                # Paper: held to the close. A daily candle spans the whole day;
+                # on intraday candles `after_close` watches the options to 15:40.
+                if not is_intraday_tf:
                     forced = "expiry"
             elif on_expiry_day and (
                 not is_intraday_tf or clock_reached or bool(last_bar_of_session[i])
@@ -959,6 +1031,25 @@ def run_legs_backtest(
             if not any(leg.is_open or leg.waiting for leg in pos.legs):
                 finalize(pos)
         positions = [p for p in positions if not p.closed]
+
+        # --- 4b. after the index's last candle, the options still trade ------
+        if fno_close is not None and is_intraday_tf and bool(last_bar_of_session[i]):
+            for pos in positions:
+                after_close(pos, i, ts)
+            positions = [p for p in positions if not p.closed]
+            equity[i] = (
+                capital
+                + realized
+                + sum(
+                    leg.unrealized(leg.last_price)
+                    for p in positions
+                    for leg in p.legs
+                    if leg.is_open
+                )
+            )
+            if equity[i] < counts.worst_equity:
+                counts.worst_equity = float(equity[i])
+                counts.worst_equity_at = ts
 
         # --- 5. this closed candle's entry signal queues a fill ---------------
         if bool(entry_signal.iloc[i]) and (trade_from is None or ts >= trade_from):

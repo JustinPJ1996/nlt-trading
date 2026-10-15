@@ -1145,14 +1145,6 @@ def _uses_iv_percentile(spec: StrategySpec) -> bool:
 
 def paper_problem(spec: StrategySpec) -> str | None:
     """Why this strategy cannot be paper traded, in plain English, or None."""
-    if spec.instrument.is_option and _uses_iv_percentile(spec):
-        if spec.instrument.symbol != "NIFTY":
-            return (
-                f"Strategies using IV percentile can only be paper traded on NIFTY for now. "
-                "We have no option prices from January to mid-October 2026 to rank "
-                f"{spec.instrument.symbol}'s volatility against, and India VIX, which stands "
-                "in for it, measures NIFTY only."
-            )
     if spec.instrument.is_universe and spec.instrument.timeframe != "1d":
         return "Stock baskets can only run on daily candles for now."
     return None
@@ -1168,16 +1160,29 @@ def paper_notes(spec: StrategySpec) -> list[str]:
         # A strategy that squares off each day at 15:15 does so on expiry day
         # too, in paper as in a backtest; only one holding overnight differs.
         notes.append(
+            "Options trade until 3:40 PM, ten minutes after the index's last price. A "
+            "position held overnight has its stop and target checked on the option's own "
+            "prices until then, and an exit rule met on the day's last candle sells at the "
+            "next option price instead of the next morning."
+        )
+        notes.append(
             "One difference from the description above: in paper trading, an option still "
             "open on its expiry day is NOT closed at the square-off time. It is held to the "
             "3:40 PM close and valued at its last traded price, then shown as Expired. "
             "Backtests keep the square-off rule."
         )
     if _uses_iv_percentile(spec):
+        symbol = spec.instrument.symbol
         notes.append(
-            "IV percentile is read from India VIX here, not from NIFTY's own option prices as "
-            "in the backtest: we have no option prices from January to mid-October 2026 to "
-            "rank against. The two usually move together, but not always."
+            f"IV percentile is read from India VIX here, not from {symbol}'s own option "
+            "prices as in the backtest: we have no option prices from January to mid-October "
+            "2026 to rank against. The two usually move together, but not always."
+            + (
+                ""
+                if symbol == "NIFTY"
+                else f" India VIX is worked out from NIFTY's options, not {symbol}'s, so it "
+                f"follows {symbol}'s volatility less closely."
+            )
         )
     return notes
 

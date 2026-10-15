@@ -140,13 +140,6 @@ def test_vix_percentile_uses_yesterdays_close_ranked_against_the_days_before():
     assert iv.iloc[0] == pytest.approx(95.0)
 
 
-def test_vix_never_stands_in_for_banknifty():
-    with pytest.raises(ValueError):
-        vix_iv_fn(_VixKite(pd.Series(dtype=float)), pd.Timestamp.now(tz=IST))(
-            "BANKNIFTY", pd.DataFrame({"close": []}), 20
-        )
-
-
 # -------------------------------------------------------------------- gates
 
 
@@ -157,12 +150,24 @@ def _iv_spec(symbol: str):
     return spec.model_copy(update={"entry": IvPercentile(op="gt", value=70, lookback_days=252)})
 
 
-def test_iv_strategies_paper_trade_on_nifty_only():
+def test_iv_strategies_paper_trade_on_every_index_from_india_vix():
+    """Justin (2026-10-15): India VIX for BANKNIFTY and SENSEX too, said plainly."""
     assert paper_problem(_iv_spec("NIFTY")) is None
-    assert "India VIX" in " ".join(paper_notes(_iv_spec("NIFTY")))
+    nifty = " ".join(paper_notes(_iv_spec("NIFTY")))
+    assert "India VIX" in nifty and "less closely" not in nifty
     for symbol in ("BANKNIFTY", "SENSEX"):
-        problem = paper_problem(_iv_spec(symbol))
-        assert problem and "NIFTY" in problem
+        assert paper_problem(_iv_spec(symbol)) is None
+        notes = " ".join(paper_notes(_iv_spec(symbol)))
+        assert f"not {symbol}'s, so it follows {symbol}'s volatility less closely" in notes
+
+
+def test_vix_ranks_the_same_for_any_index():
+    days = pd.bdate_range("2026-01-01", periods=40, tz=IST)
+    closes = pd.Series(np.arange(10.0, 50.0), index=days)
+    now = days[-1] + pd.Timedelta(hours=11)
+    bars = pd.DataFrame({"close": 1.0}, index=pd.DatetimeIndex([now - pd.Timedelta(hours=1)]))
+    fn = vix_iv_fn(_VixKite(closes), now)
+    assert fn("SENSEX", bars, 20).iloc[-1] == fn("NIFTY", bars, 20).iloc[-1] == 95.0
 
 
 def test_options_are_no_longer_refused_and_say_how_paper_differs():
@@ -247,3 +252,24 @@ def test_a_position_keeps_its_key_when_a_leg_re_enters_at_a_new_strike():
     before = Trade(symbol="A + B", legs=leg, **common)
     after = Trade(symbol="A + B + C", legs=leg, **common)
     assert runner._key(before, "NIFTY") == runner._key(after, "NIFTY")
+
+
+def test_nse_futures_trade_until_the_fno_close():
+    """NIFTY and BANKNIFTY futures trade to 15:40 since 3 Aug 2026: a 15:35
+    candle is kept, and a paper run is still checked at 15:44."""
+    from nlt.data.futures import contract
+    from nlt.data.session import filter_to_session
+
+    for symbol in ("NIFTY", "BANKNIFTY"):
+        session = contract(symbol).session
+        idx = pd.DatetimeIndex(
+            [pd.Timestamp("2026-10-15 15:35", tz=IST), pd.Timestamp("2026-10-15 15:40", tz=IST)]
+        )
+        kept, _ = filter_to_session(pd.DataFrame({"close": [1.0, 2.0]}, index=idx), session)
+        assert list(kept["close"]) == [1.0]
+    spec = parse("buy nifty futures when rsi crosses below 40, target 3%, stop 2%").spec
+    assert spec is not None and spec.instrument.is_future
+    spec = spec.model_copy(
+        update={"instrument": spec.instrument.model_copy(update={"timeframe": "15m"})}
+    )
+    assert runner.is_due({"id": 1}, None, spec, pd.Timestamp("2026-10-15 15:44", tz=IST))

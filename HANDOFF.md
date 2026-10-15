@@ -430,7 +430,8 @@ uses. Justin's decisions, each offered as a trade-off:
 | Topic | Decision |
 | --- | --- |
 | What to save (Kite drops an option's prices, and its list entry, at expiry) | **Only what paper runs use** (my recommendation was a near-the-money chain; he chose fewer requests) |
-| IV percentile in paper (no option prices Jan to mid-Oct 2026) | **Rank India VIX instead**, NIFTY only; BANKNIFTY/SENSEX IV strategies are refused for paper, said plainly |
+| IV percentile in paper (no option prices Jan to mid-Oct 2026) | **Rank India VIX instead**, for all three indices (first NIFTY only; Justin widened it the same day). For BANKNIFTY/SENSEX the note says VIX is built from NIFTY's options |
+| 15:30-15:40 (options trade after the index's last candle) | **Watched in paper**: an overnight position's stop, trailing stop and target on the option's own candles; an exit rule met on the last index candle fills at the next option candle (15:30), not the next morning. Backtests unchanged |
 | Option still open on expiry day, in paper | **Held to the 15:40 close, frozen at its last traded price, "Expired"**. Paper and backtest may differ: backtests keep the 15:15 rule |
 
 **F&O closes at 15:40 since 3 Aug 2026** (closing auction in the cash market;
@@ -438,8 +439,11 @@ Justin pointed it out). Checked in Kite on 15 Oct 2026: NIFTY options traded
 to 15:39, while the NIFTY and SENSEX index candles still end at 15:29.
 `nlt.data.session.NSE_FNO` (09:15-15:40) is used for option paper runs: their
 day is not over until 15:40, the job checks them to 15:45, and their minutes
-are read to 15:40. **Not fixed: futures paper runs** still use the equity
+are read to 15:40. At first futures paper runs still used the equity
 session and drop NIFTY/BANKNIFTY futures candles after 15:30.
+**Fixed the same day:** NIFTY/BANKNIFTY futures now use `NSE_FNO` too
+(backtests and paper; Kite holds intraday futures only for the live contract,
+all of it after the change).
 
 What exists:
 - `nlt/options/live.py` -- `LiveOptionSource`, the paper twin of
@@ -480,9 +484,11 @@ What exists:
   raw minutes.
 
 Open after batch 3, for Justin:
-- Futures paper runs ignore 15:30-15:40 (above).
-- Options held overnight: their minutes 15:30-15:40 are not checked for a stop
-  (the index has no candles then); only the expiry valuation reads them.
+- 15:30-15:40 in paper (`fno_close`, `_after_close` / `after_close`):
+  re-entries wait for the next morning; a combined exit decided on those
+  candles fills on the next of them, or the next morning; on 1-hour and
+  30-minute candles the 15:15 option candle already spans to 15:40, so there
+  is nothing after it.
 - If the job is down from 15:42 until a weekly expires, that contract's last
   day is lost and its trades can no longer be re-checked; the run says so.
 - Kite's list is used only once it is today's; until it is published (early
