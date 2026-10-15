@@ -77,7 +77,7 @@ def test_paper_holds_an_expiring_option_to_the_close_at_its_last_traded_price():
 
 def test_the_backtest_still_closes_an_expiring_option_at_1515():
     t = _held_to_expiry()
-    assert (t.exit_reason, t.exit_time, t.exit_price) == ("expiry", _ts(D3, 15, 15), 130.0)
+    assert (t.exit_reason, t.exit_time, t.exit_price) == ("expiry", _ts(D3, 15, 15), 139.0)
 
 
 def test_paper_still_watches_the_stop_on_expiry_day_before_the_close():

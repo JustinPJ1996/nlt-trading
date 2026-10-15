@@ -686,7 +686,9 @@ def test_slippage_lowers_a_sale_and_raises_a_buy_back():
 # ------------------------------------------------------ square-off and expiry
 
 
-def test_square_off_at_the_1515_open_and_last_traded_price_when_untraded():
+def test_square_off_at_the_end_of_the_1515_minute_and_last_traded_price_when_untraded():
+    """The call: the 15:15 minute's close, 93 (the price at 15:15:59). The put
+    did not trade in that minute: its last trade before it, 77, flagged."""
     src = _source(
         _with(
             OPEN_PRICES,
@@ -702,7 +704,7 @@ def test_square_off_at_the_1515_open_and_last_traded_price_when_untraded():
     )
     t = _run(_spec(), src, days=(D1,)).trades[0]
     (ce,), (pe,) = _legs(t, CE), _legs(t, PE)
-    assert (ce.exit_price, ce.exit_untraded) == (90.0, False)
+    assert (ce.exit_price, ce.exit_untraded) == (93.0, False)
     assert (pe.exit_price, pe.exit_untraded) == (77.0, True)
     assert t.exit_untraded
 
@@ -850,10 +852,11 @@ def test_known_answer_0920_short_straddle_on_2_jan_2025():
     Stop 107.65 + 25% x 111.10 = 135.425. Highs stay below it until 09:41's
     127.45; 09:42 OPENS at 136.55, past the stop, so it is bought back at 136.55.
     23800 PE: basis 116.50, sold 118.60, stop 147.725; its highest trade all day
-    was 140.00, so it is bought back at the 15:15 minute's open, 0.20.
+    was 140.00, so it is bought back at the 15:15 minute's close, 0.15 (the
+    price at 15:15:59; it opened at 0.20).
     Charges (Zerodha's options schedule): CE 37.05 sell + 27.60 buy; PE 38.40
-    sell + 23.60 buy = 126.65. Gross (107.65 - 136.55) x 65 + (118.60 - 0.20)
-    x 65 = 5,817.50; net 5,690.85. Margin is a fixed Rs 1,000 a sold unit here.
+    sell + 23.60 buy = 126.65. Gross (107.65 - 136.55) x 65 + (118.60 - 0.15)
+    x 65 = 5,820.75; net 5,694.10. Margin is a fixed Rs 1,000 a sold unit here.
     """
     from app.logic import _backtest_legs_spec
     from nlt.translate.rules import TranslationResult
@@ -891,12 +894,12 @@ def test_known_answer_0920_short_straddle_on_2_jan_2025():
     assert (pe.basis, pe.entry_price) == (pytest.approx(116.50), pytest.approx(118.60))
     assert pe.stop_level == pytest.approx(147.725)
     assert pe.exit_time == pd.Timestamp("2025-01-02 15:15", tz=IST)
-    assert (pe.exit_reason, pe.exit_price) == ("square_off", pytest.approx(0.20))
+    assert (pe.exit_reason, pe.exit_price) == ("square_off", pytest.approx(0.15))
     assert ce.quantity == pe.quantity == 65
     assert ce.charges == pytest.approx(37.05 + 27.60)
     assert pe.charges == pytest.approx(38.40 + 23.60)
-    assert t.gross_pnl == pytest.approx(5817.50)
-    assert t.net_pnl == pytest.approx(5690.85)
+    assert t.gross_pnl == pytest.approx(5820.75)
+    assert t.net_pnl == pytest.approx(5694.10)
 
 
 def test_backtest_spec_sends_a_spec_with_legs_to_the_legs_engine(monkeypatch):
@@ -1054,7 +1057,7 @@ def test_known_answer_straddle_with_the_real_exchange_margin():
     assert r.error is None
     (t,) = r.backtest.trades
     assert t.quantity == 65
-    assert t.net_pnl == pytest.approx(5690.85)
+    assert t.net_pnl == pytest.approx(5694.10)
     assert any("NSE's margin file for 2 Jan 2025" in w for w in r.weak_spots)
 
 

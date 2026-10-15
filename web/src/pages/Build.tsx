@@ -11,10 +11,22 @@
 // reason the engine never invents a stop loss.
 
 import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
-import { api, ApiError, type Options, type Result, type Slippage, type Translation, type Understood, ZERO_SLIPPAGE } from "../api";
+import {
+  api,
+  ApiError,
+  type Options,
+  type Result,
+  type SettingsEdits,
+  type Slippage,
+  type StrategySettings,
+  type Translation,
+  type Understood,
+  ZERO_SLIPPAGE,
+} from "../api";
 import { Callout, ErrorLine, Working } from "../components/Callout";
 import { Library } from "../components/Library";
 import { Readback } from "../components/Readback";
+import { SettingsPanel } from "../components/SettingsPanel";
 import { SlippageInput } from "../components/SlippageInput";
 import { parseRupees } from "../format";
 
@@ -110,12 +122,36 @@ const CANDLES: [string, string][] = [
   ["1d", "Daily"],
 ];
 
+// Settings changes ride in the same edits as the boxes, held as text and turned
+// into the right kind of value only when sent.
+function wireEdits(edits: Record<string, string>): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(edits)) {
+    if (k === "entry_cutoff") out[k] = v === "true";
+    else if (k === "entry_cutoff_minutes" || k === "square_off_minutes") out[k] = parseInt(v, 10);
+    else out[k] = v;
+  }
+  return out;
+}
+
+function withEdits(base: StrategySettings, edits: Record<string, string>): StrategySettings {
+  const s = { ...base };
+  if (edits.algo_type === "intraday" || edits.algo_type === "multi_day") s.algo_type = edits.algo_type;
+  if ("entry_cutoff" in edits) s.entry_cutoff = edits.entry_cutoff === "true";
+  for (const k of ["entry_cutoff_minutes", "square_off_minutes"] as const) {
+    const n = parseInt(edits[k] ?? "", 10);
+    if (Number.isFinite(n)) s[k] = n;
+  }
+  return s;
+}
+
 // The boxes start at the strategy's own values -- they are its settings, not
 // suggestions. The readback above is redrawn by the server from whatever they
 // hold, so it always says what will be tested.
 function AdjustBoxes({
   spec,
   allowedTimeframes,
+  settings,
   edits,
   onEdit,
   busy,
@@ -123,6 +159,7 @@ function AdjustBoxes({
 }: {
   spec: SpecShape;
   allowedTimeframes: string[] | null;
+  settings: StrategySettings | null;
   edits: Record<string, string>;
   onEdit: (key: string, value: string) => void;
   busy: boolean;
@@ -209,6 +246,14 @@ function AdjustBoxes({
           </select>
         </label>
       </div>
+      {settings && (
+        <SettingsPanel
+          settings={withEdits(settings, edits)}
+          onChange={(edit: SettingsEdits) => {
+            for (const [k, v] of Object.entries(edit)) onEdit(k, String(v));
+          }}
+        />
+      )}
       {busy && <Working>Updating what will be tested...</Working>}
       {error && <ErrorLine error={error} />}
       <p className="hint">The test period is set in the next step.</p>
@@ -274,7 +319,7 @@ export function Build({
           spec: original.spec,
           sources: original.sources,
           answers: state.answers,
-          edits: state.edits,
+          edits: wireEdits(state.edits),
         });
         if (!cancelled) {
           set({ adjusted: u });
@@ -462,6 +507,7 @@ export function Build({
                     <AdjustBoxes
                       spec={original.spec as SpecShape}
                       allowedTimeframes={original.allowed_timeframes ?? null}
+                      settings={understood.settings ?? original.settings ?? null}
                       edits={state.edits}
                       onEdit={(key, value) =>
                         set({ edits: { ...state.edits, [key]: value }, confirmed: false })

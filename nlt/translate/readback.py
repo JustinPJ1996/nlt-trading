@@ -67,6 +67,31 @@ _OP_WORDS = {
 }
 
 
+# Every square-off is priced at the end of its own minute -- 15:15 means the
+# price at 15:15:59 (Justin, 2026-10-15) -- whatever the candle size.
+def _expiry_price_words(square_off) -> str:
+    return f"its price at {square_off}:59"
+
+
+def _cutoff_lines(spec, timeframe: str) -> list[tuple[str, str]]:
+    """The entry cut-off, said out loud -- it was a hidden rule until the
+    settings screen (2026-10-15). Daily candles carry no clock, so none."""
+    if timeframe == "1d" or not spec.schedule.cutoff_applies:
+        return []
+    from nlt.spec.clock import market_close, minutes_before_close
+
+    i = spec.instrument
+    close = market_close(i.trade_as, i.symbol)
+    minutes = minutes_before_close(i.trade_as, i.symbol, spec.schedule.no_entry_after)
+    return [
+        (
+            f"No new entries after {spec.schedule.no_entry_after:%H:%M} "
+            f"({minutes} minutes before the {close:%H:%M} close)",
+            "schedule.cutoff",
+        )
+    ]
+
+
 def format_inr(value: float) -> str:
     """Rs 1,00,000 -- Indian digit grouping (last three digits, then pairs)."""
     n = round(value)
@@ -349,6 +374,7 @@ def _exit_lines(
     # strategy describes behaviour that will not occur. The readback's whole
     # value is that it says what the spec really does, so a line that is merely
     # plausible is worse than no line.
+    lines.extend(_cutoff_lines(spec, timeframe))
     if spec.schedule.intraday and timeframe != "1d":
         square_off = spec.schedule.square_off.strftime("%H:%M")
         lines.append((f"Square off at {square_off} if still open", "schedule"))
@@ -368,7 +394,7 @@ def _exit_lines(
         lines.append(
             (
                 f"If still open on expiry day, closed at {square_off} "
-                "(the opening price of that candle, never held to settlement)",
+                f"({_expiry_price_words(square_off)}, never held to settlement)",
                 "option.expiry_close",
             )
         )
@@ -704,12 +730,13 @@ def _legs_exit_lines(
             )
 
     square_off = spec.schedule.square_off.strftime("%H:%M")
+    lines.extend(_cutoff_lines(spec, timeframe))
     if spec.schedule.intraday and timeframe != "1d":
         lines.append((f"Square off at {square_off} if still open", "schedule"))
         lines.append(
             (
                 f"If still open on expiry day, closed at {square_off} "
-                "(the opening price of that candle, never held to settlement)",
+                f"({_expiry_price_words(square_off)}, never held to settlement)",
                 "option.expiry_close",
             )
         )

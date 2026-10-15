@@ -67,6 +67,7 @@ from nlt.data.session import (
     session_date,
 )
 from nlt.engine.backtest import (
+    _CANDLE_LENGTH,
     BARS_PER_YEAR,
     FNO_MINIMUM_CAPITAL,
     NO_CHARGES_NOTE,
@@ -82,6 +83,7 @@ from nlt.engine.backtest import (
     _size_position,
     _warn_on_cross_session_lookback,
     _zero_charges,
+    past_entry_cutoff,
 )
 from nlt.engine.conditions import evaluate
 from nlt.engine.features import build_features
@@ -371,6 +373,7 @@ def run_option_backtest(
                 square_off,
                 last_day,
                 fno_close,
+                _CANDLE_LENGTH.get(timeframe),
             )
             if outcome is None:
                 pos.bars_held += 1
@@ -402,7 +405,7 @@ def run_option_backtest(
                 skip = "weekday"
             elif _in_blocked_window(ts, blocked_windows):
                 skip = "paused"
-            elif is_intraday_spec and ts.time() >= spec.schedule.no_entry_after:
+            elif past_entry_cutoff(spec, ts, timeframe):
                 skip = "no_entry_after"
             elif is_intraday_spec and bool(last_bar_of_session[i]):
                 counts.boundary += 1
@@ -622,6 +625,7 @@ def _check_exit(
     square_off: dt.time,
     last_day=lambda expiry: expiry,
     fno_close: dt.time | None = None,
+    candle: pd.Timedelta | None = None,
 ) -> tuple[str, float, bool, bool] | None:
     """(reason, raw price before slippage, stop-and-target-both-hit, untraded) or None.
 
@@ -635,7 +639,7 @@ def _check_exit(
         pos.last_price = float(bar["close"])
 
     on_expiry_day = ts.date() == last_day(pos.contract.expiry)
-    clock_reached = is_intraday_tf and ts.time() >= square_off
+    clock_reached = is_intraday_tf and reaches_clock(ts, candle, square_off)
     forced = None
     if is_intraday_spec and (clock_reached or is_last_bar_of_session):
         forced = "square_off"
@@ -651,17 +655,22 @@ def _check_exit(
     if forced is not None:
         if not is_intraday_tf:
             # A daily candle has no 15:15 in it: read the minute prices.
-            price = _price_at_clock(execution, pos.contract, ts.date(), square_off)
-            if price is not None:
-                return forced, price, False, False
-            last = execution.last_trade(pos.contract, _day_end(ts.date()))
-            return forced, (last[0] if last else pos.last_price), False, True
-        if traded:
-            # At the clock, the square-off candle's opening price; on a short
-            # session that never reaches the clock, its last price.
-            return forced, float(bar["open"] if clock_reached else bar["close"]), False, False
-        last = execution.last_trade(pos.contract, ts.to_pydatetime())
-        return forced, (last[0] if last else pos.last_price), False, True
+            priced = square_off_price(execution, pos.contract, ts, square_off)
+            if priced is not None:
+                return forced, priced[0], False, priced[1]
+            return forced, pos.last_price, False, True
+        # The clock may fall inside this candle (15:25 in the 15:15 candle):
+        # the stop and target still apply to the minutes before it.
+        before = minutes_before_clock(execution, pos.contract, ts, square_off)
+        if before is not None:
+            pos.last_price = float(before["close"])
+            hit = _price_exit(pos, before)
+            if hit is not None:  # an exit rule pending fills at the candle's open
+                return hit[0], hit[1], hit[2], False
+        priced = square_off_price(execution, pos.contract, ts, square_off)
+        if priced is not None:
+            return forced, priced[0], False, priced[1]
+        return forced, pos.last_price, False, True
 
     if not traded:
         return None  # nothing traded in this candle, so no exit could fill
@@ -749,6 +758,67 @@ def _day_end(day: dt.date) -> dt.datetime:
     return pd.Timestamp(
         dt.datetime.combine(day, dt.time(23, 59)), tz="Asia/Kolkata"
     ).to_pydatetime()
+
+
+def reaches_clock(ts: pd.Timestamp, candle: pd.Timedelta | None, clock: dt.time) -> bool:
+    """Does the candle starting at `ts` reach `clock` -- contain it, or start after it?"""
+    at = ts.normalize() + pd.Timedelta(hours=clock.hour, minutes=clock.minute)
+    return ts >= at if candle is None else ts + candle > at
+
+
+def minutes_before_clock(
+    execution: OptionExecution, contract: Contract, ts: pd.Timestamp, clock: dt.time
+) -> pd.Series | None:
+    """The contract's traded minutes from `ts` to the end of the `clock` minute,
+    as one candle (open, high, low, close), or None if it did not trade then."""
+    day = ts.date()
+    at = ts.normalize() + pd.Timedelta(hours=clock.hour, minutes=clock.minute)
+    minutes = execution.source.contract_bars(
+        contract.underlying, contract.tradingsymbol, "1m", day, day
+    )
+    if minutes is None or len(minutes) == 0:
+        return None
+    traded = minutes[minutes["traded"]] if "traded" in minutes else minutes
+    # Up to and including the clock's own minute: the square-off is at its end.
+    inside = traded[(traded.index >= ts) & (traded.index < at + pd.Timedelta(minutes=1))]
+    if inside.empty:
+        return None
+    return pd.Series(
+        {
+            "open": float(inside["open"].iloc[0]),
+            "high": float(inside["high"].max()),
+            "low": float(inside["low"].min()),
+            "close": float(inside["close"].iloc[-1]),
+            "traded": True,
+        }
+    )
+
+
+def square_off_price(
+    execution: OptionExecution,
+    contract: Contract,
+    ts: pd.Timestamp,
+    clock: dt.time,
+) -> tuple[float, bool] | None:
+    """(price, untraded) at the end of the `clock` minute -- the price at
+    15:15:59 for a 15:15 square-off (Justin, 2026-10-15): the close of that
+    1-minute candle, whatever the strategy's candle size.
+
+    If nothing traded in that minute, the last trade before it that day,
+    flagged untraded; None if it had not traded at all that day.
+    """
+    at = ts.normalize() + pd.Timedelta(hours=clock.hour, minutes=clock.minute)
+    day = ts.date()
+    minutes = execution.source.contract_bars(
+        contract.underlying, contract.tradingsymbol, "1m", day, day
+    )
+    if minutes is None or len(minutes) == 0:
+        return None
+    traded = minutes[minutes["traded"]] if "traded" in minutes else minutes
+    upto = traded[(traded.index.date == day) & (traded.index < at + pd.Timedelta(minutes=1))]
+    if upto.empty:
+        return None
+    return float(upto["close"].iloc[-1]), upto.index[-1] != at
 
 
 def _price_at_clock(

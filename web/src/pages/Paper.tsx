@@ -3,9 +3,19 @@
 // side has no code that could.
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, type PaperRun, type PaperState, type Slippage, ZERO_SLIPPAGE } from "../api";
+import {
+  api,
+  ApiError,
+  type PaperRun,
+  type PaperState,
+  type SettingsEdits,
+  type SettingsSaved,
+  type Slippage,
+  ZERO_SLIPPAGE,
+} from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
 import { Readback } from "../components/Readback";
+import { SettingsPanel } from "../components/SettingsPanel";
 import { SlippageInput } from "../components/SlippageInput";
 import { TradeTimeline, type TimelineTarget } from "../components/TradeTimeline";
 import { parseRupees } from "../format";
@@ -304,13 +314,36 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
   );
 }
 
-function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () => void; onBuild: () => void }) {
-  const [pick, setPick] = useState<number | null>(state.startable[0]?.id ?? null);
+function StartForm({
+  state,
+  reload,
+  onBuild,
+  justSaved,
+  onSaved,
+}: {
+  state: PaperState;
+  reload: () => void;
+  onBuild: () => void;
+  // Kept by the page, not this form: saving can add a version to the list,
+  // which remounts this form, and the new version must stay picked.
+  justSaved: SettingsSaved | null;
+  onSaved: (saved: SettingsSaved) => void;
+}) {
+  const savedListed = justSaved && state.startable.some((s) => s.id === justSaved.id) ? justSaved : null;
+  const [pick, setPick] = useState<number | null>(savedListed?.id ?? state.startable[0]?.id ?? null);
   const [capital, setCapital] = useState(String(state.default_capital));
   const [cost, setCost] = useState(state.cost_models[0]);
   const [slippage, setSlippage] = useState<Slippage>(ZERO_SLIPPAGE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Unsaved settings changes, and what the server last said after saving them.
+  // A save may make a new version; `saved` then stands in for the chosen one.
+  const [settingsEdits, setSettingsEdits] = useState<SettingsEdits>({});
+  const [saved, setSaved] = useState<(SettingsSaved & { from: number }) | null>(
+    savedListed ? { ...savedListed, from: savedListed.id } : null,
+  );
+  const [saving, setSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   if (state.startable.length === 0) {
     return (
@@ -326,8 +359,40 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
     );
   }
 
-  const chosen = state.startable.find((s) => s.id === pick) ?? state.startable[0];
+  const listed = state.startable.find((s) => s.id === pick) ?? state.startable[0];
+  const fromSaved = saved && saved.from === listed.id ? saved : null;
+  const chosen = fromSaved
+    ? { ...listed, id: fromSaved.id, version: fromSaved.version, readback: fromSaved.readback, notes: fromSaved.notes, problem: fromSaved.problem, settings: fromSaved.settings }
+    : listed;
+  const shownSettings = chosen.settings ? { ...chosen.settings, ...settingsEdits } : null;
+  const dirty = Object.keys(settingsEdits).length > 0;
   const money = parseRupees(capital);
+
+  function pickStrategy(id: number) {
+    setPick(id);
+    setSettingsEdits({});
+    setSettingsError(null);
+    setSaved(null);
+  }
+
+  async function saveSettings() {
+    setSaving(true);
+    setSettingsError(null);
+    try {
+      const r = await api.saveSettings(chosen.id, settingsEdits);
+      // A new version joins the list: pick it there, so the strategy box
+      // names the version Start will run, and keep the "saved as" note.
+      setSaved({ ...r, from: r.id });
+      setPick(r.id);
+      setSettingsEdits({});
+      onSaved(r);
+      reload();
+    } catch (err) {
+      setSettingsError(message(err, "Could not save those settings."));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function start(alertOnly: boolean) {
     if (money === null) return;
@@ -353,7 +418,7 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
     >
       <label className="field">
         <span className="label">Strategy</span>
-        <select value={chosen.id} onChange={(e) => setPick(Number(e.target.value))}>
+        <select value={chosen.id} onChange={(e) => pickStrategy(Number(e.target.value))}>
           {state.startable.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name} (version {s.version})
@@ -364,6 +429,39 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
       <div style={{ margin: "16px 0" }}>
         <Readback text={chosen.readback} compact />
       </div>
+      {shownSettings && (
+        <>
+          <SettingsPanel
+            settings={shownSettings}
+            idPrefix="paper-settings"
+            onChange={(edit) => setSettingsEdits((e) => ({ ...e, ...edit }))}
+          />
+          {dirty && (
+            <div className="btn-row" style={{ marginTop: 8, marginBottom: 12 }}>
+              <button className="btn secondary" type="button" onClick={saveSettings} disabled={saving}>
+                Save settings
+              </button>
+              <button className="btn secondary" type="button" onClick={() => setSettingsEdits({})} disabled={saving}>
+                Undo changes
+              </button>
+              {saving && <Working>Saving...</Working>}
+            </div>
+          )}
+          {settingsError && (
+            <div style={{ marginBottom: 12 }}>
+              <ErrorLine error={settingsError} />
+            </div>
+          )}
+          {fromSaved?.new_version && !dirty && (
+            <div style={{ marginBottom: 12 }}>
+              <Callout tone="info">
+                Saved as version {fromSaved.version}. This version has not been backtested yet, so it won't
+                count as proven until you backtest it.
+              </Callout>
+            </div>
+          )}
+        </>
+      )}
       {chosen.problem ? (
         <Callout tone="warning">{chosen.problem}</Callout>
       ) : (
@@ -431,6 +529,7 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
 
 export function Paper({ onBuild }: { onBuild: () => void }) {
   const [state, setState] = useState<PaperState | null>(null);
+  const [justSaved, setJustSaved] = useState<SettingsSaved | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
@@ -489,7 +588,14 @@ export function Paper({ onBuild }: { onBuild: () => void }) {
             <h2 className="section-title" id="start">
               Start paper trading
             </h2>
-            <StartForm key={state.startable.map((s) => s.id).join(",")} state={state} reload={reload} onBuild={onBuild} />
+            <StartForm
+              key={state.startable.map((s) => s.id).join(",")}
+              state={state}
+              reload={reload}
+              onBuild={onBuild}
+              justSaved={justSaved}
+              onSaved={setJustSaved}
+            />
           </section>
         </>
       )}

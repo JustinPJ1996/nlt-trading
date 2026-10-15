@@ -203,6 +203,41 @@ def _load_futures(
     return {symbol: bars}, notes
 
 
+def load_minute_bars(
+    spec: StrategySpec, bars: pd.DataFrame
+) -> tuple[pd.DataFrame | None, list[str]]:
+    """The same instrument's 1-minute candles over `bars`' days, for an
+    intraday square-off at the square-off minute's close (Justin, 2026-10-15:
+    "assume 1-minute data for all instruments").
+
+    None (with a note) when there is no square-off to price or Kite cannot
+    supply them; the engine then squares off at the candle's close and counts
+    the days. 1-minute strategies are their own minutes.
+    """
+    i = spec.instrument
+    if i.timeframe == "1d" or not spec.schedule.intraday or bars.empty or i.is_universe:
+        return None, []
+    if i.timeframe == "1m":
+        return bars, []
+    from nlt.data import kite
+
+    key = i.symbol
+    if i.is_future:
+        from nlt.data.futures import data_key
+
+        key = data_key(i.symbol)
+    try:
+        minutes = kite.KiteSource().bars(
+            key, "1m", start=bars.index[0].date(), end=bars.index[-1].date()
+        )
+    except kite.KiteError as exc:
+        return None, [
+            f"1-minute prices could not be loaded ({exc}), so each square-off sold at the "
+            f"close of the first candle starting at or after {spec.schedule.square_off:%H:%M}."
+        ]
+    return minutes, []
+
+
 # --------------------------------------------------------------------- options
 
 # Index timeframes the F&O dataset holds directly, and what the others are

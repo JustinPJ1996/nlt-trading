@@ -643,6 +643,10 @@ def backtest_spec(
             benchmark_name = f"holding {load_spec.instrument.symbol}"
             basket = None
             listed = _listed_expiries(load_spec)
+            from nlt.engine.loader import load_minute_bars
+
+            minutes, minute_notes = load_minute_bars(load_spec, all_bars)
+            data_notes = data_notes + minute_notes
             backtest = trimmed(
                 run_backtest(
                     load_spec,
@@ -652,6 +656,7 @@ def backtest_spec(
                     listed_expiries=listed,
                     trade_from=start_bar,
                     slippage=slippage,
+                    minute_bars=minutes,
                 )
             )
             before_charges = trimmed(
@@ -663,6 +668,7 @@ def backtest_spec(
                     listed_expiries=listed,
                     trade_from=start_bar,
                     slippage=slippage,
+                    minute_bars=minutes,
                 )
             )
             bars = all_bars.loc[start_bar:] if start_bar is not None else all_bars
@@ -1780,6 +1786,11 @@ _EDIT_PARTS = {
     "leg_stop_pct": "exit.stop",
     "combined_target_pct": "exit.combined_target",
     "combined_stop_pct": "exit.combined_stop",
+    # The settings screen (2026-10-15).
+    "algo_type": "schedule",
+    "square_off_minutes": "schedule",
+    "entry_cutoff": "schedule.cutoff",
+    "entry_cutoff_minutes": "schedule.cutoff",
 }
 
 _CANDLE_MINUTES = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60}
@@ -1850,6 +1861,91 @@ def _percent(raw, label: str, *, optional: bool, top: float = 50) -> float | Non
     if not 0 < value <= top:
         raise AdjustError(f"The {label} must be more than 0% and at most {top:g}%.")
     return value
+
+
+def _minutes(raw, label: str, low: int, high: int) -> int:
+    text = str(raw if raw is not None else "").strip()
+    try:
+        value = int(text)
+    except ValueError:
+        raise AdjustError(f"The {label} must be a whole number of minutes.") from None
+    if not low <= value <= high:
+        raise AdjustError(f"The {label} must be between {low} and {high} minutes before the close.")
+    return value
+
+
+def schedule_settings(spec: StrategySpec) -> dict:
+    """The settings screen's values for a strategy (Justin, 2026-10-15), counted
+    back from its own market's close (`nlt.spec.clock`)."""
+    from nlt.spec import clock
+
+    i = spec.instrument
+    close = clock.market_close(i.trade_as, i.symbol)
+    sched = spec.schedule
+    mcx = i.is_future and clock.market_close(i.trade_as, i.symbol) == clock.MCX_EARLIER_CLOSE
+    return {
+        "algo_type": "intraday" if sched.intraday and i.timeframe != "1d" else "multi_day",
+        "can_be_intraday": i.timeframe != "1d",
+        "entry_cutoff": sched.cutoff_applies and i.timeframe != "1d",
+        "entry_cutoff_minutes": clock.minutes_before_close(
+            i.trade_as, i.symbol, sched.no_entry_after
+        ),
+        "square_off_minutes": clock.minutes_before_close(i.trade_as, i.symbol, sched.square_off),
+        "close": close.strftime("%H:%M"),
+        "close_note": (
+            "MCX closes at 11:30 PM, or 11:55 PM in winter; minutes count from 11:30 PM."
+            if mcx
+            else f"Counted back from {close:%H:%M}, when this market closes."
+        ),
+        "limits": {
+            "entry_cutoff_minutes": list(clock.CUTOFF_MINUTES),
+            "square_off_minutes": list(clock.SQUARE_OFF_MINUTES),
+        },
+    }
+
+
+def _schedule_updates(spec: StrategySpec, timeframe: str, edits: dict) -> dict:
+    """The settings boxes as `Schedule` fields. Daily candles cannot be intraday:
+    a daily candle has no time of day to square off at."""
+    from nlt.spec import clock
+
+    i = spec.instrument
+    out: dict = {}
+    if "algo_type" in edits:
+        kind = str(edits["algo_type"])
+        if kind not in ("intraday", "multi_day"):
+            raise AdjustError("The algo type must be intraday or multi-day.")
+        if kind == "intraday" and timeframe == "1d":
+            raise AdjustError(
+                "A strategy on daily candles can only be multi-day: a daily candle has no time "
+                "of day to square off at. Pick a smaller candle size to make it intraday."
+            )
+        out["intraday"] = kind == "intraday"
+    if "square_off_minutes" in edits:
+        low, high = clock.SQUARE_OFF_MINUTES
+        minutes = _minutes(edits["square_off_minutes"], "square-off", low, high)
+        out["square_off"] = clock.before_close(i.trade_as, i.symbol, minutes)
+    if "entry_cutoff" in edits:
+        out["entry_cutoff"] = bool(edits["entry_cutoff"])
+    if "entry_cutoff_minutes" in edits:
+        low, high = clock.CUTOFF_MINUTES
+        minutes = _minutes(edits["entry_cutoff_minutes"], "entry cut-off", low, high)
+        at = clock.before_close(i.trade_as, i.symbol, minutes)
+        if at <= clock.market_hours(i.trade_as, i.symbol)[0]:
+            raise AdjustError(
+                f"{minutes} minutes before the close is before the market opens, so no entry "
+                "could ever be made. Choose fewer minutes."
+            )
+        out["no_entry_after"] = at
+    merged = {**spec.schedule.model_dump(), **out}
+    applies = merged["intraday"] if merged["entry_cutoff"] is None else merged["entry_cutoff"]
+    if merged["intraday"] and applies and merged["no_entry_after"] > merged["square_off"]:
+        raise AdjustError(
+            "The entry cut-off has to be at or before the square-off, or a trade could open "
+            "after everything has been closed. Make the cut-off more minutes before the close "
+            "than the square-off."
+        )
+    return out
 
 
 def adjust_spec(
@@ -1929,11 +2025,14 @@ def adjust_spec(
         if refusal is not None:
             raise AdjustError(refusal.text)
 
+    schedule_updates = _schedule_updates(spec, instrument.timeframe, edits)
+
     for key in _EDIT_PARTS:
         in_effect = (
             key in exit_updates
             or key == "timeframe"
             or (key == "leg_stop_pct" and new_legs is not None)
+            or key in ("algo_type", "square_off_minutes", "entry_cutoff", "entry_cutoff_minutes")
         )
         if key in edits and in_effect:
             typed[f"form.{key}"] = str(edits[key])
@@ -1944,6 +2043,7 @@ def adjust_spec(
                 **spec.model_dump(),
                 "instrument": instrument.model_dump(),
                 "exit": {**spec.exit.model_dump(), **exit_updates},
+                "schedule": {**spec.schedule.model_dump(), **schedule_updates},
             }
         )
     except ValidationError as exc:  # the rule broken, without pydantic's wrapping

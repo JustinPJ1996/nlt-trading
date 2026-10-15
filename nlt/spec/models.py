@@ -348,6 +348,15 @@ class Schedule(Base):
     no_entry_after: dt.time = dt.time(15, 0)
     square_off: dt.time = dt.time(15, 15)
     weekdays: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+    # The settings screen's "Entry cut-off time" box (Justin, 2026-10-15).
+    # None -- every strategy saved before the box existed -- means what it
+    # always did: the cut-off applies to an intraday strategy only.
+    entry_cutoff: bool | None = None
+
+    @property
+    def cutoff_applies(self) -> bool:
+        """Is `no_entry_after` in force? See `entry_cutoff`."""
+        return self.intraday if self.entry_cutoff is None else self.entry_cutoff
 
     @field_validator("weekdays")
     @classmethod
@@ -358,7 +367,7 @@ class Schedule(Base):
 
     @model_validator(mode="after")
     def _square_off_after_cutoff(self):
-        if self.intraday and self.square_off < self.no_entry_after:
+        if self.intraday and self.cutoff_applies and self.square_off < self.no_entry_after:
             raise ValueError("square_off must not be earlier than no_entry_after")
         return self
 

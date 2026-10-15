@@ -2245,18 +2245,17 @@ FNO_MAX_POSITION_PCT = 10.0
 SOLD_OPTION_MAX_MARGIN_PCT = 20.0
 
 
-# MCX trades until 23:30 (23:55 in winter); NSE's 15:00 / 15:15 defaults would
-# square off a commodity position before its busiest hours. Fifteen minutes
-# before the earlier close, as 15:15 is before NSE's.
-_MCX_NO_ENTRY_AFTER = dt.time(23, 0)
-_MCX_SQUARE_OFF = dt.time(23, 15)
-
-
 def _schedule_kwargs(
     instrument_kwargs: dict, square_off, intraday, *, overnight: bool = False
 ) -> dict:
-    """Schedule fields for the spec: what the user said, plus the market's defaults."""
-    from nlt.data.futures import is_commodity
+    """Schedule fields for the spec: what the user said, plus the market's defaults.
+
+    The defaults count back from the market's own close (Justin, 2026-10-15):
+    square off 15 minutes before it, no new entries in the last 30
+    (`nlt.spec.clock`). A square-off the user names that falls before the
+    default cut-off pulls the cut-off back to 15 minutes before it.
+    """
+    from nlt.spec.clock import default_times
 
     out: dict = {}
     if square_off:
@@ -2265,14 +2264,14 @@ def _schedule_kwargs(
         out["intraday"] = True
     if overnight:
         out["intraday"] = False
-    if instrument_kwargs.get("trade_as") == "future" and is_commodity(
-        instrument_kwargs.get("symbol", "")
-    ):
-        out.setdefault("square_off", _MCX_SQUARE_OFF)
-        cutoff = (
-            dt.datetime.combine(dt.date.today(), out["square_off"]) - dt.timedelta(minutes=15)
-        ).time()
-        out["no_entry_after"] = min(_MCX_NO_ENTRY_AFTER, cutoff)
+    default_cutoff, default_square_off = default_times(
+        instrument_kwargs.get("trade_as", "index"), instrument_kwargs.get("symbol", "")
+    )
+    out.setdefault("square_off", default_square_off)
+    cutoff = (
+        dt.datetime.combine(dt.date.today(), out["square_off"]) - dt.timedelta(minutes=15)
+    ).time()
+    out["no_entry_after"] = min(default_cutoff, cutoff)
     return out
 
 
@@ -2809,10 +2808,13 @@ def _parse_legs(
                     "instrument.timeframe",
                 )
             )
-        if clock >= Schedule().no_entry_after:
+        from nlt.spec.clock import default_times
+
+        last_entry = default_times("option", "")[0]
+        if clock >= last_entry:
             return ask(
                 plain(
-                    f"{clock:%H:%M} is after {Schedule().no_entry_after:%H:%M}, the last time "
+                    f"{clock:%H:%M} is after {last_entry:%H:%M}, the last time "
                     "a position may open.",
                     "entry.condition",
                 )
