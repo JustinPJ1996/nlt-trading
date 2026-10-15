@@ -494,6 +494,54 @@ Open after batch 3, for Justin:
 - Kite's list is used only once it is today's; until it is published (early
   morning) option runs report the feed as down.
 
+### Strategy settings: algo type, entry cut-off, square-off — **BUILT 2026-10-15**
+
+Branch `strategy-settings`. Justin supplied a settings screen (Intraday /
+Multi-day algo; "Entry cut-off time" tick box, 10-400 minutes before close;
+"Square off all open positions EOD", always on for intraday; square-off 10-30
+minutes before close), for paper trading and later real trading. His
+decisions, each offered as a trade-off:
+
+| Topic | Decision |
+| --- | --- |
+| Where the settings live | **On the strategy**: the backtest, paper and (later) live trading all use them, and the readback says them. Changed on the paper form, they are saved as a **new version**, untested until backtested |
+| "Before market close" counts from | **Each market's own close**: stocks/index 15:30, NSE/BSE F&O 15:40, MCX 23:30 (its earlier close; the screen says winter is 23:55) |
+| Defaults | **Cut-off on, 30 minutes; square-off 15 minutes** before that close. Options and NSE futures therefore default to 15:10 / 15:25 (were 15:00 / 15:15); stocks unchanged; MCX unchanged (23:00 / 23:15). Saved strategies keep their exact times |
+
+What changed:
+- `nlt/spec/clock.py` converts minutes-before-close to clock times; the spec
+  still stores clock times. `Schedule.entry_cutoff` (None = the old rule:
+  cut-off for intraday only) and `Schedule.cutoff_applies`.
+- **The entry cut-off now means "no trade opens after it"**
+  (`backtest.past_entry_cutoff`): judged on when the next candle opens, not on
+  the signal candle's start. Same answer on candles that line up with the
+  cut-off; on 30-minute and 1-hour candles a 14:45/14:15 signal that would
+  fill at 15:15 is now skipped under a 15:00 cut-off (it was let through).
+- **Every square-off sells at the close of its own minute** -- "15:15" is
+  the price at 15:15:59 (Justin, 2026-10-15: "assume 1-minute data for all
+  instruments"), whatever the candle size. Options read their 1-minute trades
+  (`options_backtest.square_off_price`; nothing traded in that minute -> the
+  last trade before, flagged). Stocks, the index and futures get the same
+  instrument's 1-minute candles from Kite (`loader.load_minute_bars`; the
+  paper runner fetches them from the run's start) and
+  `backtest._minute_square_off` uses them. In every engine the stop and target
+  still apply to the minutes of that candle up to the end of the square-off
+  minute; nothing after it counts. A day without minutes falls back to the old
+  rule (the close of the first candle starting at or after the time) and the
+  result counts those days. Before this, "Square off at 15:15" on 15-minute
+  candles sold at the 15:30 price (checked on 1 Sep 2026: 24,055.80 then,
+  23,980.55 now, the raw 15:15 minute's close).
+- The readback now shows the entry cut-off (it was a hidden 15:00 rule) and
+  an option's expiry close as "its price at 15:25:59".
+- `app.logic.schedule_settings` / `adjust_spec` (boxes `algo_type`,
+  `entry_cutoff`, `entry_cutoff_minutes`, `square_off_minutes`, with plain
+  refusals: daily candles cannot be intraday, cut-off before the open, cut-off
+  after the square-off); `POST /api/strategies/{sid}/settings` saves a new
+  version. Every spec payload carries `settings`.
+- Known answers re-checked against the raw rows for the minute's close: the
+  BANKNIFTY call of 1 Jan 2025 squares off at 1,087.75 (15:15) and 1,109.70
+  (15:25); the 2 Jan 2025 straddle's put at 0.15 (net 5,694.10).
+
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 
 **Data: the Kite web-session workaround, not Kite Connect.** On 2026-10-03

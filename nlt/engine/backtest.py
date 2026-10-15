@@ -96,6 +96,32 @@ from nlt.spec.models import (
     StrategySpec,
 )
 
+_CANDLE_LENGTH = {
+    "1m": pd.Timedelta(minutes=1),
+    "3m": pd.Timedelta(minutes=3),
+    "5m": pd.Timedelta(minutes=5),
+    "15m": pd.Timedelta(minutes=15),
+    "30m": pd.Timedelta(minutes=30),
+    "1h": pd.Timedelta(hours=1),
+}
+
+
+def past_entry_cutoff(spec: StrategySpec, ts: pd.Timestamp, timeframe: str) -> bool:
+    """Would a signal on the candle starting at `ts` fill after the entry cut-off?
+
+    "No new entries after 15:00" is about when the trade would open: at the
+    next candle's open, when this one ends. Judged on the candle's START (as it
+    was until 2026-10-15) the rule let a 1-hour candle starting 14:15 open a
+    trade at 15:15, after a 15:00 cut-off; on candles that line up with the
+    cut-off the two readings agree. Daily candles carry no clock: never cut.
+    """
+    if not spec.schedule.cutoff_applies or timeframe not in _CANDLE_LENGTH:
+        return False
+    cutoff = spec.schedule.no_entry_after
+    limit = ts.normalize() + pd.Timedelta(hours=cutoff.hour, minutes=cutoff.minute)
+    return ts + _CANDLE_LENGTH[timeframe] > limit
+
+
 BARS_PER_YEAR = {"1d": 252}
 _DEFAULT_INTRADAY_BARS_PER_YEAR = 252 * 75  # rough fallback; only 1d is exercised today
 
@@ -323,8 +349,16 @@ def run_backtest(
     final_session_in_progress: bool = False,
     listed_expiries: Iterable[dt.date] = (),
     blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    minute_bars: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Run `spec` bar by bar over `bars`.
+
+    `minute_bars` are the same instrument's 1-minute candles. With them, an
+    intraday square-off sells at the close of the square-off minute -- the
+    price at 15:15:59 for 15:15 (Justin, 2026-10-15) -- whatever the candle
+    size, and the stop and target still apply to the minutes before it. A
+    day without them squares off as before: the close of the first candle
+    starting at or after the time, and the result says how many days that was.
 
     `blocked_windows` pauses new entries during the given `[start, end)` wall-
     clock windows: a signal whose bar falls inside one is skipped (reason
@@ -403,6 +437,10 @@ def run_backtest(
 
     is_intraday_tf = spec.instrument.timeframe != "1d"
     session = _session_for_spec(spec)
+    minutes_by_day: dict[dt.date, pd.DataFrame] = {}
+    if minute_bars is not None and len(minute_bars) and is_intraday_tf and spec.schedule.intraday:
+        minutes_by_day = {d: g for d, g in minute_bars.groupby(minute_bars.index.date)}
+    square_off_fallback_days: set[dt.date] = set()
     session_bar_count = _bars_per_session_safe(session, spec.instrument.timeframe)
 
     # --- drop a still-forming final bar before anything downstream sees it --
@@ -545,15 +583,26 @@ def run_backtest(
         # --- 2. check exits, in the mandated precedence order --------------
         still_open: list[_OpenPosition] = []
         for pos in open_positions:
-            outcome = _check_exit(
-                pos,
-                bar,
-                ts,
-                spec,
-                is_intraday_tf,
-                bool(last_bar_of_session[i]),
-                bool(expiry_close[i]),
-            )
+            outcome = None
+            if is_intraday_tf and spec.schedule.intraday and minutes_by_day:
+                outcome = _minute_square_off(
+                    pos,
+                    ts,
+                    spec,
+                    bool(last_bar_of_session[i]),
+                    minutes_by_day.get(ts.date()),
+                    square_off_fallback_days,
+                )
+            if outcome is None:
+                outcome = _check_exit(
+                    pos,
+                    bar,
+                    ts,
+                    spec,
+                    is_intraday_tf,
+                    bool(last_bar_of_session[i]),
+                    bool(expiry_close[i]),
+                )
             if outcome is None:
                 pos.bars_held += 1
                 still_open.append(pos)
@@ -613,17 +662,13 @@ def run_backtest(
 
         # --- 4. schedule fills for the NEXT bar, from this closed bar's signal
         #
-        # `no_entry_after` is a strict "at or after" cutoff -- a signal on the
-        # bar timestamped exactly at the cutoff must NOT open a position. Using
-        # `<=` here (the engine's original condition) let a 15:00 signal open a
-        # trade on a 15:00 cutoff, which is the "at" half of "at or after" being
-        # silently ignored.
+        # `no_entry_after`: no trade may open after it (`past_entry_cutoff`).
         is_intraday_spec = is_intraday_tf and spec.schedule.intraday
         entry_true = bool(entry_signal.iloc[i])
         concurrency_ok = len(open_positions) < max_concurrent
         weekday_ok = ts.weekday() in spec.schedule.weekdays
         paused = _in_blocked_window(ts, blocked_windows)
-        no_entry_after_ok = not is_intraday_spec or ts.time() < spec.schedule.no_entry_after
+        no_entry_after_ok = not past_entry_cutoff(spec, ts, spec.instrument.timeframe)
         trade_from_ok = trade_from is None or ts >= trade_from
         can_enter = (
             concurrency_ok
@@ -797,6 +842,14 @@ def run_backtest(
             "bar of a trading session, and this intraday strategy would otherwise have filled "
             "them at the next session's open -- a gap of 14+ hours the strategy never asked "
             "to hold through"
+        )
+
+    if square_off_fallback_days:
+        days = len(square_off_fallback_days)
+        warnings.append(
+            f"On {days} day(s) there were no 1-minute prices, so the square-off there sold at "
+            f"the close of the first candle starting at or after "
+            f"{spec.schedule.square_off:%H:%M}, not at that minute's own close"
         )
 
     equity_series = pd.Series(equity, index=bars.index, name="equity")
@@ -1184,6 +1237,48 @@ def _size_position(
 
 
 # ------------------------------------------------------------------- exits
+
+
+def _minute_square_off(
+    pos: _OpenPosition,
+    ts: pd.Timestamp,
+    spec: StrategySpec,
+    is_last_bar_of_session: bool,
+    minutes: pd.DataFrame | None,
+    fallback_days: set[dt.date],
+) -> tuple[str, float, bool] | None:
+    """The square-off from 1-minute candles, on the candle that reaches it.
+
+    The minutes from this candle's start to the end of the square-off minute
+    are checked as one candle for the stop, target and the rest (the usual
+    order, stop first); if none fires, the position sells at the close of the
+    square-off minute -- the price at 15:15:59. None when this candle does not
+    reach the square-off, or there are no minutes for the day (`_check_exit`
+    then squares off the old way, and the day is counted).
+    """
+    clock = spec.schedule.square_off
+    at = ts.normalize() + pd.Timedelta(hours=clock.hour, minutes=clock.minute)
+    candle = _CANDLE_LENGTH.get(spec.instrument.timeframe)
+    if not (ts + candle > at or is_last_bar_of_session):
+        return None
+    upto = None if minutes is None else minutes[minutes.index < at + pd.Timedelta(minutes=1)]
+    if upto is None or upto.empty:
+        fallback_days.add(ts.date())
+        return None
+    inside = upto[upto.index >= ts]
+    if len(inside):
+        before = pd.Series(
+            {
+                "open": float(inside["open"].iloc[0]),
+                "high": float(inside["high"].max()),
+                "low": float(inside["low"].min()),
+                "close": float(inside["close"].iloc[-1]),
+            }
+        )
+        hit = _check_exit(pos, before, ts, spec, False, False)
+        if hit is not None:
+            return hit
+    return "square_off", float(upto["close"].iloc[-1]), False
 
 
 def _check_exit(

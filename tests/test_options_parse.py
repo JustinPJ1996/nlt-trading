@@ -146,8 +146,8 @@ def test_overnight_holding_is_allowed_on_an_option() -> None:
 
 def test_the_readback_promises_the_expiry_day_close_not_settlement() -> None:
     text = describe(_spec(BUY_CALL).spec)
-    assert "closed at 15:15" in text
-    assert "opening price of that candle" in text
+    assert "closed at 15:25" in text  # 15 minutes before the 15:40 F&O close
+    assert "its price at 15:25:59" in text
     assert "never held to settlement" in text
 
 

@@ -1648,3 +1648,52 @@ details[open] > summary::before {
   font-size: 0.8rem;
   color: var(--ink-3);
 }
+
+/* ------------------------------------------------------------ settings panel */
+
+.settings-panel {
+  margin: 12px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  max-width: 420px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.stepper button {
+  width: 36px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--sunk);
+  color: var(--ink);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.stepper button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stepper input {
+  width: 72px;
+  text-align: center;
+}
+
+.settings-note {
+  font-size: 0.8rem;
+  color: var(--ink-3, var(--ink-2));
+  opacity: 0.85;
+}

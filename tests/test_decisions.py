@@ -195,8 +195,10 @@ def test_boundary_skip_decision_matches_the_boundary_counter():
         _signal_once(bars, 74),
         ExitRules(stop_pct=50.0, target_pct=50.0),
         instrument=Instrument(symbol="NIFTY", trade_as="index", timeframe="5m"),
+        # A 15:30 cut-off: the 15:25 candle would fill at 15:30, not after it,
+        # so the cut-off lets it through and the boundary rule is what skips it.
         schedule=Schedule(
-            intraday=True, no_entry_after=dt.time(15, 26), square_off=dt.time(15, 30)
+            intraday=True, no_entry_after=dt.time(15, 30), square_off=dt.time(15, 30)
         ),
     )
     result = run_backtest(

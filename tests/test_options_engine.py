@@ -228,14 +228,16 @@ def test_stop_is_assumed_first_when_one_candle_hits_both():
     assert t.exit_reason == "stop" and t.both_hit
 
 
-def test_square_off_fills_at_the_1515_candles_open_not_its_close():
+def test_square_off_sells_at_the_end_of_the_1515_minute():
+    """Justin (2026-10-15): a 15:15 square-off is the price at 15:15:59 -- the
+    close of the 15:15 one-minute candle, not its open."""
     sq = _ts(D1, 15, 15)
     source = _chain([D1], {ATM_CE: {FILL: (100, 100, 100, 100), sq: (110, 125, 108, 120)}})
     res = _run(_spec(), _index_bars([D1], SIGNAL), source)
     t = res.trades[0]
     assert t.exit_reason == "square_off"
     assert t.exit_time == sq
-    assert t.exit_price == pytest.approx(110.0)
+    assert t.exit_price == pytest.approx(120.0)
     assert not t.exit_untraded
 
 
@@ -268,7 +270,7 @@ def test_overnight_position_is_closed_at_1515_on_expiry_day_never_held_past_it()
     t = res.trades[0]
     assert t.exit_reason == "expiry"
     assert t.exit_time == sq
-    assert t.exit_price == pytest.approx(130.0)
+    assert t.exit_price == pytest.approx(139.0)  # the 15:15 minute's close
     assert t.exit_time.date() <= WEEKLY
 
 
@@ -396,9 +398,10 @@ def test_known_answer_first_banknifty_monthly_call_trade_of_2025():
     candle was 1,129.90 (10:59) -- the basis. First trade from 11:00 opened at
     1,130.25 -- the fill. Stop 1,130.25 - 30% x 1,129.90 = 791.28; target
     1,130.25 + 50% x 1,129.90 = 1,695.20. Between 11:00 and 15:15 it traded
-    between 1,020 and 1,240, so neither was hit; first trade from 15:15
-    opened at 1,083.95 -- the square-off. Charges 38.87 + 86.05 (Zerodha's
-    options schedule); net (1,083.95 - 1,130.25) x 30 - 124.92 = -1,513.92.
+    between 1,020 and 1,240, so neither was hit. The square-off is the price
+    at 15:15:59 (Justin, 2026-10-15): the 15:15 minute opened at 1,083.95 and
+    closed at 1,087.75. Charges 38.87 + 86.26 (Zerodha's options schedule);
+    net (1,087.75 - 1,130.25) x 30 - 125.13 = -1,400.13.
     """
     from app.logic import backtest_spec, translate_text
 
@@ -406,9 +409,12 @@ def test_known_answer_first_banknifty_monthly_call_trade_of_2025():
         "Buy BANKNIFTY monthly ATM call on 15 minute bars when RSI crosses above 60. "
         "Stop 30%, target 50% on the premium."
     )
-    r = backtest_spec(
-        tr.spec, capital=2_500_000, start=dt.date(2025, 1, 1), end=dt.date(2025, 1, 1)
+    # Worked out by hand for a 15:15 square-off, the default when this was
+    # written; the default is now 15 minutes before the 15:40 F&O close (below).
+    spec = tr.spec.model_copy(
+        update={"schedule": tr.spec.schedule.model_copy(update={"square_off": dt.time(15, 15)})}
     )
+    r = backtest_spec(spec, capital=2_500_000, start=dt.date(2025, 1, 1), end=dt.date(2025, 1, 1))
     assert r.error is None
     t = r.backtest.trades[0]
     assert t.symbol == "BANKNIFTY25JAN51100CE"
@@ -417,7 +423,31 @@ def test_known_answer_first_banknifty_monthly_call_trade_of_2025():
     assert t.stop_level == pytest.approx(791.28)
     assert t.target_level == pytest.approx(1695.20)
     assert t.exit_reason == "square_off"
-    assert t.exit_price == pytest.approx(1083.95)
+    assert t.exit_price == pytest.approx(1087.75)
     assert t.quantity == 30
-    assert t.charges == pytest.approx(124.92)
-    assert t.net_pnl == pytest.approx(-1513.92)
+    assert t.charges == pytest.approx(125.13)
+    assert t.net_pnl == pytest.approx(-1400.13)
+
+
+@pytest.mark.skipif(not _REAL_1M.exists(), reason="the F&O 1-minute data is not on this machine")
+def test_known_answer_a_1525_square_off_inside_the_1515_candle():
+    """The same trade with today's default square-off, 15:25 -- 15 minutes
+    before the 15:40 F&O close, inside the 15:15-15:30 candle. Checked against
+    the raw 1-minute rows (2026-10-15): the 15:25 minute closed at 1,109.70
+    (the price at 15:25:59); between 15:15 and 15:25 it traded 1,058.35-1,115.00,
+    nowhere near the 791.28 stop or 1,695.20 target. Net (1,109.70 - 1,130.25)
+    x 30 - 126.41 = -742.91."""
+    from app.logic import backtest_spec, translate_text
+
+    tr = translate_text(
+        "Buy BANKNIFTY monthly ATM call on 15 minute bars when RSI crosses above 60. "
+        "Stop 30%, target 50% on the premium."
+    )
+    assert tr.spec.schedule.square_off == dt.time(15, 25)
+    r = backtest_spec(
+        tr.spec, capital=2_500_000, start=dt.date(2025, 1, 1), end=dt.date(2025, 1, 1)
+    )
+    t = r.backtest.trades[0]
+    assert t.exit_reason == "square_off"
+    assert t.exit_price == pytest.approx(1109.70)
+    assert t.net_pnl == pytest.approx(-742.91)

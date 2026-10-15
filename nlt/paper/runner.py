@@ -234,6 +234,7 @@ def _run_engine(
     slippage: Slippage = LEGACY_SLIPPAGE,
     option_source=None,
     option_feed: OptionFeed | None = None,
+    minute_bars=None,
 ):
     """The same engine a backtest uses. Returns (trades, single-symbol result or None, decisions)."""
     if spec.instrument.is_option:
@@ -278,6 +279,7 @@ def _run_engine(
         and _session_in_progress(bars, now, _session_of(spec)),
         listed_expiries=listed,
         blocked_windows=blocked_windows,
+        minute_bars=minute_bars,
     )
     return result.trades, result, result.decisions
 
@@ -540,6 +542,23 @@ def step(
         _set_status("waiting", msg)
         return StepResult("waiting", msg)
 
+    # The square-off sells at the close of its own minute (2026-10-15), so a
+    # stock, index or futures run also reads 1-minute prices -- from the day
+    # it started; no earlier square-off can matter. Finished minutes only.
+    minute_bars = None
+    if (
+        not spec.instrument.is_option
+        and not spec.instrument.is_universe
+        and timeframe not in ("1d", "1m")
+        and spec.schedule.intraday
+    ):
+        key = source_key  # the one symbol fetched above (its data key for a future)
+        try:
+            raw_minutes = fetch(key, "1m", started_at.date(), now.date())
+            minute_bars = closed_bars(raw_minutes, "1m", now, session)
+        except kite.KiteError:
+            minute_bars = None
+
     option_source = None
     if spec.instrument.is_option:
         if option_feed is None:
@@ -574,6 +593,7 @@ def step(
             slippage=slippage,
             option_source=option_source,
             option_feed=option_feed,
+            minute_bars=minute_bars,
         )
     except kite.KiteError as exc:
         # An option run reads Kite again for the options themselves.

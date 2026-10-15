@@ -124,10 +124,11 @@ def test_short_straddle_at_0920_reads_back_line_by_line() -> None:
             "straight past the stop",
             WORKED_OUT,
         ),
+        ("No new entries after 15:00 (40 minutes before the 15:40 close)", DEFAULT),
         ("Square off at 15:15 if still open", SAID),
         (
-            "If still open on expiry day, closed at 15:15 (the opening price of that candle, "
-            "never held to settlement)",
+            "If still open on expiry day, closed at 15:15 (its price at 15:15:59, never held "
+            "to settlement)",
             WORKED_OUT,
         ),
         (
@@ -233,7 +234,8 @@ def test_answering_the_stop_question_reads_the_put_to_expiry() -> None:
     assert _legs(spec) == [("sell", "PE", 0, -300, 30.0)]
     assert spec.schedule.weekdays == [0]
     assert not spec.schedule.intraday
-    assert spec.schedule.square_off == dt.time(15, 15)
+    # 15 minutes before the 15:40 F&O close (Justin's default, 2026-10-15).
+    assert spec.schedule.square_off == dt.time(15, 25)
     lines = dict(_lines(result, answers))
     assert lines["At 09:30 every Monday"] == SAID
     assert (
@@ -244,7 +246,7 @@ def test_answering_the_stop_question_reads_the_put_to_expiry() -> None:
         == SAID
     )
     assert (
-        "Otherwise held until expiry day, then closed at 15:15 that day (never left to settle)"
+        "Otherwise held until expiry day, then closed at 15:25 that day (never left to settle)"
         in lines
     )
     assert not any(line.startswith("Square off at") for line in lines)

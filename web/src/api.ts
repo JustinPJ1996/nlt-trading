@@ -45,7 +45,38 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 // Where a readback line came from. Null when unknown (a saved strategy).
 export type ReadbackLabel = "said" | "worked_out" | "default";
 
+export type StrategySettings = {
+  algo_type: "intraday" | "multi_day";
+  // False on daily candles: those are always multi-day.
+  can_be_intraday: boolean;
+  entry_cutoff: boolean;
+  entry_cutoff_minutes: number;
+  square_off_minutes: number;
+  close: string;
+  close_note: string;
+  limits: { entry_cutoff_minutes: [number, number]; square_off_minutes: [number, number] };
+};
+
+// What the Settings panel can change; sent to the server as edits.
+export type SettingsEdits = Partial<{
+  algo_type: "intraday" | "multi_day";
+  entry_cutoff: boolean;
+  entry_cutoff_minutes: number;
+  square_off_minutes: number;
+}>;
+
+export type SettingsSaved = {
+  id: number;
+  version: number;
+  new_version: boolean;
+  readback: string;
+  settings: StrategySettings;
+  notes: string[];
+  problem: string | null;
+};
+
 export type Understood = {
+  settings?: StrategySettings;
   spec: unknown;
   readback: string;
   // One per body line of `readback`, in order; null when not known.
@@ -252,7 +283,15 @@ export type PaperState = {
   job_installed: boolean;
   kite: { state: string; line: string; has_login: boolean };
   runs: PaperRun[];
-  startable: { id: number; name: string; version: number; readback: string; problem: string | null; notes: string[] }[];
+  startable: {
+    id: number;
+    name: string;
+    version: number;
+    readback: string;
+    problem: string | null;
+    notes: string[];
+    settings?: StrategySettings;
+  }[];
   cost_models: string[];
   default_capital: number;
 };
@@ -385,7 +424,7 @@ export const api = {
     spec: unknown;
     sources: Record<string, ReadbackLabel> | null | undefined;
     answers: Record<string, string>;
-    edits: Record<string, string>;
+    edits: Record<string, string | number | boolean>;
   }) => call<Understood>("/api/adjust", body),
   backtest: (body: {
     spec: unknown;
@@ -400,6 +439,8 @@ export const api = {
   strategies: () => call<{ strategies: SavedStrategy[] }>("/api/strategies"),
   savedSpec: (id: number) =>
     call<{ description: string; understood: Understood }>(`/api/strategies/${id}/spec`),
+  saveSettings: (id: number, edits: SettingsEdits) =>
+    call<SettingsSaved>(`/api/strategies/${id}/settings`, { edits }),
   paper: () => call<PaperState>("/api/paper"),
   paperStart: (
     strategy_id: number,

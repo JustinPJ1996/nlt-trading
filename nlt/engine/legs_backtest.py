@@ -109,6 +109,7 @@ from nlt.data.session import (
     session_date,
 )
 from nlt.engine.backtest import (
+    _CANDLE_LENGTH,
     BARS_PER_YEAR,
     FNO_MINIMUM_CAPITAL,
     NO_CHARGES_NOTE,
@@ -124,16 +125,18 @@ from nlt.engine.backtest import (
     _in_blocked_window,
     _warn_on_cross_session_lookback,
     _zero_charges,
+    past_entry_cutoff,
 )
 from nlt.engine.conditions import EXPIRY_DAY_COLUMN, evaluate, iv_percentile_column
 from nlt.engine.features import build_features
 from nlt.engine.metrics import compute_metrics
 from nlt.engine.options_backtest import (
-    _day_end,
     _past_last_close,
-    _price_at_clock,
     expiry_close_price,
     last_day_fn,
+    minutes_before_clock,
+    reaches_clock,
+    square_off_price,
 )
 from nlt.options.contracts import Contract, format_strike
 from nlt.options.execution import OptionExecution
@@ -315,6 +318,7 @@ def run_legs_backtest(
     is_intraday_spec = is_intraday_tf and spec.schedule.intraday
     session = NSE_EQUITY
     square_off = spec.schedule.square_off
+    candle = _CANDLE_LENGTH.get(timeframe)
 
     if drop_partial_last_bar and is_intraday_tf and len(bars) > 0:
         try:
@@ -775,16 +779,12 @@ def run_legs_backtest(
         if forced == "expiry" and fno_close is not None:
             price, untraded = expiry_close_price(execution, leg.contract, ts.date(), fno_close)
             return (leg.last_price if price is None else price), untraded
-        if not is_intraday_tf:
-            price = _price_at_clock(execution, leg.contract, ts.date(), square_off)
-            if price is not None:
-                return price, False
-            last = execution.last_trade(leg.contract, _day_end(ts.date()))
-            return (last[0] if last else leg.last_price), True
-        if bar is not None and bool(bar["traded"]):
-            return float(bar["open"] if clock_reached else bar["close"]), False
-        last = execution.last_trade(leg.contract, ts.to_pydatetime())
-        return (last[0] if last else leg.last_price), True
+        # The price at the end of the clock's minute, from the minutes
+        # (`run_option_backtest` does the same).
+        priced = square_off_price(execution, leg.contract, ts, square_off)
+        if priced is not None:
+            return priced
+        return leg.last_price, True
 
     def open_price(leg: _Leg, ts, bar) -> tuple[float, bool]:
         """(raw price, untraded) for closing a leg at this candle's open."""
@@ -874,7 +874,7 @@ def run_legs_backtest(
         which has the next candle -- decides, and the position is not reported
         closed in between.
         """
-        if is_intraday_spec and ts.time() >= spec.schedule.no_entry_after:
+        if past_entry_cutoff(spec, ts, timeframe):
             return False
         if is_intraday_spec and bool(last_bar_of_session[i]):
             return False
@@ -900,7 +900,7 @@ def run_legs_backtest(
                         leg.last_price = float(bar["close"])
 
             on_expiry_day = ts.date() == pos.expiry
-            clock_reached = is_intraday_tf and ts.time() >= square_off
+            clock_reached = is_intraday_tf and reaches_clock(ts, candle, square_off)
             forced = None
             if is_intraday_spec and (clock_reached or bool(last_bar_of_session[i])):
                 forced = "square_off"
@@ -928,6 +928,21 @@ def run_legs_backtest(
                 pos.bars_held += 1
                 finalize(pos)
                 continue
+
+            if forced is not None and is_intraday_tf:
+                # The clock may fall inside this candle: each leg's own stop and
+                # target still apply to the minutes before it.
+                for leg in pos.legs:
+                    if not leg.is_open:
+                        continue
+                    before = minutes_before_clock(execution, leg.contract, ts, square_off)
+                    if before is None:
+                        continue
+                    leg.last_price = float(before["close"])
+                    hit = leg_exit(leg, before)
+                    if hit is not None:
+                        reason, raw, both = hit
+                        close_leg(pos, leg, ts, reason, raw, both=both)
 
             if forced is not None:
                 if forced == "expiry":
@@ -1060,7 +1075,7 @@ def run_legs_backtest(
                 reason = "weekday"
             elif _in_blocked_window(ts, blocked_windows):
                 reason = "paused"
-            elif is_intraday_spec and ts.time() >= spec.schedule.no_entry_after:
+            elif past_entry_cutoff(spec, ts, timeframe):
                 reason = "no_entry_after"
             elif is_intraday_spec and bool(last_bar_of_session[i]):
                 counts.boundary += 1

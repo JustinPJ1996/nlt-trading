@@ -292,6 +292,8 @@ def _spec_payload(
         # Candle sizes the Candles box may offer (None = all of them): the rule
         # for an entry at a set time lives in logic.allowed_timeframes only.
         "allowed_timeframes": logic.allowed_timeframes(spec),
+        # The settings screen: algo type, entry cut-off, square-off.
+        "settings": logic.schedule_settings(spec),
     }
 
 
@@ -785,6 +787,40 @@ async def strategy_spec(request: Request) -> Response:
     return JSONResponse({"description": spec.description, "understood": _spec_payload(spec)})
 
 
+async def strategy_settings(request: Request) -> Response:
+    """Change a saved strategy's settings (algo type, entry cut-off,
+    square-off) from the paper-trading form. Settings live on the strategy
+    (Justin, 2026-10-15), so a change is saved as a NEW version: the version
+    that was backtested keeps its own settings, and the new one is untested
+    until it is backtested."""
+    store = _store(request)
+    sid = int(request.path_params["sid"])
+    if store.get_strategy(sid) is None:
+        return _error("No such strategy.", 404)
+    body = await _json_body(request)
+    edits = body.get("edits")
+    if not isinstance(edits, dict):
+        raise _BadRequest("Those settings could not be read.")
+    spec = await _run(store.load_spec, sid)
+    try:
+        adjusted, _sources, _typed = logic.adjust_spec(spec, edits, None)
+    except logic.AdjustError as exc:
+        raise _BadRequest(str(exc)) from None
+    new_id = await _run(store.save_strategy, adjusted, logic.describe_spec(adjusted))
+    row = store.get_strategy(new_id)
+    return JSONResponse(
+        {
+            "id": new_id,
+            "version": row["version"],
+            "new_version": new_id != sid,
+            "readback": row["readback"],
+            "settings": logic.schedule_settings(adjusted),
+            "notes": logic.paper_notes(adjusted),
+            "problem": logic.paper_problem(adjusted),
+        }
+    )
+
+
 # ------------------------------------------------------------- paper trading
 
 
@@ -873,6 +909,7 @@ def _paper(store: Store) -> dict:
                 "readback": s["readback"],
                 "problem": logic.paper_problem(spec_s := store.load_spec(s["id"])),
                 "notes": logic.paper_notes(spec_s),
+                "settings": logic.schedule_settings(spec_s),
             }
         )
     return {
@@ -1500,6 +1537,7 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/strategies", strategies),
         r("/api/strategies", save, ["POST"]),
         r("/api/strategies/{sid:int}/spec", strategy_spec),
+        r("/api/strategies/{sid:int}/settings", strategy_settings, ["POST"]),
         r("/api/paper", paper),
         r("/api/paper/start", paper_start, ["POST"]),
         r("/api/paper/{rid:int}/check", paper_check, ["POST"]),
