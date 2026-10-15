@@ -477,12 +477,13 @@ def test_a_contract_in_no_file_is_refused(tmp_path):
     "underlying, day",
     [
         ("NIFTY", dt.date(2022, 11, 30)),
-        ("NIFTY", dt.date(2026, 1, 1)),
         ("SENSEX", dt.date(2023, 7, 19)),  # NIFTY's window starts earlier; SENSEX's does not
     ],
 )
 def test_outside_the_stored_window_is_refused(tmp_path, underlying, day):
     # Even with a file the day before, a day outside the window is not guessed.
+    # (The window has no end since paper trading: each new day's file is
+    # fetched as it is published.)
     prior = day - dt.timedelta(days=1)
     ex = "BSE" if underlying == "SENSEX" else "NSE"
     _store(

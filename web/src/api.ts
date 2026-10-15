@@ -252,7 +252,7 @@ export type PaperState = {
   job_installed: boolean;
   kite: { state: string; line: string; has_login: boolean };
   runs: PaperRun[];
-  startable: { id: number; name: string; version: number; readback: string; problem: string | null }[];
+  startable: { id: number; name: string; version: number; readback: string; problem: string | null; notes: string[] }[];
   cost_models: string[];
   default_capital: number;
 };

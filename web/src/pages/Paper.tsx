@@ -399,6 +399,11 @@ function StartForm({ state, reload, onBuild }: { state: PaperState; reload: () =
             Alerts only: the strategy runs exactly the same, but only tells you what it would have bought
             or sold. No paper money is tracked, and it never counts as a proving run.
           </p>
+          {chosen.notes.map((note) => (
+            <div key={note} style={{ marginTop: 12 }}>
+              <Callout tone="info">{note}</Callout>
+            </div>
+          ))}
           <div className="btn-row" style={{ marginTop: 16 }}>
             <button className="btn" type="submit" disabled={busy || money === null || money < 1000}>
               Start paper trading

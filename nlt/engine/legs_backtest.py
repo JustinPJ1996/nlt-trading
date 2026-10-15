@@ -106,6 +106,7 @@ from nlt.data.session import (
     NSE_EQUITY,
     is_last_bar_of_session,
     is_partial_last_bar,
+    session_date,
 )
 from nlt.engine.backtest import (
     BARS_PER_YEAR,
@@ -127,7 +128,13 @@ from nlt.engine.backtest import (
 from nlt.engine.conditions import EXPIRY_DAY_COLUMN, evaluate, iv_percentile_column
 from nlt.engine.features import build_features
 from nlt.engine.metrics import compute_metrics
-from nlt.engine.options_backtest import _day_end, _past_last_close, _price_at_clock, last_day_fn
+from nlt.engine.options_backtest import (
+    _day_end,
+    _past_last_close,
+    _price_at_clock,
+    expiry_close_price,
+    last_day_fn,
+)
 from nlt.options.contracts import Contract, format_strike
 from nlt.options.execution import OptionExecution
 from nlt.options.expiry import pick_expiry
@@ -268,6 +275,8 @@ def run_legs_backtest(
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
     blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    final_session_in_progress: bool = False,
+    expiry_at_close: dt.time | None = None,
     iv_fn: Callable[[str, pd.DataFrame, int], pd.Series] | None = None,
 ) -> BacktestResult:
     """Run a multi-leg (or sold) option `spec`: signals on the index `bars`,
@@ -275,7 +284,8 @@ def run_legs_backtest(
 
     `iv_fn(underlying, index_bars, lookback_days)` supplies the IV percentile
     for an `IvPercentile` condition; it defaults to `nlt.options.iv.iv_feature`.
-    The other arguments mean what they mean for `run_option_backtest`.
+    The other arguments mean what they mean for `run_option_backtest`,
+    `expiry_at_close` (paper trading's expiry rule) included.
     """
     legs_spec = spec.instrument.legs
     if not legs_spec:
@@ -354,6 +364,15 @@ def run_legs_backtest(
 
     if is_intraday_tf and len(bars) > 0:
         last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        if final_session_in_progress:
+            # Paper trading mid-day: today is not over, so none of today's
+            # candles is its last (see `run_backtest`, which has the same rule).
+            today = session_date(bars.index[-1], session)
+            last_bar_of_session = last_bar_of_session.copy()
+            k = len(bars) - 1
+            while k >= 0 and session_date(bars.index[k], session) == today:
+                last_bar_of_session[k] = False
+                k -= 1
     else:
         last_bar_of_session = np.zeros(len(bars), dtype=bool)
 
@@ -433,7 +452,10 @@ def run_legs_backtest(
         if both:
             counts.stop_beat_target += 1
 
-    def finalize(pos: _Position) -> None:
+    def finalize(pos: _Position, *, in_progress: bool = False) -> None:
+        """`in_progress`: the data ended with a leg still open or waiting to
+        re-enter, so the position is not over -- reported as "end_of_data"
+        whatever its legs' own last exits were."""
         pos.closed = True
         fills = sorted(pos.fills, key=lambda f: (f.entry_time, f.leg))
         last = max(fills, key=lambda f: (f.exit_time, f.leg))
@@ -459,7 +481,7 @@ def run_legs_backtest(
                 gross_pnl=gross,
                 charges=charges,
                 net_pnl=gross - charges,
-                exit_reason=last.exit_reason,
+                exit_reason="end_of_data" if in_progress else last.exit_reason,
                 bars_held=pos.bars_held,
                 entry_reason=entry_reason,
                 symbol=" + ".join(dict.fromkeys(f.symbol for f in fills)),
@@ -748,8 +770,13 @@ def run_legs_backtest(
             return "target", (o if o > leg.target_level else leg.target_level), False
         return None
 
-    def forced_price(leg: _Leg, ts, bar, clock_reached) -> tuple[float, bool]:
+    def forced_price(leg: _Leg, ts, bar, clock_reached, forced) -> tuple[float, bool]:
         """(raw price, untraded) for closing a leg at a square-off or expiry close."""
+        if forced == "expiry" and expiry_at_close is not None:
+            price, untraded = expiry_close_price(
+                execution, leg.contract, ts.date(), expiry_at_close
+            )
+            return (leg.last_price if price is None else price), untraded
         if not is_intraday_tf:
             price = _price_at_clock(execution, leg.contract, ts.date(), square_off)
             if price is not None:
@@ -769,8 +796,13 @@ def run_legs_backtest(
         return (last[0] if last else leg.last_price), True
 
     def reentry_allowed_at(i: int, ts: pd.Timestamp) -> bool:
-        if i + 1 >= n:
-            return False
+        """Do the strategy's own rules still allow a re-entry after this candle?
+
+        Running out of data is not one of them: on the newest candle a waiting
+        leg stays waiting (see the loop below), so a paper run's next pass --
+        which has the next candle -- decides, and the position is not reported
+        closed in between.
+        """
         if is_intraday_spec and ts.time() >= spec.schedule.no_entry_after:
             return False
         if is_intraday_spec and bool(last_bar_of_session[i]):
@@ -801,6 +833,10 @@ def run_legs_backtest(
             forced = None
             if is_intraday_spec and (clock_reached or bool(last_bar_of_session[i])):
                 forced = "square_off"
+            elif on_expiry_day and expiry_at_close is not None:
+                # Paper: held to the close; stops and targets watched until then.
+                if not is_intraday_tf or bool(last_bar_of_session[i]):
+                    forced = "expiry"
             elif on_expiry_day and (
                 not is_intraday_tf or clock_reached or bool(last_bar_of_session[i])
             ):
@@ -826,7 +862,9 @@ def run_legs_backtest(
                     counts.expiry_exit += 1
                 for leg in pos.legs:
                     if leg.is_open:
-                        raw, untraded = forced_price(leg, ts, leg_bars.get(id(leg)), clock_reached)
+                        raw, untraded = forced_price(
+                            leg, ts, leg_bars.get(id(leg)), clock_reached, forced
+                        )
                         close_leg(pos, leg, ts, forced, raw, untraded=untraded)
                     leg.waiting = False
                     leg.pending = None
@@ -911,6 +949,8 @@ def run_legs_backtest(
                 if not allowed:
                     leg.waiting = False
                     continue
+                if i + 1 >= n:
+                    continue  # no next candle to fill on yet; still waiting
                 queued = _queue_reentry(
                     leg, i, ts, bars, execution, timeframe, square_off, skip, counts, last_day
                 )
@@ -957,11 +997,12 @@ def run_legs_backtest(
     if positions:
         ts = bars.index[-1]
         for pos in positions:
+            in_progress = any(leg.is_open or leg.waiting for leg in pos.legs)
             for leg in pos.legs:
                 if leg.is_open:
                     close_leg(pos, leg, ts, "end_of_data", leg.last_price)
             if pos.fills:
-                finalize(pos)
+                finalize(pos, in_progress=in_progress)
         equity[-1] = capital + realized
 
     warnings.extend(_count_warnings(counts, square_off, spec, capital))

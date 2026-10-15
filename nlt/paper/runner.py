@@ -37,7 +37,7 @@ import pandas as pd
 from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
 from nlt.costs.slippage import Slippage
 from nlt.data import kite
-from nlt.data.session import NSE_EQUITY, Session, session_date
+from nlt.data.session import NSE_EQUITY, NSE_FNO, Session, session_date
 from nlt.engine.backtest import Trade, run_backtest
 from nlt.engine.basket import run_basket_backtest
 from nlt.notify import notify
@@ -69,6 +69,24 @@ Fetch = Callable[[str, str, dt.date, dt.date], pd.DataFrame]
 
 A futures strategy is fetched under its data key ("CRUDEOIL FUT"), never its
 bare symbol, which for NIFTY would be the index."""
+
+
+@dataclass
+class OptionFeed:
+    """What an option paper run needs besides the index's candles.
+
+    `source(now)` makes the option-price source for one pass
+    (`nlt.options.live.LiveOptionSource` in real use); `margin_fn` is the
+    exchange-margin calculator for sold options (`app.logic.span_margin_fn`);
+    `iv_fn(now)` supplies an IV percentile (`nlt.options.live.vix_iv_fn`). Passed
+    in rather than imported so tests can replay the historical dataset through
+    the very same runner.
+    """
+
+    source: Callable[[pd.Timestamp], object]
+    margin_fn: Callable | None = None
+    iv_fn: Callable[[pd.Timestamp], Callable] | None = None
+
 
 ListedExpiries = Callable[[str], list[dt.date]]
 """symbol -> expiries the exchange has published. `kite.listed_expiries` in real use."""
@@ -105,6 +123,11 @@ def _candle_words(ts: pd.Timestamp, timeframe: str) -> str:
 
 
 def _session_of(spec: StrategySpec) -> Session:
+    if spec.instrument.is_option:
+        # Options trade to 15:40, after the index's last candle (see NSE_FNO):
+        # the day is not over -- nor an expiring option's last price known --
+        # until then.
+        return NSE_FNO
     if spec.instrument.is_future:
         from nlt.data.futures import contract
 
@@ -209,8 +232,25 @@ def _run_engine(
     listed=(),
     blocked_windows=(),
     slippage: Slippage = LEGACY_SLIPPAGE,
+    option_source=None,
+    option_feed: OptionFeed | None = None,
 ):
     """The same engine a backtest uses. Returns (trades, single-symbol result or None, decisions)."""
+    if spec.instrument.is_option:
+        (bars,) = bars_by_symbol.values()
+        result = _run_option_engine(
+            spec,
+            bars,
+            capital=capital,
+            charge_fn=charge_fn,
+            trade_from=trade_from,
+            now=now,
+            blocked_windows=blocked_windows,
+            slippage=slippage,
+            source=option_source,
+            feed=option_feed,
+        )
+        return result.trades, result, result.decisions
     if spec.instrument.is_universe:
         result = run_basket_backtest(
             spec,
@@ -240,6 +280,51 @@ def _run_engine(
         blocked_windows=blocked_windows,
     )
     return result.trades, result, result.decisions
+
+
+def _run_option_engine(
+    spec, bars, *, capital, charge_fn, trade_from, now, blocked_windows, slippage, source, feed
+):
+    """A bought option (`run_option_backtest`) or a sold / multi-leg position
+    (`run_legs_backtest`) -- the engines a backtest uses -- on live prices."""
+    from nlt.engine.legs_backtest import run_legs_backtest
+    from nlt.engine.options_backtest import run_option_backtest
+    from nlt.options.execution import OptionExecution
+
+    instrument = spec.instrument
+    common = {
+        "capital": capital,
+        "charge_fn": charge_fn,
+        "slippage": slippage,
+        "drop_partial_last_bar": False,
+        "trade_from": trade_from,
+        "blocked_windows": blocked_windows,
+        "final_session_in_progress": instrument.timeframe != "1d"
+        and _session_in_progress(bars, now, NSE_FNO),
+        # Justin (2026-10-15): in paper, an option open on its expiry day is
+        # held to the close and frozen at its last traded price -- unlike a
+        # backtest, which closes it at the square-off time.
+        "expiry_at_close": NSE_FNO.close_time,
+    }
+    if instrument.legs:
+        execution = OptionExecution(source, instrument.symbol, instrument.timeframe)
+        return run_legs_backtest(
+            spec,
+            bars,
+            execution,
+            feed.margin_fn,
+            iv_fn=feed.iv_fn(now) if feed.iv_fn is not None else None,
+            **common,
+        )
+    execution = OptionExecution(
+        source,
+        instrument.symbol,
+        instrument.timeframe,
+        instrument.option_type,
+        instrument.strike_offset,
+        instrument.expiry,
+    )
+    return run_option_backtest(spec, bars, execution, **common)
 
 
 def _to_ist(value) -> pd.Timestamp:
@@ -337,6 +422,11 @@ def blocked_windows_for_engine(
 
 
 def _key(t: Trade, fallback_symbol: str) -> str:
+    """One key per position, stable across passes. A multi-leg position is
+    keyed by its index, not its contracts: a leg re-entered at a fresh strike
+    adds a contract to `t.symbol`, and the position must not look new."""
+    if t.legs:
+        return f"{fallback_symbol}|{_iso(t.entry_time)}"
     return f"{t.symbol or fallback_symbol}|{_iso(t.entry_time)}"
 
 
@@ -348,6 +438,7 @@ def step(
     charge_fn,
     now: pd.Timestamp | None = None,
     listed_expiries: ListedExpiries | None = None,
+    option_feed: OptionFeed | None = None,
 ) -> StepResult:
     """One pass of one paper run. Safe to repeat: only unseen events are recorded."""
     now = now or _now()
@@ -449,6 +540,14 @@ def step(
         _set_status("waiting", msg)
         return StepResult("waiting", msg)
 
+    option_source = None
+    if spec.instrument.is_option:
+        if option_feed is None:
+            msg = "Option prices are not connected, so this run cannot be checked."
+            _set_status("not_connected", msg)
+            return StepResult("not_connected", msg)
+        option_source = option_feed.source(now)
+
     contract_from = None
     if len(bars_by_symbol) == 1:
         contract_from = _current_contract_from(spec, next(iter(bars_by_symbol.values())), listed)
@@ -462,17 +561,25 @@ def step(
     # default. A run started since then always has the key, whatever its value
     # (including zero), because `logic.start_paper` always stores it.
     slippage = Slippage.from_dict(params["slippage"]) if "slippage" in params else LEGACY_SLIPPAGE
-    trades, single, decisions = _run_engine(
-        spec,
-        bars_by_symbol,
-        capital=float(params.get("capital", 100_000.0)),
-        charge_fn=charge_fn,
-        trade_from=trade_from,
-        now=now,
-        listed=listed,
-        blocked_windows=blocked_windows,
-        slippage=slippage,
-    )
+    try:
+        trades, single, decisions = _run_engine(
+            spec,
+            bars_by_symbol,
+            capital=float(params.get("capital", 100_000.0)),
+            charge_fn=charge_fn,
+            trade_from=trade_from,
+            now=now,
+            listed=listed,
+            blocked_windows=blocked_windows,
+            slippage=slippage,
+            option_source=option_source,
+            option_feed=option_feed,
+        )
+    except kite.KiteError as exc:
+        # An option run reads Kite again for the options themselves.
+        msg = f"Could not get option prices from Kite: {exc}"
+        _set_status("feed_down", msg)
+        return StepResult("feed_down", msg)
     fallback_symbol = spec.instrument.symbol
     observed = _iso(now)
     new: list[str] = []
@@ -650,11 +757,7 @@ def step(
                     "strategy_alert",
                     run_id,
                     f"paper_signal:{run_id}:{d_key}",
-                    f"Your strategy '{strategy_name}' would "
-                    f"{'buy' if spec.direction == 'long' else 'sell short'} {d_symbol} at the next "
-                    f"candle's open: {_entry_rule_text(spec)} on the "
-                    f"{_candle_words(d_time, spec.instrument.timeframe)} candle. "
-                    "Nothing is bought or sold.",
+                    _signal_alert_text(spec, strategy_name, d, d_symbol, d_time),
                 )
 
     # --- the "signal" row: the engine's OWN signal_taken decision on each
@@ -701,6 +804,7 @@ def step(
         "closed_trades": len(closed),
         "open_positions": [
             {
+                "key": _key(t, fallback_symbol),
                 "symbol": t.symbol or fallback_symbol,
                 "direction": t.direction,
                 "quantity": t.quantity,
@@ -716,6 +820,8 @@ def step(
     message = f"Up to date to the candle at {pd.Timestamp(last_bar):%d %b %H:%M}."
     if failures:
         message += f" Could not load {len(failures)} symbol(s)."
+    if option_source is not None:
+        message += _option_gaps_text(option_source, trade_from)
     health = "ok"
     if store.is_paper_run_paused(run_id):
         health = "paused"
@@ -725,6 +831,53 @@ def step(
         )
     _set_status(health, message, _iso(last_bar), snapshot)
     return StepResult(health, message, new)
+
+
+def _signal_alert_text(spec, strategy_name, d, d_symbol, d_time) -> str:
+    """An alert-only run's words for one `signal_taken` decision.
+
+    An option position names what it would open; a sold leg is never said to
+    be bought, and a leg's re-entry is not the strategy's entry rule.
+    """
+    candle = f"the {_candle_words(d_time, spec.instrument.timeframe)} candle"
+    tail = "Nothing is bought or sold."
+    if d.reason_code == "reentry":
+        return (
+            f"Your strategy '{strategy_name}' would re-enter {d_symbol} at the next candle's "
+            f"open, as its re-entry rule allows after {candle}. {tail}"
+        )
+    contract = (d.detail or {}).get("contract") or d_symbol
+    if spec.instrument.legs:
+        action = f"open its position ({contract})"
+    elif spec.instrument.is_option:
+        action = f"buy {contract}"
+    else:
+        action = f"{'buy' if spec.direction == 'long' else 'sell short'} {d_symbol}"
+    return (
+        f"Your strategy '{strategy_name}' would {action} at the next candle's open: "
+        f"{_entry_rule_text(spec)} on {candle}. {tail}"
+    )
+
+
+def _option_gaps_text(source, trade_from: pd.Timestamp) -> str:
+    """Plain words for anything the option prices could not answer since Start."""
+    since = pd.Timestamp(trade_from).date()
+    text = ""
+    lost = sorted({s for s, day in getattr(source, "lost", ()) if day >= since})
+    if lost:
+        text += (
+            f" Prices for {', '.join(lost)} were not saved before Kite dropped them "
+            "(no pass ran between the close and expiry), so trades in them can no longer "
+            "be re-checked; what was recorded stands."
+        )
+    missing = sorted(d for d in getattr(source, "missing_listing_days", ()) if d >= since)
+    if missing:
+        days = ", ".join(f"{d:%d %b}" for d in missing)
+        text += (
+            f" The list of options for {days} was not saved (no pass ran that day), so "
+            "no contract could be picked for a signal then."
+        )
+    return text
 
 
 def _drift(store, run_id, observed, symbol, kind, key, was, now_fields, new) -> None:

@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,760 tests passing (2026-10-14, Phase 2 batch 2)
+- **State:** 1,801 tests passing (2026-10-15, Phase 2 batch 3)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -274,7 +274,7 @@ futures backtest crashed on a missing lot size; and a raw code dict leaked into
 its assumptions list. Our sizing, charges, benchmark and stop rule exist to
 prevent exactly these.
 
-### Phase 2 — Options — **batches 1 and 2 BUILT (2026-10-13/14): buying; selling and multi-leg**
+### Phase 2 — Options — **batches 1-3 BUILT (2026-10-13/15): buying; selling and multi-leg; paper trading**
 
 Plan: `~/.claude/plans/let-s-start-planning-phase-compiled-swan.md`. Branch
 `phase-2-options-batch-1`. Justin's decisions, each offered as a trade-off:
@@ -422,6 +422,72 @@ Open after batch 2, for Justin:
 The charge model already handles the exercised-ITM STT trap, but batch 1 never
 needs it: no option is held to settlement.
 
+**Batch 3 -- paper trading options -- BUILT 2026-10-15**, branch
+`phase-2-options-batch-3`. Every option strategy (bought, sold, multi-leg) can
+now be paper traded on live Kite prices, through the same engines a backtest
+uses. Justin's decisions, each offered as a trade-off:
+
+| Topic | Decision |
+| --- | --- |
+| What to save (Kite drops an option's prices, and its list entry, at expiry) | **Only what paper runs use** (my recommendation was a near-the-money chain; he chose fewer requests) |
+| IV percentile in paper (no option prices Jan to mid-Oct 2026) | **Rank India VIX instead**, NIFTY only; BANKNIFTY/SENSEX IV strategies are refused for paper, said plainly |
+| Option still open on expiry day, in paper | **Held to the 15:40 close, frozen at its last traded price, "Expired"**. Paper and backtest may differ: backtests keep the 15:15 rule |
+
+**F&O closes at 15:40 since 3 Aug 2026** (closing auction in the cash market;
+Justin pointed it out). Checked in Kite on 15 Oct 2026: NIFTY options traded
+to 15:39, while the NIFTY and SENSEX index candles still end at 15:29.
+`nlt.data.session.NSE_FNO` (09:15-15:40) is used for option paper runs: their
+day is not over until 15:40, the job checks them to 15:45, and their minutes
+are read to 15:40. **Not fixed: futures paper runs** still use the equity
+session and drop NIFTY/BANKNIFTY futures candles after 15:30.
+
+What exists:
+- `nlt/options/live.py` -- `LiveOptionSource`, the paper twin of
+  `ParquetSource`. Saves each day's listing (`data/fno_live/listing/`) and each
+  used contract's finished days (`data/fno_live/bars/`, an empty file = asked,
+  nothing there). Same traded-only rule as the dataset (Kite also returns
+  zero-volume minutes priced at the last trade). Never returns a minute that
+  has not finished. Tokens are looked up in TODAY's list only (Kite reuses
+  them). Anything lost (no pass between the close and expiry) or a day with no
+  saved list is said in the run's status, never guessed. `vix_iv_fn` ranks
+  India VIX by the `iv_percentile` rule.
+- `nlt/data/kite.py` -- SENSEX (BSE) and INDIA VIX index tokens;
+  `todays_instruments` refuses a list that is not today's (downloaded another
+  day, or still listing an expired option); `option_contracts`.
+- Both option engines: `final_session_in_progress` (the stock engine's
+  mid-day square-off bug, which they also had) and `expiry_at_close` (paper's
+  expiry rule). Legs engine: a leg waiting to re-enter on the newest candle no
+  longer makes the position look closed (it was finalised as "stop", then
+  reopened next pass); a position in that state, or with a leg still open at
+  the end of the data, is "end_of_data".
+- `nlt/paper/runner.py` -- `OptionFeed` (source, margin, IV) passed in;
+  option runs use `NSE_FNO`; a multi-leg position is keyed by its index, so a
+  fresh-strike re-entry does not look like a new position.
+- `scripts/paper_run.py` -- fetches today's exchange margin file from 08:30
+  when a selling run needs it (every 15 min until found), and gives every
+  option run one more pass after 15:46 each weekday so expiring contracts'
+  last day is saved.
+- `app/logic.py` -- `paper_problem` no longer refuses options (IV on
+  BANKNIFTY/SENSEX excepted); `paper_notes` says what differs in paper;
+  `option_feed`. `nlt/options/margin.py` window left open at the end.
+- Tests: `tests/test_options_paper.py` replays real Jan 2025 weeks through the
+  runner with a pretend Kite that forgets expired contracts and hands back
+  the forming minute: a bought call and a sold straddle each record exactly
+  the backtest's trades, with no drift; an expiring put is frozen at its last
+  raw trade (not the 15:15 price). `test_options_paper_rules.py`,
+  `test_options_live.py` cover the rules. A live run on 15 Oct 2026 (bought
+  NIFTY call, NIFTY and SENSEX straddles) was checked by hand against Kite's
+  raw minutes.
+
+Open after batch 3, for Justin:
+- Futures paper runs ignore 15:30-15:40 (above).
+- Options held overnight: their minutes 15:30-15:40 are not checked for a stop
+  (the index has no candles then); only the expiry valuation reads them.
+- If the job is down from 15:42 until a weekly expires, that contract's last
+  day is lost and its trades can no longer be re-checked; the run says so.
+- Kite's list is used only once it is today's; until it is published (early
+  morning) option runs report the feed as down.
+
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 
 **Data: the Kite web-session workaround, not Kite Connect.** On 2026-10-03
@@ -484,7 +550,7 @@ There are **two kill switches** (Justin's call): live and paper, independent.
 Saving a strategy from its results now records the backtest as a completed run
 -- before, nothing did, so the proving gate could never pass.
 
-**Not built:** the option-chain recorder, and any order placement (Phase 4).
+**Not built:** a whole-chain recorder (batch 3 saves only what paper runs use), and any order placement (Phase 4).
 
 **E1 + E2 built (2026-10-13, branch `paper-additions-batch-1`).** Plan:
 `~/.claude/plans/can-we-plan-the-jaunty-twilight.md`. Justin's decisions: pause

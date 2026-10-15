@@ -458,7 +458,11 @@ def _signed_inr(value: float) -> str:
 def _trade_row(t, spec, tf: str) -> dict:
     """One row of the trade table. A multi-leg position is one row, its options
     listed under it (`legs`), each with its own prices and reason."""
-    reason = logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason)
+    reason = (
+        "Expired"
+        if t.exit_reason == "expiry"
+        else logic._EXIT_WORDS.get(t.exit_reason, t.exit_reason)
+    )
     price = _price_inr if spec.instrument.is_option else format_inr
     row = {
         "symbol": t.symbol or spec.instrument.symbol,
@@ -494,7 +498,11 @@ def _trade_row(t, spec, tf: str) -> dict:
                 "exited": _time_text(f.exit_time, tf),
                 "exit_price": _price_inr(f.exit_price),
                 "stop": _price_inr(f.stop_level) if f.stop_level is not None else None,
-                "reason": logic._EXIT_WORDS.get(f.exit_reason, f.exit_reason)
+                "reason": (
+                    "Expired"
+                    if f.exit_reason == "expiry"
+                    else logic._EXIT_WORDS.get(f.exit_reason, f.exit_reason)
+                )
                 + (" (at its last traded price)" if f.exit_untraded else ""),
                 "reentry": f.reentry,
                 "why": f.why,
@@ -795,11 +803,12 @@ def _paper_run_card(store: Store, run: dict) -> dict:
     positions = []
     for p in [] if alert_only else (snap.get("open_positions") or []):
         # A futures quantity already names its contract ("1 lot of Gold futures").
-        symbol = "" if spec.instrument.is_future else (p.get("symbol") or "")
+        symbol = "" if spec.instrument.is_future else logic.readable_symbol(p.get("symbol") or "")
         pnl = p.get("pnl_if_closed_now")
         positions.append(
             {
                 "what": f"{logic.quantity_words(spec, p.get('quantity'))}{symbol}".strip(),
+                "symbol_raw": p.get("symbol") or "",
                 "direction": "Bought" if p.get("direction") == "long" else "Sold short",
                 "entry_price": format_inr(p["entry_price"]) if p.get("entry_price") else "",
                 "last_price": format_inr(p["last_price"]) if p.get("last_price") else "",
@@ -837,7 +846,9 @@ def _paper_run_card(store: Store, run: dict) -> dict:
         "events": [
             {
                 "when": logic.when(e["observed_at"]),
-                "text": logic.describe_paper_event(e, spec, alert_only=alert_only),
+                "text": logic.readable_text(
+                    logic.describe_paper_event(e, spec, alert_only=alert_only)
+                ),
                 "drift": e["kind"] == "drift",
                 "trade_key": e["event_key"] if e["kind"] in ("entry", "exit") else None,
             }
@@ -860,7 +871,8 @@ def _paper(store: Store) -> dict:
                 "name": s["name"],
                 "version": s["version"],
                 "readback": s["readback"],
-                "problem": logic.paper_problem(store.load_spec(s["id"])),
+                "problem": logic.paper_problem(spec_s := store.load_spec(s["id"])),
+                "notes": logic.paper_notes(spec_s),
             }
         )
     return {
@@ -1162,12 +1174,15 @@ def _paper_trade(store: Store, run_id: int, key: str) -> list[str]:
         open_pnl_as_of = status.get("last_bar_time")
         snap = json.loads(status.get("snapshot_json") or "{}")
         for p in snap.get("open_positions") or []:
-            if f"{p.get('symbol')}|{p.get('entry_time')}" == key:
+            # `key` is the paper record's own (a multi-leg position is keyed by
+            # its index); snapshots from before it was stored rebuild it.
+            if p.get("key", f"{p.get('symbol')}|{p.get('entry_time')}") == key:
                 open_pnl = p.get("pnl_if_closed_now")
                 break
-    return logic.trade_timeline(
+    steps = logic.trade_timeline(
         trade_events, spec, open_pnl=open_pnl, open_pnl_as_of=open_pnl_as_of
     )
+    return [logic.readable_text(step) for step in steps]
 
 
 async def paper_trade(request: Request) -> Response:
@@ -1181,6 +1196,8 @@ async def paper_trade(request: Request) -> Response:
 async def activity(request: Request) -> Response:
     store = _store(request)
     items = await _run(logic.activity_feed, store)
+    for it in items:
+        it["text"] = logic.readable_text(it["text"])
     source_id = request.query_params.get("source_id")
     if source_id not in (None, ""):
         try:

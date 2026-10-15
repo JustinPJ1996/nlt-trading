@@ -64,6 +64,7 @@ from nlt.data.session import (
     NSE_EQUITY,
     is_last_bar_of_session,
     is_partial_last_bar,
+    session_date,
 )
 from nlt.engine.backtest import (
     BARS_PER_YEAR,
@@ -140,12 +141,19 @@ def run_option_backtest(
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
     blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    final_session_in_progress: bool = False,
+    expiry_at_close: dt.time | None = None,
 ) -> BacktestResult:
     """Run a bought-option `spec`: signals on the index `bars`, trades via `execution`.
 
     `bars` are the underlying index's candles at the spec's timeframe;
     `execution` supplies the chosen contracts' own prices. The other
     arguments mean what they mean for `run_backtest`.
+
+    `expiry_at_close` is paper trading's expiry rule (Justin, 2026-10-15): a
+    position still open on its expiry day is held to the F&O close (15:40 since
+    3 Aug 2026) and valued at its last traded price before then, instead of
+    being closed at the square-off time as a backtest does.
     """
     if not spec.instrument.is_option:
         raise ValueError("run_option_backtest only runs option strategies")
@@ -202,6 +210,15 @@ def run_option_backtest(
 
     if is_intraday_tf and len(bars) > 0:
         last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        if final_session_in_progress:
+            # Paper trading mid-day: today is not over, so none of today's
+            # candles is its last (see `run_backtest`, which has the same rule).
+            today = session_date(bars.index[-1], session)
+            last_bar_of_session = last_bar_of_session.copy()
+            k = len(bars) - 1
+            while k >= 0 and session_date(bars.index[k], session) == today:
+                last_bar_of_session[k] = False
+                k -= 1
     else:
         last_bar_of_session = np.zeros(len(bars), dtype=bool)
 
@@ -345,6 +362,7 @@ def run_option_backtest(
                 bool(last_bar_of_session[i]),
                 square_off,
                 last_day,
+                expiry_at_close,
             )
             if outcome is None:
                 pos.bars_held += 1
@@ -575,6 +593,7 @@ def _check_exit(
     is_last_bar_of_session: bool,
     square_off: dt.time,
     last_day=lambda expiry: expiry,
+    expiry_at_close: dt.time | None = None,
 ) -> tuple[str, float, bool, bool] | None:
     """(reason, raw price before slippage, stop-and-target-both-hit, untraded) or None.
 
@@ -592,6 +611,14 @@ def _check_exit(
     forced = None
     if is_intraday_spec and (clock_reached or is_last_bar_of_session):
         forced = "square_off"
+    elif on_expiry_day and expiry_at_close is not None:
+        # Paper: held to the close, valued at the last trade before it. Until
+        # the day's last candle the stop and target are still watched below.
+        if not is_intraday_tf or is_last_bar_of_session:
+            price, untraded = expiry_close_price(
+                execution, pos.contract, ts.date(), expiry_at_close
+            )
+            return "expiry", (pos.last_price if price is None else price), False, untraded
     elif on_expiry_day and (not is_intraday_tf or clock_reached or is_last_bar_of_session):
         forced = "expiry"
     if forced is not None:
@@ -629,6 +656,21 @@ def _check_exit(
     if spec.exit.max_bars_held is not None and pos.bars_held + 1 >= spec.exit.max_bars_held:
         return "max_bars", float(bar["close"]), False, False
     return None
+
+
+def expiry_close_price(
+    execution: OptionExecution, contract: Contract, day: dt.date, close: dt.time
+) -> tuple[float | None, bool]:
+    """(last traded price before `close` on expiry `day`, untraded that day).
+
+    Untraded is True when the last trade was on an earlier day; None when the
+    contract never traded at all."""
+    boundary = pd.Timestamp(dt.datetime.combine(day, close), tz="Asia/Kolkata")
+    last = execution.last_trade(contract, boundary.to_pydatetime())
+    if last is None:
+        return None, True
+    price, at = last
+    return price, pd.Timestamp(at).date() != day
 
 
 def _day_end(day: dt.date) -> dt.datetime:
