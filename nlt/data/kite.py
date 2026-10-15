@@ -77,7 +77,12 @@ _MAX_DAYS_PER_REQUEST = {
 # Kite allows about 3 historical requests a second.
 _REQUEST_GAP_SECONDS = 0.35
 
-_INDEX_NAMES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK"}
+_INDEX_NAMES = {"NIFTY": "NIFTY 50", "BANKNIFTY": "NIFTY BANK", "INDIA VIX": "INDIA VIX"}
+# SENSEX is a BSE index: same hours as NSE, a different exchange in Kite's list.
+_BSE_INDEX_NAMES = {"SENSEX": "SENSEX"}
+
+# Where each index's options are listed in Kite's instrument list.
+OPTION_SEGMENTS = {"NIFTY": "NFO-OPT", "BANKNIFTY": "NFO-OPT", "SENSEX": "BFO-OPT"}
 
 
 class KiteError(RuntimeError):
@@ -265,8 +270,15 @@ def near_month(symbol: str, on: dt.date, instruments: pd.DataFrame | None = None
 
 
 def instrument_token(symbol: str, instruments: pd.DataFrame | None = None) -> int:
-    """NSE instrument token for an index ("NIFTY", "BANKNIFTY") or an NSE share."""
+    """Instrument token for an index ("NIFTY", "BANKNIFTY", "SENSEX", "INDIA VIX")
+    or an NSE share."""
     df = _instruments() if instruments is None else instruments
+    if symbol in _BSE_INDEX_NAMES:
+        bse = df[(df["exchange"] == "BSE") & (df["segment"] == "INDICES")]
+        rows = bse[bse["tradingsymbol"] == _BSE_INDEX_NAMES[symbol]]
+        if len(rows) != 1:
+            raise KiteUnavailable(f"Kite has no single BSE index for {symbol!r}")
+        return int(rows["instrument_token"].iloc[0])
     nse = df[df["exchange"] == "NSE"]
     if symbol in _INDEX_NAMES:
         rows = nse[(nse["segment"] == "INDICES") & (nse["tradingsymbol"] == _INDEX_NAMES[symbol])]
@@ -276,6 +288,59 @@ def instrument_token(symbol: str, instruments: pd.DataFrame | None = None) -> in
     if len(rows) != 1:
         raise KiteUnavailable(f"Kite has no single NSE instrument for {symbol!r}")
     return int(rows["instrument_token"].iloc[0])
+
+
+def todays_instruments(now: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Kite's instrument list as published TODAY (India time), never an older copy.
+
+    An option strategy picks its contract from the options listed on the signal
+    day, so yesterday's list will not do: it still has contracts that expired
+    yesterday and lacks any listed this morning. The cached copy is used only
+    if it was downloaded today and lists no option that has already expired --
+    Kite publishes the new list early each morning, and a copy fetched before
+    that would still carry yesterday's expiries.
+    """
+    now = (now or pd.Timestamp.now(tz="Asia/Kolkata")).tz_convert("Asia/Kolkata")
+    today = now.date()
+
+    def usable() -> pd.DataFrame | None:
+        if not _INSTRUMENTS_CACHE.exists():
+            return None
+        fetched = pd.Timestamp(_INSTRUMENTS_CACHE.stat().st_mtime, unit="s", tz="UTC")
+        if fetched.tz_convert("Asia/Kolkata").date() != today:
+            return None
+        df = pd.read_csv(_INSTRUMENTS_CACHE)
+        options = df[df["segment"].isin(set(OPTION_SEGMENTS.values()))]
+        if options.empty or (pd.to_datetime(options["expiry"]).dt.date < today).any():
+            return None
+        return df
+
+    df = usable()
+    if df is None:
+        _instruments(max_age_hours=0)
+        df = usable()
+    if df is None:
+        raise KiteUnavailable(
+            "Kite has not published today's list of options yet (the one we got still "
+            "has expired contracts in it)."
+        )
+    return df
+
+
+def option_contracts(underlying: str, instruments: pd.DataFrame) -> pd.DataFrame:
+    """`underlying`'s live options from Kite's list, shaped like the F&O
+    dataset's listing: tradingsymbol, instrument_type (CE/PE), expiry (date),
+    strike, plus Kite's instrument_token and lot_size."""
+    segment = OPTION_SEGMENTS[underlying]
+    rows = instruments[
+        (instruments["segment"] == segment)
+        & (instruments["name"] == underlying)
+        & (instruments["instrument_type"].isin(["CE", "PE"]))
+    ].copy()
+    rows["expiry"] = pd.to_datetime(rows["expiry"]).dt.date
+    rows["strike"] = rows["strike"].astype(float)
+    cols = ["tradingsymbol", "instrument_type", "expiry", "strike", "instrument_token", "lot_size"]
+    return rows[cols].sort_values(["expiry", "strike", "instrument_type"]).reset_index(drop=True)
 
 
 # --------------------------------------------------------------------- candles

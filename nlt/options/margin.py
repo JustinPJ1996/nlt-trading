@@ -83,11 +83,13 @@ EXCHANGE = {"NIFTY": "NSE", "BANKNIFTY": "NSE", "SENSEX": "BSE"}
 BOD_TAG = {"NSE": "i1", "BSE": "00"}
 EOD_TAG = {"NSE": "s", "BSE": "FINAL"}
 
-# The days `scripts/fetch_span.py` stores (the F&O dataset's coverage).
+# The days `scripts/fetch_span.py` stores: the F&O dataset's coverage, and
+# from paper trading (Phase 2 batch 3) every day's file as it is published --
+# so the window stays open at the end.
 WINDOW = {
-    "NIFTY": (dt.date(2022, 12, 1), dt.date(2025, 12, 31)),
-    "BANKNIFTY": (dt.date(2022, 12, 1), dt.date(2025, 12, 31)),
-    "SENSEX": (dt.date(2023, 7, 20), dt.date(2025, 12, 31)),
+    "NIFTY": (dt.date(2022, 12, 1), dt.date.max),
+    "BANKNIFTY": (dt.date(2022, 12, 1), dt.date.max),
+    "SENSEX": (dt.date(2023, 7, 20), dt.date.max),
 }
 
 # Rules by date. Each is the first day it applied.

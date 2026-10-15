@@ -51,7 +51,7 @@ from pandas.tseries.holiday import (
     sunday_to_monday,
 )
 
-from nlt.data.session import MCX, NSE_EQUITY, Session
+from nlt.data.session import MCX, NSE_FNO, Session
 
 # --------------------------------------------------------------- the contracts
 
@@ -208,7 +208,7 @@ FUTURES: dict[str, FuturesContract] = {
             "per index point",
             "nse_index",
             _EVERY_MONTH,
-            NSE_EQUITY,
+            NSE_FNO,
             11.32,
         ),
         FuturesContract(
@@ -220,7 +220,7 @@ FUTURES: dict[str, FuturesContract] = {
             "per index point",
             "nse_index",
             _EVERY_MONTH,
-            NSE_EQUITY,
+            NSE_FNO,
             11.32,
         ),
     )

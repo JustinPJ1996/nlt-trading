@@ -52,6 +52,11 @@ class Session:
 
 
 NSE_EQUITY = Session("NSE equity & F&O", dt.time(9, 15), dt.time(15, 30), (0, 1, 2, 3, 4))
+# NSE and BSE F&O close at 15:40 since 3 Aug 2026, ten minutes after the cash
+# market and the indices (whose last candle is still 15:29), to sit after the
+# new closing auction. Checked in Kite on 2026-10-15: NIFTY options traded to
+# 15:39. Used for live option prices; the 2022-2025 dataset closes at 15:30.
+NSE_FNO = Session("NSE/BSE F&O", dt.time(9, 15), dt.time(15, 40), (0, 1, 2, 3, 4))
 # MCX's evening close follows US daylight saving: 23:30 from the second Sunday of
 # March, 23:55 from the first Sunday of November. The later of the two is used,
 # so no winter candle is thrown away as "after hours"; everything that depends

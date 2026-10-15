@@ -18,6 +18,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import re
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -1134,13 +1135,69 @@ def paper_job_installed() -> bool:
     return "# nlt-paper" in out.stdout
 
 
+def _uses_iv_percentile(spec: StrategySpec) -> bool:
+    from nlt.engine.legs_backtest import _walk
+    from nlt.spec.models import IvPercentile
+
+    conditions = [spec.entry] + ([spec.exit.condition] if spec.exit.condition else [])
+    return any(isinstance(c, IvPercentile) for cond in conditions for c in _walk(cond))
+
+
 def paper_problem(spec: StrategySpec) -> str | None:
     """Why this strategy cannot be paper traded, in plain English, or None."""
-    if spec.instrument.trade_as == "option":
-        return "Option strategies can't be paper traded yet -- there is no option price feed."
     if spec.instrument.is_universe and spec.instrument.timeframe != "1d":
         return "Stock baskets can only run on daily candles for now."
     return None
+
+
+def paper_notes(spec: StrategySpec) -> list[str]:
+    """What is different when this strategy is paper traded rather than backtested,
+    said before Start is pressed."""
+    if not spec.instrument.is_option:
+        return []
+    notes = ["Option prices come from Zerodha as they happen."]
+    if not (spec.schedule.intraday and spec.instrument.timeframe != "1d"):
+        # A strategy that squares off each day at 15:15 does so on expiry day
+        # too, in paper as in a backtest; only one holding overnight differs.
+        notes.append(
+            "Options trade until 3:40 PM, ten minutes after the index's last price. A "
+            "position held overnight has its stop and target checked on the option's own "
+            "prices until then, and an exit rule met on the day's last candle sells at the "
+            "next option price instead of the next morning."
+        )
+        notes.append(
+            "One difference from the description above: in paper trading, an option still "
+            "open on its expiry day is NOT closed at the square-off time. It is held to the "
+            "3:40 PM close and valued at its last traded price, then shown as Expired. "
+            "Backtests keep the square-off rule."
+        )
+    if _uses_iv_percentile(spec):
+        symbol = spec.instrument.symbol
+        notes.append(
+            f"IV percentile is read from India VIX here, not from {symbol}'s own option "
+            "prices as in the backtest: we have no option prices from January to mid-October "
+            "2026 to rank against. The two usually move together, but not always."
+            + (
+                ""
+                if symbol == "NIFTY"
+                else f" India VIX is worked out from NIFTY's options, not {symbol}'s, so it "
+                f"follows {symbol}'s volatility less closely."
+            )
+        )
+    return notes
+
+
+def option_feed():
+    """Live option prices, exchange margin and India VIX for an option paper run."""
+    from nlt.options.live import KiteClient, LiveOptionSource, vix_iv_fn
+    from nlt.paper.runner import OptionFeed
+
+    client = KiteClient()
+    return OptionFeed(
+        source=lambda now: LiveOptionSource(client, now),
+        margin_fn=span_margin_fn(),
+        iv_fn=lambda now: vix_iv_fn(client, now),
+    )
 
 
 def start_paper(
@@ -1203,6 +1260,7 @@ def check_paper_now(store: Store, run_id: int) -> str:
         fetch=lambda sym, tf, a, b: source.bars(sym, tf, a, b),
         charge_fn=_adapt_charge_fn(model),
         listed_expiries=kite.listed_expiries,
+        option_feed=option_feed() if spec.instrument.is_option else None,
     )
     return result.message
 
@@ -1398,7 +1456,7 @@ _EXIT_WORDS = {
     "condition": "exit rule met",
     "max_bars": "time limit reached",
     "square_off": "end-of-day square-off",
-    "expiry": "contract expired",
+    "expiry": "it expired",
     "end_of_data": "still open when the test ended",
     "combined_target": "whole-position target reached",
     "combined_stop": "whole-position stop loss hit",
@@ -1990,3 +2048,45 @@ def library_cards(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out))
     return out
+
+
+# ------------------------------------------------------------ readable option names
+
+_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+_WEEKLY_MONTH_CODES = {**{str(i): i for i in range(1, 10)}, "O": 10, "N": 11, "D": 12}
+_OPTION_SYMBOL_BODY = r"([A-Z][A-Z&-]*?)(\d{2})(?:([1-9OND])(\d{2})|([A-Z]{3}))(\d{1,6})(CE|PE)"
+_OPTION_SYMBOL = re.compile(rf"^{_OPTION_SYMBOL_BODY}$")
+_OPTION_SYMBOL_IN_TEXT = re.compile(rf"(?<![A-Z0-9]){_OPTION_SYMBOL_BODY}(?![A-Z0-9])")
+
+
+def _readable_match(m: re.Match) -> str:
+    name, _yy, code, day, mon3, strike, side = m.groups()
+    if code is not None:
+        month = _WEEKLY_MONTH_CODES[code]
+        if not 1 <= int(day) <= 31:
+            return m.group(0)
+        when_text = f"{int(day)} {_MONTH_NAMES[month - 1]}"
+    else:
+        if mon3.capitalize() not in _MONTH_NAMES:
+            return m.group(0)
+        when_text = f"{mon3.capitalize()} monthly"
+    return f"{name} {int(strike):,} {side} \u00b7 {when_text}"
+
+
+def readable_symbol(symbol: str) -> str:
+    """An exchange option symbol in words ("NIFTY26O1923000CE" -> "NIFTY 23,000 CE
+    \u00b7 19 Oct"). A " + " joined list is converted part by part. Anything not
+    recognised (stocks, futures, a plain index name) comes back unchanged."""
+    if not symbol:
+        return symbol
+    parts = symbol.split(" + ")
+    out = []
+    for part in parts:
+        m = _OPTION_SYMBOL.match(part.strip())
+        out.append(_readable_match(m) if m else part)
+    return " + ".join(out)
+
+
+def readable_text(text: str) -> str:
+    """Every option symbol inside a sentence, put into words."""
+    return _OPTION_SYMBOL_IN_TEXT.sub(_readable_match, text)

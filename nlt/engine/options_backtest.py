@@ -64,6 +64,7 @@ from nlt.data.session import (
     NSE_EQUITY,
     is_last_bar_of_session,
     is_partial_last_bar,
+    session_date,
 )
 from nlt.engine.backtest import (
     BARS_PER_YEAR,
@@ -140,12 +141,27 @@ def run_option_backtest(
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
     blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    final_session_in_progress: bool = False,
+    fno_close: dt.time | None = None,
 ) -> BacktestResult:
     """Run a bought-option `spec`: signals on the index `bars`, trades via `execution`.
 
     `bars` are the underlying index's candles at the spec's timeframe;
     `execution` supplies the chosen contracts' own prices. The other
     arguments mean what they mean for `run_backtest`.
+
+    `fno_close` is paper trading's F&O close (15:40 since 3 Aug 2026), ten
+    minutes after the index's last candle. With it (Justin, 2026-10-15):
+
+      * a position still open after the index's last candle of the day has its
+        option's own prices watched until then -- stop, trailing stop, target,
+        and an exit rule met on that last candle fills at the next option
+        price, not the next morning (`_after_close`);
+      * a position still open on its expiry day is held to that close and
+        valued at its last traded price before it, instead of being closed at
+        the square-off time as a backtest does.
+
+    Backtests leave it None: the 2022-2025 dataset closes at 15:30.
     """
     if not spec.instrument.is_option:
         raise ValueError("run_option_backtest only runs option strategies")
@@ -202,6 +218,15 @@ def run_option_backtest(
 
     if is_intraday_tf and len(bars) > 0:
         last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        if final_session_in_progress:
+            # Paper trading mid-day: today is not over, so none of today's
+            # candles is its last (see `run_backtest`, which has the same rule).
+            today = session_date(bars.index[-1], session)
+            last_bar_of_session = last_bar_of_session.copy()
+            k = len(bars) - 1
+            while k >= 0 and session_date(bars.index[k], session) == today:
+                last_bar_of_session[k] = False
+                k -= 1
     else:
         last_bar_of_session = np.zeros(len(bars), dtype=bool)
 
@@ -345,6 +370,7 @@ def run_option_backtest(
                 bool(last_bar_of_session[i]),
                 square_off,
                 last_day,
+                fno_close,
             )
             if outcome is None:
                 pos.bars_held += 1
@@ -434,6 +460,26 @@ def run_option_backtest(
         if exit_signal is not None and bool(exit_signal.iloc[i]):
             for pos in open_positions:
                 pos.pending_condition_exit = True
+
+        # --- 5. after the index's last candle, the options still trade --------
+        if fno_close is not None and is_intraday_tf and bool(last_bar_of_session[i]):
+            still_open = []
+            for pos in open_positions:
+                outcome = _after_close(pos, execution, ts, fno_close, last_day)
+                if outcome is None:
+                    still_open.append(pos)
+                    continue
+                reason, at, raw_price, ambiguous, untraded = outcome
+                if reason == "expiry":
+                    counts.expiry_exit += 1
+                if ambiguous:
+                    counts.stop_beat_target += 1
+                if untraded:
+                    counts.untraded_exit += 1
+                close_position(pos, at, reason, raw_price, ambiguous, untraded)
+            open_positions = still_open
+            unrealized = sum((p.last_price - p.entry_price) * p.quantity for p in open_positions)
+            equity[i] = capital + realized_pnl + unrealized
 
     # --- 5. anything still open at the end of the data ----------------------
     if open_positions:
@@ -575,6 +621,7 @@ def _check_exit(
     is_last_bar_of_session: bool,
     square_off: dt.time,
     last_day=lambda expiry: expiry,
+    fno_close: dt.time | None = None,
 ) -> tuple[str, float, bool, bool] | None:
     """(reason, raw price before slippage, stop-and-target-both-hit, untraded) or None.
 
@@ -592,6 +639,13 @@ def _check_exit(
     forced = None
     if is_intraday_spec and (clock_reached or is_last_bar_of_session):
         forced = "square_off"
+    elif on_expiry_day and fno_close is not None:
+        # Paper: held to the close, valued at the last trade before it. A
+        # daily candle already spans the whole day; on intraday candles the
+        # stop and target are watched below and then by `_after_close`.
+        if not is_intraday_tf:
+            price, untraded = expiry_close_price(execution, pos.contract, ts.date(), fno_close)
+            return "expiry", (pos.last_price if price is None else price), False, untraded
     elif on_expiry_day and (not is_intraday_tf or clock_reached or is_last_bar_of_session):
         forced = "expiry"
     if forced is not None:
@@ -612,22 +666,82 @@ def _check_exit(
     if not traded:
         return None  # nothing traded in this candle, so no exit could fill
 
+    hit = _price_exit(pos, bar)
+    if hit is not None:
+        reason, price, ambiguous = hit
+        return reason, price, ambiguous, False
+    if spec.exit.max_bars_held is not None and pos.bars_held + 1 >= spec.exit.max_bars_held:
+        return "max_bars", float(bar["close"]), False, False
+    return None
+
+
+def expiry_close_price(
+    execution: OptionExecution, contract: Contract, day: dt.date, close: dt.time
+) -> tuple[float | None, bool]:
+    """(last traded price before `close` on expiry `day`, untraded that day).
+
+    Untraded is True when the last trade was on an earlier day; None when the
+    contract never traded at all."""
+    boundary = pd.Timestamp(dt.datetime.combine(day, close), tz="Asia/Kolkata")
+    last = execution.last_trade(contract, boundary.to_pydatetime())
+    if last is None:
+        return None, True
+    price, at = last
+    return price, pd.Timestamp(at).date() != day
+
+
+def _price_exit(pos: _OptionPosition, bar: pd.Series) -> tuple[str, float, bool] | None:
+    """(reason, raw price, stop-and-target-both-hit) on one traded option
+    candle: stop first, then trailing stop, target, and an exit rule decided
+    on the previous candle -- `_check_exit`'s order."""
     o, h, low = float(bar["open"]), float(bar["high"]), float(bar["low"])
     target_hit = pos.target_level is not None and h >= pos.target_level
     if pos.stop_level is not None and low <= pos.stop_level:
-        fill = o if o < pos.stop_level else pos.stop_level
-        return "stop", fill, target_hit, False
+        return "stop", (o if o < pos.stop_level else pos.stop_level), target_hit
     if pos.trailing_pct is not None:
         pos.trail_best = max(pos.trail_best, h)
         trail_level = pos.trail_best * (1.0 - pos.trailing_pct / 100.0)
         if low <= trail_level:
-            return "trailing_stop", (o if o < trail_level else trail_level), target_hit, False
+            return "trailing_stop", (o if o < trail_level else trail_level), target_hit
     if target_hit:
-        return "target", (o if o > pos.target_level else pos.target_level), False, False
+        return "target", (o if o > pos.target_level else pos.target_level), False
     if pos.pending_condition_exit:
-        return "condition", o, False, False
-    if spec.exit.max_bars_held is not None and pos.bars_held + 1 >= spec.exit.max_bars_held:
-        return "max_bars", float(bar["close"]), False, False
+        return "condition", o, False
+    return None
+
+
+def _after_close(
+    pos: _OptionPosition,
+    execution: OptionExecution,
+    ts: pd.Timestamp,
+    fno_close: dt.time,
+    last_day,
+) -> tuple[str, pd.Timestamp, float, bool, bool] | None:
+    """(reason, time, raw price, both hit, untraded) for a position still open
+    after the index's last candle `ts`, from its option's candles up to the F&O
+    close; None if it stays open overnight.
+
+    The index has no candles after 15:29, so nothing else would look at them.
+    On expiry day, a position that survives them is valued at its last trade.
+    """
+    day = ts.date()
+    for at in execution.bar_times(pos.contract, ts, fno_close):
+        bar = execution.bar(pos.contract, at)
+        if bar is None or not bool(bar["traded"]):
+            continue
+        pos.last_price = float(bar["close"])
+        hit = _price_exit(pos, bar)
+        if hit is not None:
+            reason, price, ambiguous = hit
+            return reason, at, price, ambiguous, False
+    if day == last_day(pos.contract.expiry):
+        price, untraded = expiry_close_price(execution, pos.contract, day, fno_close)
+        last = execution.last_trade(
+            pos.contract,
+            pd.Timestamp(dt.datetime.combine(day, fno_close), tz="Asia/Kolkata").to_pydatetime(),
+        )
+        at = pd.Timestamp(last[1]) if last and not untraded else ts
+        return "expiry", at, (pos.last_price if price is None else price), False, untraded
     return None
 
 

@@ -908,7 +908,7 @@ def test_backtest_spec_sends_a_spec_with_legs_to_the_legs_engine(monkeypatch):
     )
     monkeypatch.setattr(logic, "_backtest_option_spec", lambda spec, **kw: "single")
     assert logic.backtest_spec(_spec()) == "legs"
-    assert logic.paper_problem(_spec()) is not None  # paper trading still refuses options
+    assert logic.paper_problem(_spec()) is None  # options paper trade since batch 3
 
 
 def test_charges_note_says_the_strategy_sells_options():
