@@ -233,6 +233,12 @@ class ExitRules(Base):
     )
     condition: Condition | None = None
     max_bars_held: int | None = Field(default=None, ge=1, le=5000)
+    # A stop at a price level (2026-10-16): "stop at the low of the opening
+    # range". The level's value on the signal candle is the stop for the
+    # trade's life -- the levels belong to the setup, like every stop here.
+    # Only the levels in `STOP_LEVELS`; checked against the spec's
+    # indicators and direction in `StrategySpec._stop_level_is_a_level`.
+    stop_level: Ref | None = None
 
     # Multi-leg option positions only: exits on the whole position's P&L,
     # as a percentage of the net premium at the signal -- the credit received
@@ -256,6 +262,7 @@ class ExitRules(Base):
                 self.stop_pct,
                 self.trailing_stop_pct,
                 self.stop_atr_mult,
+                self.stop_level,
                 self.condition,
                 self.max_bars_held,
                 self.combined_target_pct,
@@ -274,8 +281,20 @@ class ExitRules(Base):
     @property
     def has_stop(self) -> bool:
         return bool(
-            self.stop_pct or self.trailing_stop_pct or self.stop_atr_mult or self.combined_stop_pct
+            self.stop_pct
+            or self.trailing_stop_pct
+            or self.stop_atr_mult
+            or self.stop_level
+            or self.combined_stop_pct
         )
+
+
+# Levels a stop can sit at, by direction: a long position's stop is a low, a
+# short's a high. (indicator type, output) pairs.
+STOP_LEVELS = {
+    "long": {("opening_range", "low"), ("prior_period", "low"), ("rolling_extremes", "lowest")},
+    "short": {("opening_range", "high"), ("prior_period", "high"), ("rolling_extremes", "highest")},
+}
 
 
 # ------------------------------------------------------------------ sizing
@@ -409,6 +428,9 @@ class OptionLeg(Base):
     option_type: Literal["CE", "PE"]
     strike_offset: int = Field(default=0, ge=-10, le=10)
     strike_points: int | None = Field(default=None, ge=-5000, le=5000)
+    # A strike the user named ("sell the 25,000 call"): that strike or no
+    # trade. Paper trading only -- a backtest refuses it (2026-10-16).
+    strike: int | None = Field(default=None, ge=1000, le=200_000)
     expiry: Literal["nearest_weekly", "next_weekly", "monthly"] = "nearest_weekly"
     lots: int = Field(default=1, ge=1, le=10, description="Lots per set; a ratio, not a size.")
     stop_pct: float | None = Field(default=None, gt=0, le=1000)
@@ -422,9 +444,12 @@ class OptionLeg(Base):
 
     @model_validator(mode="after")
     def _one_strike_rule(self):
-        if self.strike_points is not None and self.strike_offset != 0:
+        if (
+            sum((self.strike_points is not None, self.strike_offset != 0, self.strike is not None))
+            > 1
+        ):
             raise ValueError(
-                "a leg's strike is either strikes from ATM or points from spot, not both"
+                "a leg's strike is one of: strikes from ATM, points from spot, or a named strike"
             )
         if (self.reentry == "none") != (self.reentry_max == 0):
             raise ValueError("re-entry needs both a kind and a count (or neither)")
@@ -470,6 +495,9 @@ class Instrument(Base):
         description="Strikes away from at-the-money. 0 = ATM, +1 = one strike OTM.",
     )
     expiry: Literal["nearest_weekly", "next_weekly", "monthly"] = "nearest_weekly"
+    # A strike the user named ("buy the 24,000 call"): that strike or no
+    # trade. Paper trading only -- a backtest refuses it (2026-10-16).
+    strike: int | None = Field(default=None, ge=1000, le=200_000)
 
     # Batch 2: a sold option or several options opened together. Empty for
     # everything else, including batch 1's single bought option, which keeps
@@ -536,6 +564,8 @@ class Instrument(Base):
         `Literal` allows). At that point the underlying must be one this
         platform can actually resolve into a listed contract.
         """
+        if self.strike is not None and (self.trade_as != "option" or self.strike_offset != 0):
+            raise ValueError("a named strike is for an option, instead of strikes from ATM")
         if self.trade_as == "option" and self.option_type != "auto":
             if self.symbol not in OPTION_UNDERLYINGS:
                 raise ValueError(
@@ -550,7 +580,7 @@ class Instrument(Base):
             return self
         if self.trade_as != "option":
             raise ValueError("option legs need trade_as='option'")
-        if self.option_type != "auto" or self.strike_offset != 0:
+        if self.option_type != "auto" or self.strike_offset != 0 or self.strike is not None:
             raise ValueError("a multi-leg position describes its options in `legs` only")
         if self.symbol not in OPTION_UNDERLYINGS:
             raise ValueError(
@@ -617,6 +647,8 @@ class StrategySpec(Base):
         if self.exit.condition is not None:
             for ref in _walk_refs(self.exit.condition):
                 _check_ref(ref, by_id, "exit condition")
+        if self.exit.stop_level is not None:
+            _check_ref(self.exit.stop_level, by_id, "stop level")
 
         if self.exit.atr_id:
             spec = by_id.get(self.exit.atr_id)
@@ -657,13 +689,29 @@ class StrategySpec(Base):
         return self
 
     @model_validator(mode="after")
+    def _stop_level_is_a_level(self):
+        ref = self.exit.stop_level
+        if ref is None:
+            return self
+        if self.instrument.trade_as == "option" or self.instrument.is_universe:
+            raise ValueError("a stop at a price level is for a share, the index or a future")
+        kinds = {i.id: i.type for i in self.indicators}
+        if ref.bars_ago or (kinds.get(ref.name), ref.output) not in STOP_LEVELS[self.direction]:
+            raise ValueError(
+                "a stop level must be a low for a buy (a high for a short): the opening range, "
+                "the previous day's, or the lowest/highest of recent candles"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _legs_are_consistent(self):
         """The safety rules for selling (Justin, 2026-10-14).
 
         * Every position needs a way to lose no more than it can bear. A
           **defined-risk** position -- every sold option covered by a bought
-          one of the same type and expiry, at least as many lots, further out
-          -- is protected by its hedge, so it needs no stop loss. Anything
+          one of the same type and expiry, at least as many lots, at any
+          strike (`is_defined_risk`) -- is protected by its hedge, so it needs
+          no stop loss. Anything
           else (a plain sell, a straddle, a strangle) must have a stop: on
           every sold leg, or on the combined position.
         * `direction` is "long" by convention: each leg carries its own side.
@@ -712,12 +760,15 @@ class StrategySpec(Base):
 def is_defined_risk(legs: list[OptionLeg]) -> bool:
     """True when every sold option is covered by a bought one that caps its loss.
 
-    Covered means: a bought leg of the same type and expiry, with at least as
-    many lots in total, further out of the money than the sold one. Whether a
-    strike is "further out" can only be known for strikes fixed relative to one
-    another *in the same unit* -- both counted in listed strikes, or both in
-    points -- so mixed units are treated as not covered (refuse, never assume).
-    A ratio position (sell 2, buy 1) is not covered.
+    Covered means: bought options of the same type and expiry, with at least as
+    many lots in total, **at any strike** (Justin, 2026-10-16). A bought call
+    caps a sold call's loss wherever it sits: further out, the gap between the
+    strikes is the worst case (a credit spread); nearer the money, the pair
+    can lose at most what was paid (a bull call spread, a debit spread). Until
+    then only "further out" counted, so a plain debit spread was asked for a
+    stop it did not need. A ratio (sell 2, buy 1) and a calendar (the bought
+    one in another expiry) are not covered: the extra lots, or the sold one
+    after the bought one's expiry differs, have no cap.
     """
     sells = [leg for leg in legs if leg.side == "sell"]
     buys = [leg for leg in legs if leg.side == "buy"]
@@ -725,14 +776,9 @@ def is_defined_risk(legs: list[OptionLeg]) -> bool:
         return True
     for kind in ("CE", "PE"):
         for expiry in {leg.expiry for leg in sells}:
-            s_legs = [x for x in sells if x.option_type == kind and x.expiry == expiry]
-            b_legs = [x for x in buys if x.option_type == kind and x.expiry == expiry]
-            if not s_legs:
-                continue
-            for s_leg in s_legs:
-                if not any(_further_out(b, s_leg) for b in b_legs):
-                    return False
-            if sum(x.lots for x in b_legs) < sum(x.lots for x in s_legs):
+            s_lots = sum(x.lots for x in sells if x.option_type == kind and x.expiry == expiry)
+            b_lots = sum(x.lots for x in buys if x.option_type == kind and x.expiry == expiry)
+            if s_lots and b_lots < s_lots:
                 return False
     return True
 

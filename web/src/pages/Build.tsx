@@ -266,16 +266,20 @@ export function Build({
   state,
   setState,
   onResult,
+  onPaper,
 }: {
   options: Options | null;
   state: BuildState;
   setState: Dispatch<SetStateAction<BuildState>>;
   onResult: (r: Result) => void;
+  onPaper: () => void;
 }) {
   const [checking, setChecking] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [savedDraft, setSavedDraft] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const step2Ref = useRef<HTMLLIElement>(null);
   const step3Ref = useRef<HTMLLIElement>(null);
@@ -400,6 +404,20 @@ export function Build({
     state.slippage.value < 0 ||
     (state.slippage.kind === "pct" && state.slippage.value > 5) ||
     (state.slippage.kind === "rs" && state.slippage.value > 100);
+
+  async function saveForPaper() {
+    if (!understood) return;
+    setSavingDraft(true);
+    setRunError(null);
+    try {
+      const r = await api.saveUntested(understood.spec);
+      setSavedDraft(r.name);
+    } catch (err) {
+      setRunError(err instanceof ApiError ? err.message : "That could not be saved.");
+    } finally {
+      setSavingDraft(false);
+    }
+  }
 
   async function run(e: FormEvent) {
     e.preventDefault();
@@ -608,7 +626,37 @@ export function Build({
 
         <li className={`step ${step3Class}`} ref={step3Ref}>
           <h2 className="step-title">Test it on past prices</h2>
-          {confirmed && options && (
+          {confirmed && understood?.backtest_problem && (
+            <div className="panel reveal">
+              <p>{understood.backtest_problem}</p>
+              {savedDraft === null ? (
+                <div className="btn-row" style={{ marginTop: 16 }}>
+                  <button className="btn" type="button" onClick={saveForPaper} disabled={savingDraft}>
+                    Save for paper trading
+                  </button>
+                  {savingDraft && <Working>Saving...</Working>}
+                </div>
+              ) : (
+                <div style={{ marginTop: 16 }}>
+                  <p>
+                    Saved “{savedDraft}”. It has not been tested on past prices. You can start it
+                    from the Paper trading page.
+                  </p>
+                  <div className="btn-row" style={{ marginTop: 12 }}>
+                    <button className="btn" type="button" onClick={onPaper}>
+                      Go to Paper trading
+                    </button>
+                  </div>
+                </div>
+              )}
+              {runError && (
+                <div style={{ marginTop: 16 }}>
+                  <ErrorLine error={runError} />
+                </div>
+              )}
+            </div>
+          )}
+          {confirmed && options && !understood?.backtest_problem && (
             <form className="panel reveal" onSubmit={run}>
               <div className="grid-2">
                 <label className="field" style={{ marginTop: 0 }}>

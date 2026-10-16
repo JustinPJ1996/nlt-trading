@@ -199,7 +199,8 @@ def test_the_ai_reader_applies_the_options_refusal_itself() -> None:
     fake = Scripted(GOOD)
     result = llm.parse_llm("Go long on the NIFTY 25000 call, bank 4% profit, SL 2%", transport=fake)
     assert fake.calls == []
-    assert _fields(result) == {"instrument.strike_offset"}
+    # The strike reads (since 2026-10-16); the expiry was never said.
+    assert _fields(result) == {"instrument.expiry"}
 
 
 def test_the_ai_reader_never_reads_a_sold_option() -> None:
@@ -588,3 +589,50 @@ def test_ai_path_a_day_length_average_on_hourly_bars_is_asked() -> None:
 def test_ai_path_a_day_length_average_on_daily_bars_reads() -> None:
     result = llm.parse_llm(SENTENCE, transport=Scripted(GOOD))
     assert result.spec is not None, result.questions
+
+
+_TIMED = {
+    "kind": "strategy",
+    "symbol": "TCS",
+    "direction": "long",
+    "indicators": [{"id": "rsi14", "type": "rsi", "params": {"length": 14}}],
+    "entry": {
+        "kind": "all",
+        "conditions": [
+            {"kind": "at_time", "time": "09:30"},
+            {
+                "kind": "compare",
+                "op": "gt",
+                "left": {"kind": "ref", "name": "rsi14"},
+                "right": {"kind": "const", "value": 60},
+            },
+        ],
+    },
+    "exit": {"stop_pct": 2},
+    "evidence": [
+        {"field": "direction", "quote": "Go long"},
+        {"field": "instrument", "quote": "TCS"},
+        {"field": "entry", "quote": "at 09:30 if RSI is above 60"},
+        {"field": "exit.stop", "quote": "SL 2%"},
+    ],
+}
+
+
+def test_ai_path_an_entry_time_reads_on_minute_candles() -> None:
+    text = "Go long on TCS at 09:30 if RSI is above 60 on 5 minute candles, SL 2%"
+    result = llm.parse_llm(text, transport=Scripted(_TIMED))
+    assert result.spec is not None, result.questions
+
+
+def test_ai_path_an_entry_time_on_daily_candles_is_asked() -> None:
+    text = "Go long on TCS at 09:30 if RSI is above 60, SL 2%"
+    result = llm.parse_llm(text, transport=Scripted(_TIMED))
+    assert result.spec is None and "time of day needs minute" in result.questions[0].text
+
+
+def test_ai_path_an_entry_time_the_user_never_said_is_refused() -> None:
+    reply = json.loads(json.dumps(_TIMED))
+    reply["entry"]["conditions"][0]["time"] = "10:15"
+    text = "Go long on TCS at 09:30 if RSI is above 60 on 5 minute candles, SL 2%"
+    result = llm.parse_llm(text, transport=Scripted(reply))
+    assert result.spec is None and "couldn't match every number" in result.questions[0].text

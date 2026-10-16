@@ -295,3 +295,47 @@ def resolve_points(
         f"({_EXPIRY_KIND_WORDS[expiry_kind]} expiry) was chosen."
     )
     return Resolution(contract, None, why)
+
+
+REASON_STRIKE_NOT_LISTED = "strike_not_listed"
+
+
+def resolve_fixed(
+    listing: pd.DataFrame,
+    underlying: str,
+    signal_time: dt.datetime,
+    option_type: str,
+    strike: float,
+    expiry_kind: str,
+) -> Resolution:
+    """Exactly the strike the user named ("the 24,000 call"), or a refusal.
+
+    Never the nearest listed one: a strike that is not listed for that expiry
+    on the signal day means no trade, said in plain words (2026-10-16).
+    """
+    picked = _chain_for(listing, underlying, signal_time, option_type, expiry_kind)
+    if isinstance(picked, Resolution):
+        return picked
+    expiry, chain, strikes = picked
+    if not any(abs(s - strike) < 1e-6 for s in strikes):
+        why = (
+            f"The {format_strike(strike)} {_OPTION_TYPE_WORDS[option_type]} was not listed "
+            f"for the {expiry:%d %b %Y} expiry on {signal_time:%d %b %Y}, so no contract was "
+            "chosen -- another strike is never used instead."
+        )
+        return Resolution(None, REASON_STRIKE_NOT_LISTED, why)
+    row = chain[(chain["strike"] - strike).abs() < 1e-6].iloc[0]
+    contract = Contract(
+        underlying=underlying,
+        tradingsymbol=row["tradingsymbol"],
+        option_type=option_type,
+        strike=float(row["strike"]),
+        expiry=expiry,
+        lot_size=lot_size(underlying, "option"),
+    )
+    why = (
+        f"The strategy names the {format_strike(strike)} strike, so the {expiry:%d %b %Y} "
+        f"{format_strike(strike)} {option_type} ({_EXPIRY_KIND_WORDS[expiry_kind]} expiry) "
+        "was chosen."
+    )
+    return Resolution(contract, None, why)

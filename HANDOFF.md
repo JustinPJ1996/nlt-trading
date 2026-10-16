@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,891 tests passing (2026-10-16, leftovers batch A)
+- **State:** 1,980 tests passing (2026-10-16, leftovers batch B)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -258,8 +258,7 @@ were tightened, and two no-op code paths found that way were removed.
 
 Open after the second batch, for Justin:
 - ~~Every library card shows "Serious warning signs"~~ -- swapped 2026-10-16 (see Leftovers).
-- A **stop at a price level** ("stop at the low of the opening range") would let
-  Tradl's opening-range breakout run.
+- ~~A stop at a price level~~ -- built 2026-10-16 (see Leftovers B).
 - ~~Wording around MACD; "50-day SMA" not read~~ -- fixed 2026-10-16 (see Leftovers).
 
 **Where we are already ahead -- keep it that way.** Tradl's own backtest of
@@ -410,8 +409,8 @@ Open after batch 2, for Justin:
 - ~~The CSV export is one row per position~~ -- leg rows since 2026-10-16.
 - Some vendor 1-minute prices are not on the 5-paise tick (e.g. 40.54); used as
   they are.
-- Bought straddles/strangles, debit/calendar/ratio spreads, fixed strikes and
-  #26 (gap trigger) are still refused.
+- ~~Bought straddles/strangles, debit/calendar/ratio spreads, fixed strikes, #26~~ --
+  built 2026-10-16 (see Leftovers B; fixed strikes paper only).
 
 The charge model already handles the exercised-ITM STT trap, but batch 1 never
 needs it: no option is held to settlement.
@@ -536,7 +535,7 @@ What changed:
   BANKNIFTY call of 1 Jan 2025 squares off at 1,087.75 (15:15) and 1,109.70
   (15:25); the 2 Jan 2025 straddle's put at 0.15 (net 5,694.10).
 
-### Leftovers from finished phases — **batch A BUILT 2026-10-16**
+### Leftovers from finished phases — **batches A-B BUILT 2026-10-16**
 
 Plan: `~/.claude/plans/can-we-fix-these-binary-widget.md`. Three batches
 (`leftovers-a/b/c`). Justin's decisions, each offered as a trade-off: library --
@@ -574,6 +573,58 @@ the fill-time one -- and the test was tightened to catch it).
   34/31, MARUTI breakout 22. **On 16 Oct, 5 of 6 still show "Serious warning
   signs" -- each because it lost money, none for too few trades.**
   `test_every_card_has_enough_trades_to_judge` pins 30+.
+
+**Batch B** (branch `leftovers-b`, built 2026-10-16). Every rule broken on
+purpose and a test seen to fail (survivors found that way: the stop level read
+on the fill candle -- look-ahead -- untested at first; a stray expiry word
+ignored; a named strike on a leg; "gaps down"; each now has a test).
+- **Bought straddles and strangles** read (`options_words`; a "bought iron
+  condor" is still refused -- the builders write the sold shape). No stop is
+  needed; the readback says "the most it can lose is what was paid for them,
+  plus charges". "Each leg" means each bought option; a plain "stop 25%" asks
+  each-or-total-paid (`exit.stop_basis` / new `exit.target_basis`); "N% of the
+  premium paid" is on the whole. Known answer: bought 09:20 straddle, 2 Jan 2025
+  (gross 16,514.875, by hand from the raw minutes).
+- **Cover rule changed (Justin approved):** a sold option is covered by bought
+  ones of the same type and expiry, enough lots, **at any strike**
+  (`is_defined_risk`) -- a debit spread no longer asks for a stop. Known answer:
+  bull call spread 23800/24000 CE, 2 Jan 2025 (gross 8,323.25).
+- **Calendars and ratios**: each option may name its own expiry ("sell this
+  week's ... buy next week's") and count ("buy 1 ... sell 2"); counts become
+  lots per set and the size (`_ratio`); a size said twice is asked. A calendar's
+  sold leg still needs a stop; every option closes on the first expiry, said in
+  the readback. "Calendar/ratio/spread/debit" must match the legs read, or it
+  is asked; "hedge" is still asked. Zerodha's calculator matched our SPAN on a
+  second capture (16 Oct 2026, `zerodha_span_calibration_2026-10-16.json`:
+  debit spreads, ratios, a bought straddle) to Rs 0.50; its exposure again used
+  a stale NIFTY (23,997.35 vs 22,997.35).
+- **Named strike** ("the 24000 call", "sell the 25000 call"): `Instrument.strike`
+  / `OptionLeg.strike`, that strike or no trade (`contracts.resolve_fixed`).
+  **Paper only** (Justin): `logic.backtest_problem` refuses the backtest in plain
+  words; the Build page offers "Save for paper trading"
+  (`POST /api/strategies/untested`, only for strategies that cannot be
+  backtested). #8 still asks (its "hedge it with the 25100" is not read).
+- **Stop at a price level** (`ExitRules.stop_level`): the opening-range low or
+  high, the previous day's, the lowest/highest of the last N candles. Its value
+  on the signal candle is the stop for the trade; it fills when touched, a gap
+  through it at the open; a level not on the safe side of the signal close and
+  the fill skips the signal ("stop_level"), never another stop. Not for options,
+  baskets, or "previous day" on daily candles (two possible days); "last N
+  days" on minute candles is asked. With two stops the readback says the nearer
+  applies. Tradl #24 now reads after the once-a-day question; its recorded AI
+  reply had made the stop an exit condition -- the rules' level replaces it
+  (`llm._without_level_words`).
+- **Gap at the open**: new indicator `session_open` (today's open, gap % from
+  the previous session's last close, known from the first price). Rules read
+  "the day opens more than 0.5% below the previous close", "gaps down/up N%",
+  "still below the open" / "below today's open" ("the open" alone is not
+  assumed to be the day's). The AI reader was taught these and `at_time`;
+  entry times are checked against the user's words and refused on daily
+  candles. "Gaps up 1%" is no longer read as a 1% target. **All recorded AI
+  replies were re-recorded** (the prompt changed): the 70 still 3 specs / 0
+  wrong; the 43 gained #26 (readback checked by hand, entry pinned); #30's exit
+  now reads "the price is below VWAP" (was "crosses below") -- same candle for an
+  exit from a trade bought above VWAP.
 
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 

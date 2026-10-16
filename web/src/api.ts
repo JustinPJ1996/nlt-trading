@@ -88,6 +88,8 @@ export type Understood = {
   timeframe: string;
   // Candle sizes the Candles box may offer; null/absent means all of them.
   allowed_timeframes?: string[] | null;
+  // Why this can only be paper traded (a strike the user named); null otherwise.
+  backtest_problem?: string | null;
 };
 
 export type Choice = { label: string; value: string };
@@ -436,6 +438,8 @@ export const api = {
   }) => call<Result>("/api/backtest", body),
   save: (result_id: string) =>
     call<{ strategy_id: number; name: string }>("/api/strategies", { result_id }),
+  saveUntested: (spec: unknown) =>
+    call<{ strategy_id: number; name: string }>("/api/strategies/untested", { spec }),
   strategies: () => call<{ strategies: SavedStrategy[] }>("/api/strategies"),
   savedSpec: (id: number) =>
     call<{ description: string; understood: Understood }>(`/api/strategies/${id}/spec`),

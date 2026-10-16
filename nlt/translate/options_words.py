@@ -28,6 +28,7 @@ imports this module at the top of the file.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -149,12 +150,13 @@ def _question(text: str, why: str, field_name: str, *, choices=None, answerable:
 
 def _multi_leg_question():
     return _question(
-        "I can't read that option position yet. What I can read today: buying one call or "
-        "put; selling one call or put; a sold straddle or strangle; an iron condor or iron "
+        "I can't read that option position yet. What I can read: buying one call or "
+        "put; selling one call or put; a straddle or strangle; an iron condor or iron "
         "butterfly; or a position written leg by leg, e.g. 'At 09:30, sell the NIFTY weekly "
         "put 200 points below spot and buy the put 400 points below. Exit at 50% of the "
-        "credit received or at 15:15.' Buying two or more options together, debit and "
-        "calendar spreads, and ratios are coming later.",
+        "credit received or at 15:15.' Bought straddles and strangles, debit spreads, "
+        "calendars ('sell this week's ATM call and buy next week's') and ratios ('buy 1 ... "
+        "and sell 2 ...') read when each option is written out like that.",
         why=(
             "Testing a different combination of options from the one you meant would give a "
             "different, misleadingly confident-looking result."
@@ -165,15 +167,11 @@ def _multi_leg_question():
 
 def _fixed_strike_question():
     return _question(
-        "Trading one exact strike price is coming later, and so is a bought option picked by "
-        "points away from spot. Today you can ask for the at-the-money option or a number of "
-        "strikes out of or into the money, e.g. '2 strikes OTM'; options you sell can also be "
-        "picked by points, e.g. 'sell the put 200 points below spot'.",
-        why=(
-            "Resolving a price level or a points offset into the strike that was actually "
-            "listed on that day needs the option chain, which this platform does not yet "
-            "look up."
-        ),
+        "That strike can't be read. Say the at-the-money option, a number of strikes out of "
+        "or into the money ('2 strikes OTM'), or a full index strike ('the 24000 call'). "
+        "A bought option can't yet be picked by points away from spot; options you sell can "
+        "('sell the put 200 points below spot').",
+        why="Picking a strike from a number we are not sure of would test a different trade.",
         field_name="instrument.strike_offset",
     )
 
@@ -289,13 +287,17 @@ _POINTS_P = (
     r"\d+\s*points?\s*(?:below|above|out\s+of\s+the\s+money|out|otm|away)"
     r"(?:\s+(?:from\s+)?(?:the\s+)?(?:spot|index))?"
 )
-_STRIKE_P = rf"(?:{_ATM_P}|{_STRIKES_N}|{_POINTS_P})"
+# A strike the user named: "sell the 25000 call" (paper trading only).
+_FIXED_P = r"\d{4,6}"
+_STRIKE_P = rf"(?:{_ATM_P}|{_STRIKES_N}|{_POINTS_P}|{_FIXED_P})"
 _WHAT = (
     r"(?P<what>calls?\s+and\s+puts?|puts?\s+and\s+calls?|straddles?|strangles?|"
     r"iron\s+condors?|iron\s+butterfl(?:y|ies)|iron\s+fly|calls?|puts?|ce|pe)"
 )
+# "buy 1 ... and sell 2 ...": how many of each, for a ratio (2026-10-16).
+_COUNT = r"(?:(?P<count>\d{1,2})\s+(?:lots?\s+(?:of\s+)?)?)?"
 _LEG_CLAUSE = re.compile(
-    rf"\b{_VERB}\s+{_ART}(?:(?P<exp1>{_EXPW})\s+)?(?:(?P<pre>{_STRIKE_P})\s+)?"
+    rf"\b{_VERB}\s+{_COUNT}{_ART}(?:(?P<exp1>{_EXPW})\s+)?(?:(?P<pre>{_STRIKE_P})\s+)?"
     rf"(?:(?P<exp2>{_EXPW})\s+)?{_WHAT}\b(?:\s+options?\b)?(?:\s+(?P<post>{_STRIKE_P}))?"
 )
 _EITHER_SIDE = r"(?:on\s+either\s+side|on\s+each\s+side|either\s+side|each\s+side|away|out)"
@@ -318,6 +320,8 @@ def _strike_from_phrase(phrase: str, option_type: str) -> dict:
     phrase = phrase.strip()
     if re.fullmatch(_ATM_P, phrase):
         return {"strike_offset": 0}
+    if re.fullmatch(_FIXED_P, phrase):
+        return {"strike": int(phrase)}
     m = re.fullmatch(r"(?P<n>\d+)\s*strikes?\s*(?P<way>.+)", phrase)
     if m:
         n = int(m.group("n"))
@@ -347,9 +351,9 @@ def _is_atm(phrase: str | None) -> bool:
 
 def _buy_only_question():
     return _question(
-        "Buying two or more options together (a bought straddle or strangle, for example) "
-        "is coming later. Today you can test buying one call or one put, or a position "
-        "that sells options.",
+        "A bought iron condor or iron butterfly isn't something this platform can test "
+        "yet. You can test the sold one, a bought straddle or strangle, or write each "
+        "option out ('buy the ATM call and sell the call 200 points above').",
         why="Testing it as something else would be a different trade from the one described.",
         field_name="instrument.trade_as",
     )
@@ -365,8 +369,32 @@ def _is_out_phrase(strike: str | None) -> bool:
     return "point" in strike and not re.search(r"\b(?:below|above)\b", strike)
 
 
+def _expiry_kind(word: str | None) -> str | None:
+    if not word:
+        return None
+    for pattern, kind in (
+        (_EXPIRY_NEXT_WEEKLY, "next_weekly"),
+        (_EXPIRY_WEEKLY, "nearest_weekly"),
+        (_EXPIRY_MONTHLY, "monthly"),
+    ):
+        if pattern.search(word):
+            return kind
+    return None
+
+
 def _legs_from_clause(m: re.Match, text: str) -> tuple[list[dict], int]:
-    """The legs one clause describes, and where the clause (with its details) ends."""
+    """The legs one clause describes, and where the clause (with its details) ends.
+
+    Each leg also carries its clause's own expiry word and count, if it named
+    them (`_expiry`, `_count`), for calendars and ratios; `_read_legs` takes
+    them off again."""
+    legs, end = _legs_from_clause_shape(m, text)
+    expiry = _expiry_kind(m.group("exp1") or m.group("exp2"))
+    count = int(m.group("count")) if m.group("count") else None
+    return [{**leg, "_expiry": expiry, "_count": count} for leg in legs], end
+
+
+def _legs_from_clause_shape(m: re.Match, text: str) -> tuple[list[dict], int]:
     side = "buy" if m.group("verb") == "buy" else "sell"
     what = re.sub(r"\s+", " ", m.group("what"))
     pre, post = m.group("pre"), m.group("post")
@@ -380,7 +408,9 @@ def _legs_from_clause(m: re.Match, text: str) -> tuple[list[dict], int]:
     strike = pre or post
     end = m.end()
 
-    if what.startswith(("straddle", "strangle", "iron")) and side == "buy":
+    # A bought straddle or strangle reads (2026-10-16); a "bought iron condor"
+    # is a different position from the one built below, so it is not read.
+    if what.startswith("iron") and side == "buy":
         raise _Ask(_buy_only_question())
 
     if what.startswith("iron condor"):
@@ -588,7 +618,10 @@ def _read_legs(
     if not any(leg["side"] == "sell" for leg in legs):
         if len(legs) == 1 and not multi_word:
             return False  # one bought option: batch 1's reader
-        raise _Ask(_buy_only_question() if len(legs) > 1 else _multi_leg_question())
+        if len(legs) == 1:
+            raise _Ask(_multi_leg_question())
+        # Two or more bought options (a bought straddle or strangle, a call and
+        # a put): read as a position. The most it can lose is what was paid.
     if any("_no_strike" in leg for leg in legs):
         raise _Ask(
             _plain_question(
@@ -605,27 +638,35 @@ def _read_legs(
                 "Dropping some of the options would test a different position.",
             )
         )
+    clause_expiries = [leg.pop("_expiry", None) for leg in legs]
+    counts = [leg.pop("_count", None) for leg in legs]
+    lots, sets = _ratio(counts)
     # Expiry words are read across the whole sentence, inside the clauses too
-    # ("sell the weekly put ... and buy the put ..."): one expiry for all.
-    # Blanking keeps every offset, so the clause spans stay valid.
+    # ("sell the weekly put ... and buy the put ..."): one expiry for all,
+    # unless each option names its own (a calendar). Blanking keeps every
+    # offset, so the clause spans stay valid.
     text, kinds = _expiries_in(text)
     for a, b in spans:
         text = text[:a] + " " * (b - a) + text[b:]
-    if _NAMED_UNREAD_SHAPES.search(text):
-        # A shape this reader does not build is named outside the legs it
-        # did read: those legs may not be the whole of what the words say.
-        raise _Ask(_multi_leg_question())
     legs = _normalise_units(legs)
 
+    per_leg: list[str] | None = None
     if len(kinds) > 1:
-        raise _Ask(
-            _plain_question(
-                "This names more than one expiry. Options with different expiries in one "
-                "position are coming later; pick one expiry for every option.",
-                "Guessing which option belongs to which expiry would test a different trade.",
+        # Every option names its own expiry, and no other expiry word is left.
+        if set(clause_expiries) != kinds:
+            raise _Ask(
+                _plain_question(
+                    "This names more than one expiry. For options with different expiries, "
+                    "say the expiry of each one, e.g. 'sell this week's ATM call and buy next "
+                    "week's ATM call'.",
+                    "Guessing which option belongs to which expiry would test a different trade.",
+                )
             )
-        )
-    if kinds:
+        per_leg = clause_expiries
+    text = _check_named_shapes(text, legs, per_leg, lots)
+    if per_leg is not None:
+        expiry = None
+    elif kinds:
         expiry = kinds.pop()
     else:
         picked = answers.get("instrument.expiry", "").strip()
@@ -642,9 +683,15 @@ def _read_legs(
             raise _Ask(_expiry_question())
 
     built = []
-    for leg in legs:
+    for k, leg in enumerate(legs):
         try:
-            built.append(OptionLeg(expiry=expiry, **leg))
+            built.append(
+                OptionLeg(
+                    expiry=per_leg[k] if per_leg is not None else expiry,
+                    lots=lots[k],
+                    **leg,
+                )
+            )
         except ValueError as exc:
             raise _Ask(
                 _plain_question(
@@ -662,8 +709,69 @@ def _read_legs(
             )
         )
     reading.kwargs = {"trade_as": "option", "legs": built}
+    if sets is not None:
+        # "sell 2 lots of the straddle": the size, said inside the clause.
+        reading.kwargs["_sets"] = sets
     reading.text = text
     return True
+
+
+def _ratio(counts: list[int | None]) -> tuple[list[int], int | None]:
+    """Each option's lots per set, and how many sets, from "buy 1 ... sell 2".
+
+    No counts: one of each, size from elsewhere. The same count on every
+    option ("sell 2 lots of the straddle"): that many sets of one each.
+    Different counts: a ratio, written in its smallest whole numbers -- buy 2
+    and sell 4 is two sets of one-to-two. Some counted and some not is asked.
+    """
+    if all(c is None for c in counts):
+        return [1] * len(counts), None
+    if any(c is None for c in counts):
+        raise _Ask(
+            _plain_question(
+                "Say how many of each option, e.g. 'buy 1 ATM call and sell 2 calls 200 "
+                "points above'.",
+                "With a count on only some of the options, the rest would be a guess.",
+            )
+        )
+    if any(c == 0 for c in counts):
+        raise _Ask(
+            _plain_question(
+                "Zero of an option isn't a position. Say how many of each.",
+                "An option bought or sold zero times would be dropped, testing a different trade.",
+            )
+        )
+    g = math.gcd(*counts)
+    return [c // g for c in counts], g
+
+
+def _check_named_shapes(text: str, legs: list[dict], per_leg, lots: list[int]) -> str:
+    """A shape named outside the legs read must be the shape those legs make.
+
+    "Calendar" needs two expiries, "ratio" unequal counts, "spread" a bought
+    and a sold option, "debit" a position that pays more than it collects.
+    Anything else named -- "hedge" among them -- may say more than the legs
+    read, so it is asked about, never assumed to match."""
+    sides = {leg["side"] for leg in legs}
+    for m in list(_NAMED_UNREAD_SHAPES.finditer(text)):
+        word = m.group()
+        fits = (
+            (word == "calendar" and per_leg is not None)
+            or (word == "ratio" and len(set(lots)) > 1)
+            or (word.startswith("spread") and sides == {"buy", "sell"})
+            or (word == "debit" and "buy" in sides and not _credit_shape_dicts(legs))
+        )
+        if not fits:
+            raise _Ask(_multi_leg_question())
+        # Said, and true of the legs read: nothing left to read in it.
+        text = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+    return text
+
+
+def _credit_shape_dicts(legs: list[dict]) -> bool:
+    from nlt.spec.models import OptionLeg
+
+    return _credit_shape([OptionLeg(**leg) for leg in legs])
 
 
 def read(
@@ -695,11 +803,11 @@ def read(
 
     reading.is_option = True
 
-    # A fixed strike price ("the 25000 call") is refused for every shape,
-    # before anything else is read.
-    if _FIXED_STRIKE.search(text) and not (
-        _ATM_WORD.search(text) or _BARE_OTM.search(text) or _BARE_ITM.search(text)
-    ):
+    # A strike named as a price ("the 25000 call") reads since 2026-10-16
+    # (paper trading only). A number too small to be an index strike, or one
+    # beside another strike rule, is asked about.
+    fixed = _FIXED_STRIKE.search(text)
+    if fixed and len(fixed.group("strike") or fixed.group("strike2")) < 4:
         reading.question = _fixed_strike_question()
         return reading
 
@@ -759,8 +867,27 @@ def _read_single_buy(text: str, answers: dict[str, str], reading: OptionReading)
             reading.question = _type_question()
             return reading
 
-    m = _OTM_WITH_COUNT.search(out_text)
-    if m:
+    # Read on the words as typed: the call/put word after the number has
+    # already been blanked from `out_text`, but every offset is kept.
+    fixed = _FIXED_STRIKE.search(text)
+    if fixed:
+        if _ATM_WORD.search(out_text) or _BARE_OTM.search(out_text) or _BARE_ITM.search(out_text):
+            reading.question = _plain_question(
+                "That names the strike twice -- as a price and as at/out of/in the money. "
+                "Say it once.",
+                "Two strike rules for one option would be a guess at which one you meant.",
+            )
+            return reading
+        reading.kwargs["strike"] = int(fixed.group("strike") or fixed.group("strike2"))
+        out_text = (
+            out_text[: fixed.start()]
+            + " " * (fixed.end() - fixed.start())
+            + out_text[fixed.end() :]
+        )
+    m = None if fixed else _OTM_WITH_COUNT.search(out_text)
+    if fixed:
+        pass
+    elif m:
         reading.kwargs["strike_offset"] = int(m.group("n"))
         out_text = out_text[: m.start()] + " " * (m.end() - m.start()) + out_text[m.end() :]
     else:
@@ -860,6 +987,13 @@ _COMBINED_STOP = [
     ),
     re.compile(rf"\b{_STOPW}\s*(?:of|at)?\s*{_PCT}\s*of\s+(?:the\s+)?credit(?:\s+received)?\b"),
 ]
+# A position of bought options only: "N% of the premium paid" is on the total.
+_PAID = r"(?:the\s+)?(?:total\s+|combined\s+|net\s+)?(?:premiums?\s+paid|debit(?:\s+paid)?)\b"
+_PAID_STOP = re.compile(rf"\b{_STOPW}\s*(?:of|at)?\s*{_PCT}\s*(?:of|on)\s+{_PAID}")
+_PAID_TARGET = re.compile(
+    r"\b(?:exit|take\s+profit|book\s+profit|close(?:\s+the\s+position)?|target)\s*(?:at)?\s*"
+    rf"{_PCT}\s*(?:profit\s+)?(?:of|on)\s+{_PAID}"
+)
 # On more than one sold option these do not say each-or-total.
 _PREMIUM_STOP = [
     re.compile(
@@ -920,7 +1054,41 @@ def sold_stop_question():
     )
 
 
-def _stop_basis_question(v: float):
+def _paid_target_question(v: float):
+    return _question(
+        f"Should the {v:g}% target be measured on each option's own price, or on the total "
+        "premium paid?",
+        why=(
+            "They close at different times: one option can be up "
+            f"{v:g}% while the two together are still at a loss."
+        ),
+        field_name="exit.target_basis",
+        choices=_choices(
+            [
+                ("On each option's own price", "each_leg"),
+                ("On the total premium paid", "combined"),
+            ]
+        ),
+    )
+
+
+def _stop_basis_question(v: float, *, paid: bool = False):
+    if paid:
+        return _question(
+            f"Should the {v:g}% stop be measured on each option's own price, or on the "
+            "total premium paid?",
+            why=(
+                "They close at different times: one option can fall "
+                f"{v:g}% while the two together are still in profit."
+            ),
+            field_name="exit.stop_basis",
+            choices=_choices(
+                [
+                    ("On each option's own price", "each_leg"),
+                    ("On the total premium paid", "combined"),
+                ]
+            ),
+        )
     return _question(
         f"Should the {v:g}% stop be measured on each sold option's own price, or on the "
         "total premium collected?",
@@ -1054,6 +1222,10 @@ def read_position_exits(text: str, legs: list, answers: dict[str, str]) -> Posit
 def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
     out = PositionExits(text=text, legs=legs)
     has_bought = any(leg.side == "buy" for leg in legs)
+    # Bought options only (a bought straddle or strangle): "each leg" can only
+    # mean each bought option, and the whole is the premium paid.
+    bought_only = not any(leg.side == "sell" for leg in legs)
+    mixed = has_bought and not bought_only
     single = len(legs) == 1
     credit = _credit_shape(legs)
 
@@ -1069,7 +1241,7 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
     stops: list[tuple[str, float, str]] = []  # (basis, value, label)
     text, m = _consume_first(text, _PER_LEG_STOP)
     if m:
-        if has_bought and not m.group("sold"):
+        if mixed and not m.group("sold"):
             ask(
                 "Should the stop on each leg apply to the sold options only? Say 'a "
                 f"{m.group('v')}% stop on each sold option' if so."
@@ -1077,6 +1249,11 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
         stops.append(("each_leg", float(m.group("v")), said))
     text, m = _consume_first(text, _COMBINED_STOP)
     if m:
+        stops.append(("combined", float(m.group("v")), said))
+    text, m = _consume_first(text, [_PAID_STOP])
+    if m:
+        if not bought_only:
+            ask("'Of the premium paid' fits a position that only buys options; this one sells too.")
         stops.append(("combined", float(m.group("v")), said))
     text, m = _consume_first(text, _PREMIUM_STOP)
     if m:
@@ -1090,9 +1267,14 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
             out.square_off = _clock(m.group("h"), m.group("m"), m.group("ampm"))
             if out.square_off is None:
                 ask(f'"{m.group().strip()}" has a time that does not exist.')
+    text, m = _consume_first(text, [_PAID_TARGET])
+    if m:
+        if not bought_only:
+            ask("'Of the premium paid' fits a position that only buys options; this one sells too.")
+        combined_target = float(m.group("v"))
     text, m = _consume_first(text, _PER_LEG_TARGET)
     leg_target = float(m.group("v")) if m else None
-    if m and has_bought and not m.group("sold"):
+    if m and mixed and not m.group("sold"):
         ask(
             "Should the target on each leg apply to the sold options only? Say 'a "
             f"{m.group('v')}% target on each sold option' if so."
@@ -1117,10 +1299,10 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
             else:
                 picked = answers.get("exit.stop_basis", "").strip()
                 if picked not in ("each_leg", "combined"):
-                    raise _Ask(_stop_basis_question(value))
+                    raise _Ask(_stop_basis_question(value, paid=bought_only))
                 basis, label = picked, said
         if basis == "combined":
-            if not credit:
+            if not (credit or bought_only):
                 ask(
                     "A stop on the total premium collected needs a position that collects "
                     "a premium; this one may pay more than it collects."
@@ -1130,6 +1312,16 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
             leg_stop = value
         out.stop_source = label
 
+    if plain_target is not None and bought_only and not single:
+        picked = answers.get("exit.target_basis", "").strip()
+        if picked not in ("each_leg", "combined"):
+            raise _Ask(_paid_target_question(plain_target))
+        if picked == "combined":
+            combined_target = plain_target
+        else:
+            leg_target = plain_target
+        plain_target = None
+        out.target_source = said
     if plain_target is not None:
         if not single:
             ask(
@@ -1142,7 +1334,7 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
     elif leg_target is not None:
         out.target_source = said
     if combined_target is not None:
-        if not credit:
+        if not (credit or bought_only):
             ask(
                 "'Of the credit received' needs a position that collects a premium; this one "
                 "may pay more than it collects."
@@ -1153,7 +1345,14 @@ def _read_position_exits(text, legs, answers, said, worked_out, percent_exits):
     new_legs = []
     for leg in legs:
         update = {}
-        if leg.side == "sell":
+        if bought_only:
+            if leg_stop is not None:
+                if leg_stop >= 100:
+                    ask("A bought option's price can fall at most 100%.")
+                update["stop_pct"] = leg_stop
+            if leg_target is not None:
+                update["target_pct"] = leg_target
+        elif leg.side == "sell":
             if leg_stop is not None:
                 update["stop_pct"] = leg_stop
             if leg_target is not None:

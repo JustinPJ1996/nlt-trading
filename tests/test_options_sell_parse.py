@@ -24,7 +24,7 @@ import pytest
 
 from nlt.spec.models import All, AtTime, IvPercentile, OnExpiryDay
 from nlt.translate import llm
-from nlt.translate.readback import DEFAULT, SAID, WORKED_OUT, describe_lines
+from nlt.translate.readback import DEFAULT, SAID, WORKED_OUT, describe, describe_lines
 from nlt.translate.rules import parse
 
 STRADDLE_920 = (
@@ -509,11 +509,28 @@ def test_mixed_strike_units_are_refused() -> None:
     )
 
 
-def test_a_fixed_strike_stays_refused() -> None:
+def test_70s_8_still_asks() -> None:
+    """#8: the 25000 call reads since 2026-10-16, but "hedge it with the
+    25100" is not a leg the reader understands -- asked, never assumed."""
     _asks(
         "Sell the 25000 Nifty Call, hedge it with the 25100. Close at 50% of the max profit",
-        "instrument.strike_offset",
+        "instrument.trade_as",
     )
+
+
+def test_named_strikes_on_legs_read_exactly() -> None:
+    spec = parse(
+        "At 09:30, sell the NIFTY weekly 25000 call and buy the weekly 25200 call. "
+        "Square off at 15:15."
+    ).spec
+    assert [(leg.side, leg.strike, leg.strike_offset) for leg in spec.instrument.legs] == [
+        ("sell", 25000, 0),
+        ("buy", 25200, 0),
+    ]
+    text = describe(spec)
+    assert "the 25,000 strike exactly" in text and "the 25,200 strike exactly" in text
+    assert "at-the-money" not in text
+    assert "picked from the index's close" not in text
 
 
 def test_a_word_inside_a_leg_is_never_dropped() -> None:

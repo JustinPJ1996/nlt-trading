@@ -24,12 +24,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TEMPLATES = json.loads((FIXTURES / "template_prompts.json").read_text())
 _REPLIES_PATH = FIXTURES / "llm_template_replies.json"
 
-# Never a strategy: a screen is a list of stocks, the one single-leg prompt
-# with a gap trigger rules can't express (#26) is refused, a prompt without a
-# stop must get the stop-loss question (#28: a naked sold put), a stop at "the
-# opening range low" is not something the engine can hold yet, and a
-# "needs-answer" prompt asks a question with buttons first (#33 how to
-# re-enter, #37 whether the stop is on each option or the total).
+# Never a strategy: a screen is a list of stocks, a prompt without a
+# stop must get the stop-loss question (#28: a naked sold put), and a
+# "needs-answer" prompt asks a question with buttons first (#24 and #36 once a
+# day or every time, #33 how to re-enter, #37 whether the stop is on each
+# option or the total).
 _NEVER_A_STRATEGY = {"screen", "options-later", "no-stop", "unsupported-stop", "needs-answer"}
 
 # Pinned so coverage cannot drift silently. Raise it deliberately, after reading
@@ -52,7 +51,9 @@ _EXPECTED_RULES_SPECS: list[int] = [19, 20, 34, 35, 40]
 # high" now asks "Once a day" or "Every time it crosses" first -- it had been
 # read as "whenever the price is above", buying again straight after a stop.
 # `test_36_asks_how_often_then_reads_each_answer` covers both answers.
-_EXPECTED_AI_SPECS = [19, 20, 22, 23, 29, 30, 31, 34, 35, 38, 39, 40, 41, 42]
+# 26 joined (2026-10-16): the gap at the open and "at 09:30" read; its readback
+# checked by hand and its entry pinned by `test_26_reads_the_gap_the_time_and_the_open`.
+_EXPECTED_AI_SPECS = [19, 20, 22, 23, 26, 29, 30, 31, 34, 35, 38, 39, 40, 41, 42]
 
 
 def _facts(spec) -> dict:
@@ -68,7 +69,11 @@ def _facts(spec) -> dict:
             "symbol": spec.instrument.symbol,
             "timeframe": spec.instrument.timeframe,
             "intraday": spec.schedule.intraday,
-            "legs": [leg.model_dump() for leg in spec.instrument.legs],
+            # `strike` (a named strike, 2026-10-16) is a fact only when set.
+            "legs": [
+                leg.model_dump(exclude={"strike"} if leg.strike is None else set())
+                for leg in spec.instrument.legs
+            ],
             "combined_target_pct": spec.exit.combined_target_pct,
             "combined_stop_pct": spec.exit.combined_stop_pct,
             "entry_time": f"{at.time:%H:%M}" if at else None,
@@ -205,3 +210,34 @@ def test_36_asks_how_often_then_reads_each_answer(pick, limit) -> None:
     entry = answered.spec.entry
     assert isinstance(entry, Compare) and entry.op == "crosses_above"
     assert entry.left.name == "close" and entry.right.output == "high"
+
+
+def test_26_reads_the_gap_the_time_and_the_open() -> None:
+    import datetime as dt
+
+    from nlt.spec.models import All, AtTime, Compare, Const, Ref
+
+    replies = json.loads(_REPLIES_PATH.read_text())["replies"]
+    case = next(c for c in TEMPLATES if c["n"] == 26)
+    spec = llm.translate(case["text"], transport=lambda _s, u: replies[u]).spec
+    assert spec is not None
+    assert isinstance(spec.entry, All)
+    parts = list(spec.entry.conditions)
+    assert AtTime(time=dt.time(9, 30)) in parts
+    kinds = {i.id: i.type for i in spec.indicators}
+    gaps = [c for c in parts if isinstance(c, Compare) and isinstance(c.right, Const)]
+    (gap,) = gaps
+    assert (kinds[gap.left.name], gap.left.output, gap.op, gap.right.value) == (
+        "session_open",
+        "gap_pct",
+        "lt",
+        -0.5,
+    )
+    opens = [c for c in parts if isinstance(c, Compare) and isinstance(c.right, Ref)]
+    (below,) = opens
+    assert (below.left.name, below.op, kinds[below.right.name], below.right.output) == (
+        "close",
+        "lt",
+        "session_open",
+        "open",
+    )

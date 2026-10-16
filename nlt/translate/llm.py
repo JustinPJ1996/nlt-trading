@@ -357,7 +357,7 @@ approximated. Leaving out part of the sentence is the worst mistake you can make
   currencies, anything not listed below
 - "vague": no precise entry rule ("buy dips", "sell rallies")
 - "unsupported_rule": needs something not in the indicator list or not expressible in the schema
-  (e.g. "first 15-minute high", "gap up", "while price holds X"). Set unsupported_quote to the
+  (e.g. "while price holds X"). Set unsupported_quote to the
   exact words you could not express.
 For refusals, fill only kind, refuse_category and (optionally) unsupported_quote.
 
@@ -389,14 +389,22 @@ fields usable as refs without declaring: open, high, low, close, volume.
 - {{"kind":"is_true","ref":REF}} for candlestick patterns.
 - {{"kind":"percent_change","ref":REF,"lookback":<bars>,"op":"lt|lte|gt|gte","value":<percent>}}
   ("falls 2% in one session" -> ref close, lookback 1, op lte, value -2).
+- {{"kind":"at_time","time":"HH:MM"}} for an entry at a time of day ("buy at 09:30"), 24-hour.
 - {{"kind":"all","conditions":[...]}}, {{"kind":"any","conditions":[...]}}, {{"kind":"not","condition":...}}
 "drops below"/"crosses below"/"cracks" = crosses_below. "is below"/"<" = lt. Keep that distinction.
 "between A and B" = all of gte A and lte B.
+A gap at the open uses session_open: "the day opens more than 0.5% below the previous close" =
+compare session_open output gap_pct lt -0.5 ("0.5% below" with no "more than" = lte -0.5; above =
+gt/gte +0.5). "Still below the open" / "below today's open" = compare close lt session_open
+output open.
 
 ## Exits ("exit" object, all optional)
 target_pct, stop_pct, trailing_stop_pct, stop_atr_mult (+ atr_id naming a declared atr),
 condition, max_bars_held. Only include what the sentence states. NEVER invent a stop loss: if the
-sentence has none, leave the stop fields out entirely. A later "sell when ..." is an exit
+sentence has none, leave the stop fields out entirely. A stop at a price level ("stop at the low of
+the opening range", "stop at the previous day's low", "stop at the lowest low of the last 10
+candles") is read by other code: quote those words as evidence for "exit.stop" and leave every
+stop field empty -- do not turn it into a condition. A later "sell when ..." is an exit
 condition, not a short entry.
 
 ## Other fields
@@ -567,6 +575,8 @@ def _condition_numbers(cond) -> list[float]:
                 out.append(side.value)
             elif side.bars_ago > 1:
                 out.append(float(side.bars_ago))
+    elif kind == "at_time":
+        out.extend([float(cond.time.hour), float(cond.time.minute)])
     elif kind == "percent_change":
         out.append(cond.value)
         if cond.lookback > 1:
@@ -601,6 +611,36 @@ def _length_said_in_days(indicator: IndicatorSpec, lowered: str) -> bool:
         return False
     n = int(length)
     return re.search(rf"(?<!\d){n}\s*-?\s*(?:days?\b|dma\b)", lowered) is not None
+
+
+def _without_level_words(draft: Draft, lowered: str, span: tuple[int, int]) -> Draft:
+    """The draft with whatever the model made of the level-stop words removed.
+
+    Tradl #24's recorded reply turned "stop at the low of the opening range"
+    into an exit condition ("low < the range low", filled at the next open):
+    not the stop the user asked for. Any exit condition or stop quoted only
+    from those words is dropped; the rules' level stop replaces it.
+    """
+    a, b = span
+
+    def inside(quote: str) -> bool:
+        m = _quote_pattern(quote).search(lowered)
+        return m is not None and m.start() >= a and m.end() <= b
+
+    ex = draft.exit
+    update: dict = {}
+    for field, key in (("exit.condition", "condition"), ("exit.stop", "stop_pct")):
+        quotes = [ev.quote for ev in draft.evidence if ev.field == field]
+        if quotes and all(inside(q) for q in quotes) and getattr(ex, key) is not None:
+            update[key] = None
+    if not update:
+        return draft
+    evidence = [
+        ev
+        for ev in draft.evidence
+        if not (ev.field in ("exit.condition", "exit.stop") and inside(ev.quote))
+    ]
+    return draft.model_copy(update={"exit": ex.model_copy(update=update), "evidence": evidence})
 
 
 def _drop_redundant_outputs(raw: dict) -> None:
@@ -711,6 +751,9 @@ def parse_llm(
         )
     masked, backtest_note, period = rules._extract_backtest_window(masked)
     masked, overnight = rules._extract_overnight(masked)
+    # "Stop at the low of the opening range": read by the rules' own words, as
+    # the timeframe is; the model's reading of those words is set aside below.
+    masked, level_stop, level_span = rules.read_level_stop(masked)
 
     if transport is None:
         if not is_configured():
@@ -807,6 +850,44 @@ def parse_llm(
             "entry.condition",
             notes=notes,
         )
+    from nlt.spec.models import AtTime
+    from nlt.translate.readback import _conditions_in
+
+    if (timeframe or "1d") == "1d" and any(
+        isinstance(c, AtTime) for c in _conditions_in(draft.entry)
+    ):
+        return _question(
+            "A time of day needs minute or hourly candles. Say e.g. 'on 5-minute candles'.",
+            "A daily candle has no clock: the time would be ignored, testing something else.",
+            "instrument.timeframe",
+            notes=notes,
+        )
+
+    # ---- a stop at a price level: ours, not the model's
+    stop_level = None
+    if level_stop is not None:
+        if rules_kwargs.get("trade_as") == "option":
+            return _question(
+                rules.LEVEL_STOP_ON_OPTION,
+                "Mixing the two would close the option at a point you never chose.",
+                "exit.rule",
+                notes=notes,
+            )
+        draft = _without_level_words(draft, lowered, level_span)
+        level_ind = rules._Indicators()
+        entry_dicts = [
+            {"id": i.id, "type": i.type, "params": dict(i.params)} for i in draft.indicators
+        ]
+        stop_level, level_question = rules._resolve_level_stop(
+            level_stop, entry_dicts, timeframe or "1d", level_ind
+        )
+        if level_question is not None:
+            return TranslationResult(
+                spec=None, questions=[level_question], notes=notes, source="llm"
+            )
+        known = {i.id for i in draft.indicators}
+        extra = [IndicatorSpec(**d) for d in level_ind.as_list() if d["id"] not in known]
+        draft = draft.model_copy(update={"indicators": [*draft.indicators, *extra]})
 
     # ---- numbers: nothing the user did not say
     by_field: dict[str, list[str]] = {}
@@ -891,7 +972,7 @@ def parse_llm(
 
     # ---- the stop loss: stated by the user, or asked for
     stop_pct = ex.stop_pct
-    has_stop = bool(stop_pct or ex.trailing_stop_pct or ex.stop_atr_mult)
+    has_stop = bool(stop_pct or ex.trailing_stop_pct or ex.stop_atr_mult or stop_level)
     if not has_stop:
         stop_pct = rules._float_answer(answers, "exit.stop_pct")
         if not stop_pct:
@@ -935,6 +1016,8 @@ def parse_llm(
 
     exit_kwargs = ex.model_dump(exclude_none=True)
     exit_kwargs["stop_pct"] = stop_pct
+    if stop_level is not None:
+        exit_kwargs["stop_level"] = stop_level
     exit_kwargs = {k: v for k, v in exit_kwargs.items() if v is not None}
     schedule_kwargs = rules._schedule_kwargs(
         instrument_kwargs, square_off, None, overnight=overnight

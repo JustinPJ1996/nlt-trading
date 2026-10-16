@@ -15,6 +15,10 @@ risk parameters) so `tests/test_span_margin.py` can replay it offline forever.
 
 ``positions.json`` is a list of ``[name, underlying, legs]`` where a leg is
 ``[zerodha_scrip, expiry_iso, "CE"|"PE", strike, lots, "buy"|"sell"]``.
+
+An optional second argument names the fixture to write, so a later capture
+can sit beside the first instead of replacing it (debit spreads and ratios
+were added on 16 Oct 2026 as ``zerodha_span_calibration_2026-10-16.json``).
 """
 
 from __future__ import annotations
@@ -154,7 +158,7 @@ def main() -> None:
         },
         "positions": out,
     }
-    path = FIXTURES / "zerodha_span_calibration.json"
+    path = FIXTURES / (sys.argv[2] if len(sys.argv) > 2 else "zerodha_span_calibration.json")
     path.write_text(json.dumps(fixture, indent=1) + "\n")
     print(f"wrote {path}")
 

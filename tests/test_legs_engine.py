@@ -902,6 +902,110 @@ def test_known_answer_0920_short_straddle_on_2_jan_2025():
     assert t.net_pnl == pytest.approx(5694.10)
 
 
+@pytest.mark.skipif(not _REAL_1M.exists(), reason="the F&O 1-minute data is not on this machine")
+def test_known_answer_0920_bought_straddle_on_2_jan_2025():
+    """The same day and strikes, BOUGHT, with a 25% stop on each option.
+    Checked by hand against the raw 1-minute rows (2026-10-16):
+
+    23800 CE: basis 111.10 (09:19 close), bought at 107.65 (09:20 open). Stop
+    107.65 - 25% x 111.10 = 79.875; its lowest trade after 09:20 was 90.40, so
+    it is sold at the 15:15 minute's close, 390.85.
+    23800 PE: basis 116.50, bought at 118.60, stop 118.60 - 29.125 = 89.475.
+    09:37 opened 103.10 and traded down to 86.95: stopped at 89.475 (no gap).
+    Gross (390.85 - 107.65) x 65 + (89.475 - 118.60) x 65 = 16,514.875.
+    Premium paid 14,706.25, under 10% of Rs 25 lakh: one set.
+    """
+    from app.logic import _backtest_legs_spec
+    from nlt.translate.rules import TranslationResult
+
+    legs = [buy("CE", stop_pct=25), buy("PE", stop_pct=25)]
+    spec = StrategySpec(
+        name="09:20 bought straddle",
+        description="t",
+        instrument=Instrument(symbol="NIFTY", timeframe="1m", trade_as="option", legs=legs),
+        entry=AtTime(time=dt.time(9, 20)),
+        exit=ExitRules(exits_on_legs=True),
+        sizing=Sizing(mode="fixed_lots", lots=1),
+        risk=RiskLimits(max_position_pct=10),
+        schedule=Schedule(intraday=True),
+    )
+    margin = FixedMargin()
+    r = _backtest_legs_spec(
+        spec,
+        capital=2_500_000,
+        cost_model_label="Index options (NIFTY/BANKNIFTY weekly)",
+        start=dt.date(2025, 1, 2),
+        end=dt.date(2025, 1, 2),
+        translation=TranslationResult(spec=spec),
+        slippage=Slippage(),
+        margin_fn=margin,
+    )
+    assert r.error is None
+    assert margin.calls == []  # nothing sold, no exchange margin
+    (t,) = r.backtest.trades
+    ce = next(f for f in t.legs if f.symbol == "NIFTY2510223800CE")
+    pe = next(f for f in t.legs if f.symbol == "NIFTY2510223800PE")
+    assert ce.side == pe.side == "buy"
+    assert (ce.basis, ce.entry_price) == (pytest.approx(111.10), pytest.approx(107.65))
+    assert ce.stop_level == pytest.approx(79.875)
+    assert (ce.exit_reason, ce.exit_price) == ("square_off", pytest.approx(390.85))
+    assert ce.exit_time == pd.Timestamp("2025-01-02 15:15", tz=IST)
+    assert (pe.basis, pe.entry_price) == (pytest.approx(116.50), pytest.approx(118.60))
+    assert pe.stop_level == pytest.approx(89.475)
+    assert (pe.exit_reason, pe.exit_price) == ("stop", pytest.approx(89.475))
+    assert pe.exit_time == pd.Timestamp("2025-01-02 09:37", tz=IST)
+    assert ce.quantity == pe.quantity == 65
+    assert t.gross_pnl == pytest.approx(16514.875)
+    assert t.net_pnl == pytest.approx(t.gross_pnl - ce.charges - pe.charges)
+
+
+@pytest.mark.skipif(not _REAL_1M.exists(), reason="the F&O 1-minute data is not on this machine")
+def test_known_answer_0920_bull_call_spread_on_2_jan_2025():
+    """A debit spread with no stop -- covered since 2026-10-16. By hand from the
+    raw 1-minute rows: index 23,788.85 at 09:19, so ATM 23800 and +200 points
+    -> 24000. Bought 23800 CE at 107.65 (09:20 open), sold 24000 CE at 35.00
+    (09:20 open; basis 35.15). Both squared off at the 15:15 close: 390.85 and
+    190.15. Gross (390.85 - 107.65) x 65 + (35.00 - 190.15) x 65 = 8,323.25.
+    """
+    from app.logic import _backtest_legs_spec
+    from nlt.translate.rules import TranslationResult
+
+    legs = [buy("CE"), sell("CE", strike_points=200)]
+    spec = StrategySpec(
+        name="bull call spread",
+        description="t",
+        instrument=Instrument(symbol="NIFTY", timeframe="1m", trade_as="option", legs=legs),
+        entry=AtTime(time=dt.time(9, 20)),
+        exit=ExitRules(exits_on_legs=True),
+        sizing=Sizing(mode="fixed_lots", lots=1),
+        risk=RiskLimits(max_position_pct=20),
+        schedule=Schedule(intraday=True),
+    )
+    r = _backtest_legs_spec(
+        spec,
+        capital=2_500_000,
+        cost_model_label="Index options (NIFTY/BANKNIFTY weekly)",
+        start=dt.date(2025, 1, 2),
+        end=dt.date(2025, 1, 2),
+        translation=TranslationResult(spec=spec),
+        slippage=Slippage(),
+        margin_fn=FixedMargin(),
+    )
+    assert r.error is None
+    (t,) = r.backtest.trades
+    bought = next(f for f in t.legs if f.symbol == "NIFTY2510223800CE")
+    sold = next(f for f in t.legs if f.symbol == "NIFTY2510224000CE")
+    assert (bought.side, bought.entry_price, bought.exit_price) == (
+        "buy",
+        107.65,
+        pytest.approx(390.85),
+    )
+    assert (sold.side, sold.basis, sold.entry_price) == ("sell", pytest.approx(35.15), 35.00)
+    assert (sold.exit_reason, sold.exit_price) == ("square_off", pytest.approx(190.15))
+    assert sold.stop_level is None
+    assert t.gross_pnl == pytest.approx(8323.25)
+
+
 def test_backtest_spec_sends_a_spec_with_legs_to_the_legs_engine(monkeypatch):
     import app.logic as logic
 

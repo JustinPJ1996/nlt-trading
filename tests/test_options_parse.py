@@ -301,10 +301,18 @@ def test_option_shapes_not_read_yet_are_refused(text) -> None:
     assert "can't read that option position" in result.questions[0].text
 
 
-def test_buying_two_options_together_is_refused() -> None:
+def test_a_bought_strangle_without_strikes_asks_for_them() -> None:
+    """Bought straddles and strangles read since 2026-10-16; this one still has
+    no strikes and an "IV spikes" no reader understands -- asked, not guessed."""
     result = _refused("Buy a NIFTY strangle when IV spikes, stop 30%")
+    assert result.spec is None
+    assert "How far out should the strangle" in result.questions[0].text
+
+
+def test_a_bought_iron_condor_is_still_refused() -> None:
+    """The iron builders write the sold shape; a "bought" one would be read backwards."""
+    result = _refused("Buy the NIFTY weekly iron condor at 09:20. Square off at 15:15.")
     assert result.questions[0].field == "instrument.trade_as"
-    assert "Buying two or more options together" in result.questions[0].text
 
 
 def test_the_70s_two_option_sell_sentences_still_ask() -> None:
@@ -313,7 +321,8 @@ def test_the_70s_two_option_sell_sentences_still_ask() -> None:
     fixed = _refused(
         "Sell the 25000 Nifty Call, hedge it with the 25100. Close at 50% of the max profit"
     )
-    assert fixed.questions[0].field == "instrument.strike_offset"
+    # The 25000 call reads since 2026-10-16; "hedge it with the 25100" does not.
+    assert fixed.questions[0].field == "instrument.trade_as"
     straddle = _refused(
         "Sell the at-the-money straddle at 9:35 on expiry day. Stop at 25% of premium, "
         "square-off at 3:10 PM"
@@ -324,18 +333,36 @@ def test_the_70s_two_option_sell_sentences_still_ask() -> None:
 # ---------------------------------------------- refused: fixed strike / points
 
 
+def test_a_bought_option_picked_by_points_is_still_refused() -> None:
+    result = _refused(
+        "Buy the NIFTY weekly put 200 points below spot when RSI crosses below 30, stop 30%"
+    )
+    assert result.questions[0].field == "instrument.strike_offset"
+
+
 @pytest.mark.parametrize(
     "text",
     [
-        "Buy the NIFTY 25000 call on 15 minute bars when RSI crosses above 60, stop 30%",
-        "Buy the NIFTY weekly 25000 call when RSI crosses above 60, stop 30%",
-        "Buy the NIFTY weekly put 200 points below spot when RSI crosses below 30, stop 30%",
+        "Buy the NIFTY weekly 25000 call on 15 minute bars when RSI crosses above 60, stop 30%",
+        "Buy NIFTY weekly strike 25000 call on 15 minute bars when RSI crosses above 60, stop 30%",
     ],
 )
-def test_fixed_strike_or_points_offset_is_refused(text) -> None:
-    result = _refused(text)
+def test_a_named_strike_reads_exactly(text) -> None:
+    """Since 2026-10-16 (paper trading only; the backtest refuses it)."""
+    spec = parse(text).spec
+    assert spec is not None
+    assert (spec.instrument.strike, spec.instrument.strike_offset) == (25000, 0)
+    assert "25,000 call option" in describe(spec) and "that strike exactly" in describe(spec)
+
+
+def test_a_number_too_small_to_be_an_index_strike_is_asked() -> None:
+    result = _refused("Buy the NIFTY weekly 500 call when RSI crosses above 60, stop 30%")
     assert result.questions[0].field == "instrument.strike_offset"
-    assert "coming later" in result.questions[0].text
+
+
+def test_a_strike_named_twice_is_asked() -> None:
+    result = _refused("Buy the NIFTY weekly OTM 25000 call when RSI crosses above 60, stop 30%")
+    assert result.spec is None
 
 
 # -------------------------------------------------------- refused: underlying
