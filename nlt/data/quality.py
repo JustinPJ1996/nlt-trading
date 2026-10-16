@@ -101,7 +101,7 @@ def clean(
 
     dropped = int((bars.index < start).sum())
     notes = [
-        f"{label}dropped {dropped:,} bars before {start.date()} -- "
+        f"{label}dropped {dropped:,} bars before {start.date()} – "
         f"{len(artefacts)} unadjusted corporate action(s) make the earlier "
         f"history a different price scale. Last one was {artefacts[-1]}"
     ]

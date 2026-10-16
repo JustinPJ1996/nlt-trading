@@ -857,6 +857,50 @@ suggests) was silently ignored and the question came back; only "1" worked.
 Resolved 2026-10-12: the default account is now Rs 25 lakh, and the five
 example strategies are each tested to take trades at it.
 
+### UI refresh — **batches A-B BUILT 2026-10-16** (C next)
+
+Plan: `~/.claude/plans/one-thing-that-we-goofy-flame.md`. Justin asked for a slick
+UI, beginner-friendly, better than Tradl/Tradara/FinStocks. His choices: modern
+look in light + dark with a switch; a left side menu (a bottom bar on phones);
+the readback on top with always-visible edit boxes under it (not a chat); a
+welcome page with examples. Designed with the `frontend-design` skill (Justin
+asked for it to be used), charts with the `dataviz` skill.
+
+- **A (PR #17, live):** indigo ink, marigold highlighter on the readback (the
+  one loud thing), Bricolage Grotesque + Public Sans; side menu; theme switch
+  (`web/src/theme.ts`, `data-theme` on `<html>`); Build/Results survive a
+  reload (sessionStorage); inline styles replaced by a spacing scale.
+- **B:** Home page (`pages/Home.tsx`): one question, the anatomy of a sentence
+  (`components/Anatomy.tsx`), example cards with a two-line chart (strategy vs
+  holding, `logic.card_curve`, measured on the starting money so the line ends
+  on the card's own numbers -- a first version normalised to day one and
+  ended 0.5% off; `test_a_cards_little_chart_ends_on_the_cards_own_numbers`
+  caught it). Build: questions on one card, "Fine-tune the numbers" always
+  open, a sticky "Is this what you meant?" bar.
+- **Dashes:** every user-facing `--` in engine/app text became an en dash
+  (not docstrings, comments, the AI reader's prompt, or retired `app/main.py`).
+- **`tests/test_web_ui.py`**: a real browser shows the engine's readback word
+  for word, and the edited readback after a box changes. Mutation-checked (a
+  dropped line, a changed number, a stale readback after an edit all fail).
+  It builds the screens into a temp folder: **never run `pnpm build` on a work
+  branch** -- the live server reads `web/dist` from disk and would publish it.
+  Preview with `NLT_WEB_PORT=8503 python -m app.api` + `NLT_API_PORT=8503 pnpm
+  exec vite` (paper trading runs from cron, so a second server is safe).
+
+**Library re-chosen (Justin: "find better examples").** Rule fixed before any
+result: 40+ trades and no serious warning. Eighteen more textbook strategies
+were run to 15 Oct 2026; one passed (BANKNIFTY MACD crossover, 41 trades, +2.6%
+vs +39.6% holding). Of the earlier six, ICICIBANK MACD passed. Every other
+candidate lost money (e.g. BHARTIARTL/LT/ITC 200-EMA trend: -46.5%/-44.7%/-32.5%;
+NIFTY 50 stocks RSI(2) dip -26.2%; RELIANCE/HDFCBANK/INFY/LT MACD -1.8% to -5.1%;
+BANKNIFTY RSI(2) dip -1.1%; NIFTY stochastic oversold -2.6%; NIFTY golden cross
+3 trades). Justin chose: lead with the two, then the four earlier cards with
+the most trades, and say on the page that most of the 34 tried failed
+(`LIBRARY_TRIED`). **Not read, worth fixing:** "close crosses above 200 SMA",
+"Supertrend(10, 3) turns to an uptrend" (and "turns bullish"), "close crosses
+below the lower Bollinger band", "close crosses above 50 SMA" -- all refused
+(safe), all common phrasings.
+
 ### One-off conditional orders (ATO-style) — **BUILT (2026-10-08), paper only**
 
 Justin asked for "simple strategies" that work like Zerodha's Alert Trigger

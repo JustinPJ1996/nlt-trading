@@ -6,6 +6,7 @@ import { Sidebar, type NavPage } from "./components/Sidebar";
 import { Activity } from "./pages/Activity";
 import { Alerts } from "./pages/Alerts";
 import { Build, emptyBuild, type BuildState } from "./pages/Build";
+import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { Orders } from "./pages/Orders";
 import { Paper } from "./pages/Paper";
@@ -14,9 +15,10 @@ import { Safety } from "./pages/Safety";
 import { Strategies } from "./pages/Strategies";
 
 const PAGES = [
+  { id: "home", label: "Home", icon: "home", phone: "Home" },
   { id: "build", label: "Build", icon: "build", phone: "Build" },
   { id: "results", label: "Results", icon: "results", phone: "Results" },
-  { id: "strategies", label: "My strategies", icon: "strategies", phone: "Saved" },
+  { id: "strategies", label: "My strategies", icon: "strategies" },
   { id: "paper", label: "Paper trading", icon: "paper", phone: "Paper" },
   { id: "orders", label: "One-off orders", icon: "orders" },
   { id: "activity", label: "Activity", icon: "activity" },
@@ -27,7 +29,7 @@ type PageId = (typeof PAGES)[number]["id"] | "alerts" | "safety";
 function pageFromHash(): PageId {
   const id = window.location.hash.replace(/^#\/?/, "");
   if (id === "alerts" || id === "safety") return id;
-  return (PAGES.find((p) => p.id === id)?.id ?? "build") as PageId;
+  return (PAGES.find((p) => p.id === id)?.id ?? "home") as PageId;
 }
 
 function pageTitle(page: PageId): string {
@@ -156,6 +158,19 @@ export function App() {
         />
       )}
       <main>
+        {page === "home" && (
+          <Home
+            onStart={(text) => {
+              setBuild({
+                ...emptyBuild(),
+                ...(options ? { capital: String(options.default_capital), costModel: options.cost_models[0], start: options.default_start, end: options.default_end } : {}),
+                text,
+                checkNow: true,
+              });
+              go("build");
+            }}
+          />
+        )}
         {page === "build" && (
           <Build
             options={options}

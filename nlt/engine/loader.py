@@ -77,7 +77,7 @@ def load_for_spec(
     if spec.instrument.trade_as == "option":
         raise NotImplementedError(
             "An option strategy is tested on the option's own price data, not the "
-            "index's -- testing it against the index's price would produce a "
+            "index's – testing it against the index's price would produce a "
             "confident, wrong answer."
         )
 
@@ -152,7 +152,7 @@ def _load_intraday(
     if spec.instrument.is_universe:
         raise NotImplementedError(
             f"{symbol} is a basket of stocks, and baskets can only be tested on daily "
-            "candles for now -- the end-of-day square-off is not built for baskets yet."
+            "candles for now – the end-of-day square-off is not built for baskets yet."
         )
     if not kite.is_connected():
         raise kite.KiteNotConnected(

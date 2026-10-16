@@ -187,7 +187,7 @@ _add(
         outputs=("atr",),
         params={"length": 14},
         label="ATR",
-        description="Average True Range in points -- a measure of typical bar movement.",
+        description="Average True Range in points – a measure of typical bar movement.",
     )
 )
 _add(

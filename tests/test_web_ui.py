@@ -132,9 +132,6 @@ def test_changing_the_stop_box_shows_the_new_readback(page, site) -> None:
     readback.wait_for()
     assert "1.5%" not in readback.inner_text()
 
-    adjust = page.locator("details.adjust")
-    if adjust.count() and not adjust.evaluate("d => d.open"):
-        adjust.locator("summary").click()
     page.get_by_label("Stop loss (%)").fill("1.5")
 
     # The readback on screen must become the engine's readback of the edited

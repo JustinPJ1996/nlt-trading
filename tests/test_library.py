@@ -111,3 +111,25 @@ def test_every_card_has_enough_trades_to_judge(entry) -> None:
     trades to mean anything (12-22). Chosen by count, never by result."""
     card = logic.library_card(entry, PINNED)
     assert card["trades"] >= 30, card
+
+
+def test_a_cards_little_chart_ends_on_the_cards_own_numbers() -> None:
+    """The line on a card must finish where its printed returns say -- a chart
+    that ends higher than "-1.0%" would make the card look better than its
+    report."""
+    entry = logic.LIBRARY[0]
+    card = logic.library_card(entry, PINNED)
+    curve = card["curve"]
+    assert 2 < len(curve["s"]) == len(curve["b"]) <= logic.CARD_CURVE_POINTS
+    assert curve["s"][0] == 0
+    assert logic.format_signed_pct(curve["s"][-1]) == card["return"]
+    assert logic.format_signed_pct(curve["b"][-1]) == card["holding_return"]
+
+
+def test_a_cache_from_before_the_little_charts_is_recomputed(tmp_path) -> None:
+    calls, compute = _counting()
+    path = tmp_path / "library.json"
+    old = {"tested_to": (PINNED - dt.timedelta(days=1)).isoformat(), "cards": logic.LIBRARY}
+    path.write_text(json.dumps(old))
+    logic.library_cards(path, PINNED, compute=compute)
+    assert len(calls) == len(logic.LIBRARY)

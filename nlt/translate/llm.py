@@ -199,14 +199,14 @@ _SUPPORTED = (
 _REFUSALS: dict[str, tuple[str, str]] = {
     "question": (
         "That reads as a question or a request for analysis, not a trading rule. "
-        "I can build and test a strategy with a clear entry and exit -- for example "
+        "I can build and test a strategy with a clear entry and exit – for example "
         "'Buy TCS when RSI crosses below 30, target 4%, stop loss 2%'.",
         "Answering market questions or giving opinions is not something this tool does; "
         "turning a question into trades would be a guess.",
     ),
     "robo": (
         "That sounds like a request to invest or manage money for you. This tool does not "
-        "pick investments -- it tests exact buy and sell rules that you describe.",
+        "pick investments – it tests exact buy and sell rules that you describe.",
         "Choosing what to buy for you would be advice, and there is no rule here to test.",
     ),
     "fundamental": (
@@ -275,7 +275,7 @@ def _stop_question(notes: list[str]) -> TranslationResult:
                 text="What stop loss should this strategy use?",
                 why=(
                     "A strategy with no stop loss can lose far more than intended before "
-                    "anything closes the position -- we never assume one for you."
+                    "anything closes the position – we never assume one for you."
                 ),
                 suggestion="A common starting point is 1%.",
                 field="exit.stop_pct",

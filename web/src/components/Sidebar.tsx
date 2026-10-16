@@ -82,7 +82,7 @@ export function Sidebar({
   return (
     <>
       <nav className="rail" aria-label="Main">
-        <a className="wordmark" href="#/build">
+        <a className="wordmark" href="#/home">
           <Glyph />
           Strategy Desk
         </a>
@@ -98,7 +98,7 @@ export function Sidebar({
       </nav>
 
       <header className="phone-bar">
-        <a className="wordmark" href="#/build">
+        <a className="wordmark" href="#/home">
           <Glyph />
           Strategy Desk
         </a>

@@ -1173,7 +1173,7 @@ def backtest_problem(spec: StrategySpec) -> str | None:
         return (
             f"A fixed strike like {strike:,} can't be backtested: over past months "
             f"{spec.instrument.symbol} was far from it, so the test would mostly trade an "
-            "option nobody would have picked. Paper trade it instead -- it uses today's prices."
+            "option nobody would have picked. Paper trade it instead – it uses today's prices."
         )
     return None
 
@@ -1448,7 +1448,7 @@ def describe_paper_event(
             return (
                 f"{verb} {qty_text}{event['symbol']}".rstrip()
                 + f" at the open of the {when(event['bar_time'])} candle "
-                "(a simulated position -- nothing is bought or sold)."
+                "(a simulated position – nothing is bought or sold)."
             )
         verb = "Bought" if event["direction"] == "long" else "Sold short"
         return (
@@ -1461,7 +1461,7 @@ def describe_paper_event(
             verb = "Would sell" if event["direction"] == "long" else "Would buy back"
             return (
                 f"{verb} {qty_text}{event['symbol']}".rstrip()
-                + f" on the {when(event['bar_time'])} candle -- {reason} "
+                + f" on the {when(event['bar_time'])} candle – {reason} "
                 "(the simulated position it would have held)."
             )
         pnl = detail.get("net_pnl")
@@ -1471,7 +1471,7 @@ def describe_paper_event(
         verb = "Sold" if event["direction"] == "long" else "Bought back"
         return (
             f"{verb} {qty_text}{event['symbol']}".rstrip() + f" at {format_inr(event['price'])} "
-            f"on the {when(event['bar_time'])} candle -- {reason}.{pnl_text}"
+            f"on the {when(event['bar_time'])} candle – {reason}.{pnl_text}"
         )
     if kind == "drift":
         return (
@@ -1517,11 +1517,11 @@ _SKIP_REASON_WORDS = {
         "single lot or share already costs more than that"
     ),
     "expiry": (
-        "it fired on the last candle of an expiring contract -- it would have filled "
+        "it fired on the last candle of an expiring contract – it would have filled "
         "in the next contract at the old contract's levels"
     ),
     "boundary": (
-        "it fired on the last candle of the trading session -- filling it would have "
+        "it fired on the last candle of the trading session – filling it would have "
         "meant holding overnight, which this intraday strategy never asked for"
     ),
     "weekday": "it fired on a day of the week this strategy is not allowed to trade on",
@@ -1552,7 +1552,7 @@ def describe_decision(decision: dict, spec: StrategySpec | None = None) -> str:
     prefix = f"{symbol}: " if symbol else ""
     if decision["kind"] == "signal_taken":
         return (
-            f"{prefix}entry rule met on the {when_text} candle -- queued for the next "
+            f"{prefix}entry rule met on the {when_text} candle – queued for the next "
             "candle's open, where the money and position-size checks are made."
         )
     reason = _SKIP_REASON_WORDS.get(
@@ -2151,40 +2151,73 @@ def adjust_spec(
 # their own tested numbers. Each must read with no questions and take trades at
 # the default capital (tests/test_library.py). Tapping one puts its sentence in
 # the box, where it can be changed like anything the user typed.
-# Chosen 2026-10-16 by trade count, never by result (Justin: "swap in more
-# active strategies"). Sixteen plain strategies were run to 25 Sep 2026; these
-# are every one with 40 or more trades -- the first six cards all showed
-# "Serious warning signs", five of them for too few trades (12-22). Four of
-# these lose money and say so: picking only winners would make the library a
-# brochure. Candidates and their counts are in the 2026-10-16 HANDOFF entry.
+#
+# Chosen by rules fixed before any result was seen, never by tuning numbers:
+# - 2026-10-16 (leftovers): sixteen plain strategies run to 25 Sep 2026; every
+#   one with 40+ trades kept, whatever its result.
+# - 2026-10-16 (UI refresh, Justin: "find better examples"): eighteen more
+#   textbook strategies run to 15 Oct 2026, the rule being 40+ trades and no
+#   serious warning. One passed (BANKNIFTY MACD); of the earlier six, one
+#   (ICICIBANK MACD). Justin chose to lead with those two, then the four earlier
+#   cards with the most trades (SBIN MACD, 46, dropped), and to say plainly on
+#   the page that most simple strategies failed -- LIBRARY_TRIED is that count.
+#   Candidates and their numbers are in the HANDOFF entry for the UI refresh.
+LIBRARY_TRIED = 34
 LIBRARY: list[dict[str, str]] = [
-    {
-        "title": "NIFTY 2-day RSI dip",
-        "sentence": "Buy NIFTY when RSI(2) crosses below 10. Target 2%, stop loss 2%. "
-        "Backtest the last 5 years.",
-    },
-    {
-        "title": "NIFTY stochastic crossover",
-        "sentence": "Buy NIFTY when stochastic %K crosses above %D. Target 2%, stop loss 1%. "
-        "Backtest the last 5 years.",
-    },
     {
         "title": "ICICIBANK MACD crossover",
         "sentence": "Buy ICICIBANK when MACD crosses above signal. Target 5%, stop loss 2%. "
         "Backtest the last 5 years.",
     },
     {
-        "title": "SBIN MACD crossover",
-        "sentence": "Buy SBIN when MACD crosses above signal. Target 5%, stop loss 2%. "
+        "title": "BANKNIFTY MACD crossover",
+        "sentence": "Buy BANKNIFTY when MACD crosses above signal. Target 3%, stop loss 1.5%. "
         "Backtest the last 5 years.",
     },
-    {"title": "TCS trend follower", "sentence": EXAMPLE_STRATEGIES[4]},
     {
         "title": "Oversold NIFTY 50 stocks",
         "sentence": "Buy NIFTY 50 stocks when RSI(14) crosses below 30. Target 5%, stop loss 2%. "
         "Backtest the last 3 years.",
     },
+    {"title": "TCS trend follower", "sentence": EXAMPLE_STRATEGIES[4]},
+    {
+        "title": "NIFTY stochastic crossover",
+        "sentence": "Buy NIFTY when stochastic %K crosses above %D. Target 2%, stop loss 1%. "
+        "Backtest the last 5 years.",
+    },
+    {
+        "title": "NIFTY 2-day RSI dip",
+        "sentence": "Buy NIFTY when RSI(2) crosses below 10. Target 2%, stop loss 2%. "
+        "Backtest the last 5 years.",
+    },
 ]
+
+
+# A card's little chart: enough points to show the shape, few enough to send.
+CARD_CURVE_POINTS = 60
+# Bumped whenever a card gains a field, so a cache from before is recomputed.
+LIBRARY_CACHE_VERSION = 2
+
+
+def card_curve(strategy: pd.Series, holding: pd.Series, capital: float) -> dict[str, list[float]]:
+    """The strategy and simply holding, each as % gained on the starting money
+    -- the base the card's own returns are measured from, so the line ends
+    exactly where its numbers say. Holding pays its buying charges on day one,
+    so it starts a little below zero. Thinned to at most CARD_CURVE_POINTS; the
+    first and last points are always kept."""
+    pct = {}
+    for key, series in (("s", strategy), ("b", holding)):
+        series = series.dropna()
+        pct[key] = (series / capital - 1) * 100
+    frame = pd.DataFrame(pct).sort_index().ffill().dropna()
+    n = len(frame)
+    keep = (
+        sorted({round(i * (n - 1) / (CARD_CURVE_POINTS - 1)) for i in range(CARD_CURVE_POINTS)})
+        if n > CARD_CURVE_POINTS
+        else list(range(n))
+    )
+    rows = frame.iloc[keep]
+    return {key: [round(float(v), 2) for v in rows[key]] for key in ("s", "b")}
 
 
 def library_card(entry: dict[str, str], tested_to: dt.date) -> dict:
@@ -2216,6 +2249,7 @@ def library_card(entry: dict[str, str], tested_to: dt.date) -> dict:
         "first": f"{equity.index[0]:%d %b %Y}",
         "last": f"{equity.index[-1]:%d %b %Y}",
         "serious_warning": any(f.severity == "critical" for f in result.verdict.flags),
+        "curve": card_curve(equity, result.benchmark.equity, DEFAULT_CAPITAL),
     }
 
 
@@ -2235,16 +2269,20 @@ def library_cards(
     tested_to = today - dt.timedelta(days=1)
     try:
         cached = json.loads(path.read_text())
-        if cached.get("tested_to") == tested_to.isoformat() and len(cached["cards"]) == len(
-            LIBRARY
+        if (
+            cached.get("version") == LIBRARY_CACHE_VERSION
+            and cached.get("tested_to") == tested_to.isoformat()
+            and len(cached["cards"]) == len(LIBRARY)
         ):
             return cached
     except (OSError, ValueError, KeyError):
         pass
     cards = [compute(entry, tested_to) for entry in LIBRARY]
     out = {
+        "version": LIBRARY_CACHE_VERSION,
         "tested_to": tested_to.isoformat(),
         "capital_text": format_inr(DEFAULT_CAPITAL),
+        "tried": LIBRARY_TRIED,
         "cards": cards,
     }
     path.parent.mkdir(parents=True, exist_ok=True)

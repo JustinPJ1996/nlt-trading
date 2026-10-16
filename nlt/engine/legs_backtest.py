@@ -314,7 +314,7 @@ def run_legs_backtest(
     if capital < FNO_MINIMUM_CAPITAL:
         warnings.append(
             f"OPTIONS ON A SMALL ACCOUNT: this was tested with Rs {capital:,.0f}. Options are "
-            f"not really tradeable below about Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one lot is "
+            f"not really tradeable below about Rs {FNO_MINIMUM_CAPITAL:,.0f} – one lot is "
             f"{lot_size} units and indivisible. Treat these results as theoretical."
         )
     has_sell = any(leg.side == "sell" for leg in legs_spec)
@@ -566,7 +566,7 @@ def run_legs_backtest(
                     "leg_not_traded",
                     f"The {format_strike(contract.strike)} {_TYPE_WORDS[contract.option_type]} "
                     f"did not trade at {ts:%H:%M} on {ts:%d %b %Y}, so the whole position was "
-                    "skipped -- no leg is ever opened without the others, and another strike "
+                    "skipped – no leg is ever opened without the others, and another strike "
                     "is never used.",
                     contract.tradingsymbol,
                     why=why,
@@ -1399,7 +1399,7 @@ def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec, ca
         out.append(
             "LOSS LARGER THAN THE ACCOUNT: at "
             f"{counts.worst_equity_at:%d %b %Y %H:%M} this account was worth "
-            f"{format_inr(counts.worst_equity)} -- a sold option lost more than the "
+            f"{format_inr(counts.worst_equity)} – a sold option lost more than the "
             f"{format_inr(capital)} started with. A broker would have closed it long before."
         )
     if counts.leg_not_traded:
@@ -1428,7 +1428,7 @@ def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec, ca
             out.append(f"{k} signal(s) skipped: no suitable option contract was listed.")
     for message, k in sorted(counts.margin_unavailable.items()):
         out.append(
-            f"{k} signal(s) skipped: no exchange margin figure exists for the day -- {message}"
+            f"{k} signal(s) skipped: no exchange margin figure exists for the day – {message}"
         )
     if counts.margin:
         out.append(

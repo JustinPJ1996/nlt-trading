@@ -558,7 +558,7 @@ def _exit_lines(
         lines.append(
             (
                 "If the chosen option didn't trade in the candle we'd buy in, "
-                "that signal is skipped -- never a different strike",
+                "that signal is skipped – never a different strike",
                 "option.skip_if_no_trade",
             )
         )
@@ -828,7 +828,7 @@ def _reentry_lines(legs: list[OptionLeg]) -> list[str]:
             who = "a sold option's"
         else:
             who = " or ".join(f"{_leg_short(leg)}'s" for leg in group)
-        lines.append(f"After {who} stop loss closes it, {how} -- at most {_times(count)}")
+        lines.append(f"After {who} stop loss closes it, {how} – at most {_times(count)}")
     return lines
 
 
@@ -920,14 +920,14 @@ def _legs_exit_lines(
         lines.append(
             (
                 "Two expiries: every option is closed on the expiry day of whichever expires "
-                f"first, at {square_off} -- the later one too, not held on by itself",
+                f"first, at {square_off} – the later one too, not held on by itself",
                 "option.expiry_close",
             )
         )
     lines.append(
         (
             "If any of the chosen options didn't trade in the candle we'd open in, that signal "
-            "is skipped -- never a different strike",
+            "is skipped – never a different strike",
             "option.skip_if_no_trade",
         )
     )
@@ -946,7 +946,7 @@ def _legs_sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]
         trades.append(
             (
                 "BANKNIFTY weekly options stopped trading after "
-                f"{BANKNIFTY_WEEKLY_LAST_EXPIRY:%d %b %Y} -- a weekly expiry won't find a real "
+                f"{BANKNIFTY_WEEKLY_LAST_EXPIRY:%d %b %Y} – a weekly expiry won't find a real "
                 "contract after that date.",
                 "option.banknifty_weekly_note",
             )
@@ -1045,7 +1045,7 @@ def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
         trades.append(
             (
                 "BANKNIFTY weekly options stopped trading after "
-                f"{BANKNIFTY_WEEKLY_LAST_EXPIRY:%d %b %Y} -- a weekly expiry won't find a real "
+                f"{BANKNIFTY_WEEKLY_LAST_EXPIRY:%d %b %Y} – a weekly expiry won't find a real "
                 "contract after that date.",
                 "option.banknifty_weekly_note",
             )

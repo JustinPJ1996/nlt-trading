@@ -179,7 +179,7 @@ def _fixed_strike_question():
 def unsupported_underlying_question(symbol: str | None):
     name = symbol or "that stock"
     return _question(
-        f"I can only test options on NIFTY, BANKNIFTY or SENSEX right now -- not {name}. "
+        f"I can only test options on NIFTY, BANKNIFTY or SENSEX right now – not {name}. "
         "Try the same idea on one of those.",
         why="Stock options are not wired in yet; trading a different underlying would test a different strategy.",
         field_name="instrument.symbol",
@@ -199,7 +199,7 @@ def _expiry_question():
     from nlt.translate.rules import Choice
 
     return _question(
-        "Which expiry should this trade -- the nearest weekly, next week's, or the monthly?",
+        "Which expiry should this trade – the nearest weekly, next week's, or the monthly?",
         why="Each expiry is a different contract with a different price; guessing one would test a trade you didn't describe.",
         field_name="instrument.expiry",
         choices=[
@@ -214,7 +214,7 @@ def _strike_question():
     from nlt.translate.rules import Choice
 
     return _question(
-        "Which strike should this trade -- at-the-money, or a number of strikes out of or "
+        "Which strike should this trade – at-the-money, or a number of strikes out of or "
         "into the money?",
         why="A strike changes what is actually bought; guessing one would test a trade you didn't describe.",
         field_name="instrument.strike_offset",
@@ -873,7 +873,7 @@ def _read_single_buy(text: str, answers: dict[str, str], reading: OptionReading)
     if fixed:
         if _ATM_WORD.search(out_text) or _BARE_OTM.search(out_text) or _BARE_ITM.search(out_text):
             reading.question = _plain_question(
-                "That names the strike twice -- as a price and as at/out of/in the money. "
+                "That names the strike twice – as a price and as at/out of/in the money. "
                 "Say it once.",
                 "Two strike rules for one option would be a guess at which one you meant.",
             )
@@ -1046,7 +1046,7 @@ def sold_stop_question():
         "rises by this much above its price when the position opens.",
         why=(
             "A sold option with no bought one protecting it can lose far more than it "
-            "collected -- we never assume a stop loss for you."
+            "collected – we never assume a stop loss for you."
         ),
         field_name="exit.stop_pct",
         choices=_choices([(f"{v}%", v) for v in _SOLD_STOP_CHOICES]),

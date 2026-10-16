@@ -133,7 +133,7 @@ def test_short_straddle_at_0920_reads_back_line_by_line() -> None:
         ),
         (
             "If any of the chosen options didn't trade in the candle we'd open in, that "
-            "signal is skipped -- never a different strike",
+            "signal is skipped – never a different strike",
             WORKED_OUT,
         ),
         ("1 lot of each option per trade (quantity 65 each, today's lot of 65)", DEFAULT),
@@ -362,7 +362,7 @@ def test_answering_reentry_reads_once(kind) -> None:
         "first sold it",
         "fresh_strike_now": "sell a fresh at-the-money option at the next candle",
     }[kind]
-    line = f"After a sold option's stop loss closes it, {how} -- at most once"
+    line = f"After a sold option's stop loss closes it, {how} – at most once"
     assert dict(_lines(result, answers))[line] == SAID
 
 

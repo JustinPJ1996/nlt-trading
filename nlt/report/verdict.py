@@ -96,7 +96,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 headline="This strategy lost money.",
                 detail=(
                     f"Total return was {metrics['total_return_pct']:.1f}% over the backtest "
-                    "period -- the account ended with less than it started with."
+                    "period – the account ended with less than it started with."
                 ),
             )
         )
@@ -113,7 +113,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 detail=(
                     f"The strategy returned {comparison.strategy_return_pct:.1f}% versus "
                     f"{comparison.benchmark_return_pct:.1f}% for {comparison.benchmark_name} over "
-                    f"the same period -- {abs(comparison.excess_return_pct):.1f} percentage "
+                    f"the same period – {abs(comparison.excess_return_pct):.1f} percentage "
                     "points worse. All the extra effort and risk of trading bought nothing "
                     "over doing nothing."
                 ),
@@ -129,7 +129,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 headline="There are far too few trades to trust this result.",
                 detail=(
                     f"Only {total_trades} trade(s) closed in this backtest. A handful of "
-                    "trades cannot distinguish a genuine edge from a lucky run -- the same "
+                    "trades cannot distinguish a genuine edge from a lucky run – the same "
                     "strategy re-run on a slightly different stretch of history could show "
                     f"the opposite result. {TOO_FEW_TRADES_CRITICAL} is a rough floor for "
                     "even starting to trust the numbers, not a guarantee at that count either."
@@ -144,7 +144,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 headline="This is still a fairly small number of trades.",
                 detail=(
                     f"{total_trades} trades is enough to start drawing a conclusion from, but "
-                    "not enough to be confident -- luck plays a real role at this sample size. "
+                    "not enough to be confident – luck plays a real role at this sample size. "
                     "Treat the numbers as a first look, not a final answer."
                 ),
             )
@@ -166,7 +166,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                             f"One trade made Rs {best_trade_profit:,.0f} before costs, which is "
                             f"{share * 100:.0f}% of the Rs {total_gross_profit:,.0f} total gross "
                             "profit across every winning trade. Remove that one trade and this "
-                            "strategy would look completely different -- possibly a loser. A "
+                            "strategy would look completely different – possibly a loser. A "
                             "single outlier is not a repeatable edge."
                         ),
                     )
@@ -218,7 +218,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 detail=(
                     f"At the worst point in the backtest, the account was down {max_dd:.0f}% "
                     "from its peak. Very few people hold on through a loss that size without "
-                    "abandoning the strategy or the market entirely -- and a loss this deep "
+                    "abandoning the strategy or the market entirely – and a loss this deep "
                     "needs a gain more than twice as large just to break even."
                 ),
             )
@@ -248,8 +248,8 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 headline="This was only tested over a short stretch of history.",
                 detail=(
                     f"The backtest covers about {years:.1f} year(s) ({bars_count} bars). "
-                    "Markets go through very different conditions -- trending, sideways, "
-                    "crashing -- and a strategy that only saw one of those has not really been "
+                    "Markets go through very different conditions – trending, sideways, "
+                    "crashing – and a strategy that only saw one of those has not really been "
                     "tested yet."
                 ),
             )
@@ -280,7 +280,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 f"Only {win_rate:.0f}% of trades were winners, which is fine when the "
                 f"winners are bigger. The average winner is Rs {avg_win:,.0f} against an "
                 f"average loser of Rs {avg_loss:,.0f}, so a win rate above "
-                f"{breakeven_rate:.0f}% is enough to come out ahead -- and this won "
+                f"{breakeven_rate:.0f}% is enough to come out ahead – and this won "
                 f"{win_rate:.0f}%."
             )
             severity = "info"
@@ -345,7 +345,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                     f"One NIFTY option lot is {exchange_lot_size('NIFTY', 'option')} units "
                     "and cannot be split, so a small "
                     "account either cannot afford a single lot or has to put far too "
-                    "much of itself into one contract -- and an option can lose its "
+                    "much of itself into one contract – and an option can lose its "
                     "entire premium in a session. Roughly Rs 10,00,000 is where options "
                     "start to make sense. Below that, the same idea is usually better "
                     "expressed on the index or on shares."
@@ -362,7 +362,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 detail=(
                     "This backtest was run without a cost model, so every number here is "
                     "before brokerage, STT and other charges. Real trading always has these "
-                    "costs, and they fall hardest on strategies that trade often -- re-run with "
+                    "costs, and they fall hardest on strategies that trade often – re-run with "
                     "a charge model before trusting the return."
                 ),
             )
@@ -378,7 +378,7 @@ def _all_flags(result: BacktestResult, comparison: Comparison) -> list[Flag]:
                 detail=(
                     f"At one point, {max_losing_streak} trades lost money back to back. Most "
                     "people give up on a strategy partway through a losing streak that long, "
-                    "long before it has a chance to recover -- the backtest's return assumes "
+                    "long before it has a chance to recover – the backtest's return assumes "
                     "you stuck it out."
                 ),
             )
@@ -432,7 +432,7 @@ def _summary(
         f.code == "too_few_trades" and f.severity == "critical" for f in flags
     ):
         return (
-            f"This made money, but on only {metrics['total_trades']} trades -- far too few to "
+            f"This made money, but on only {metrics['total_trades']} trades – far too few to "
             "tell skill from luck."
         )
     if "driven_by_one_trade" in codes:

@@ -78,7 +78,7 @@ def assumptions(
         )
         out.append(
             "Option prices come from real trades only, minute by minute. If the chosen option "
-            "did not trade in the candle a trade would be placed in, that signal is skipped -- "
+            "did not trade in the candle a trade would be placed in, that signal is skipped – "
             "another strike is never used."
         )
         if spec.exit.stop_pct is not None or spec.exit.target_pct is not None:
@@ -105,8 +105,8 @@ def assumptions(
     else:
         words = _CHARGE_WORDS.get(type(charge_model), "Zerodha's charges")
         out.append(
-            f"Charges: {words} as Zerodha bills them -- brokerage, transaction tax, exchange "
-            "and SEBI fees, GST and stamp duty -- taken off every trade."
+            f"Charges: {words} as Zerodha bills them – brokerage, transaction tax, exchange "
+            "and SEBI fees, GST and stamp duty – taken off every trade."
         )
     out.append(SAME_RESULT)
     return out
@@ -121,7 +121,7 @@ def _legs_assumptions(spec: StrategySpec) -> list[str]:
         f"The signal is judged on {sym}'s own candles. Every option in the position is chosen "
         "at that moment from the index's close on the signal candle: strikes counted from the "
         "nearest listed strike, or the listed strike nearest the number of points asked for. "
-        "If nothing is listed close enough, the signal is skipped -- the strike is never moved.",
+        "If nothing is listed close enough, the signal is skipped – the strike is never moved.",
         "Option prices come from real trades only, minute by minute. Every option in the "
         "position must trade in the candle the trade is placed in, or none of them is opened; "
         "another strike is never used.",
@@ -212,7 +212,7 @@ def weak_spots(
         )
     spots = [
         "Candles cannot show what happened inside them. When one candle touched both the "
-        "stop loss and the target, the stop was assumed to come first -- this can only make "
+        "stop loss and the target, the stop was assumed to come first – this can only make "
         "the result look worse, never better.",
         slippage_spot,
     ]
