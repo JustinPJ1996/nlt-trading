@@ -18,11 +18,9 @@ For each session D, at that session's close:
   bid/ask noise, and the volatility worked out from it swings wildly (tens of
   percent either way) for reasons that have nothing to do with the market's
   mood. For NIFTY and SENSEX that is the nearest weekly. For BANKNIFTY it is
-  the nearest weekly up to 13 Nov 2024 and, after NSE stopped listing
-  BANKNIFTY weeklies, the nearest *monthly* -- the series carries on rather
-  than stopping, but a monthly's IV is a slightly different quantity (it
-  usually sits a little apart from a one-week IV), so BANKNIFTY's percentile
-  compares weekly-option days with monthly-option days across that date.
+  the nearest *monthly* for the whole history (Justin, 2026-10-16): its
+  weeklies ended after 13 Nov 2024, and a series that switched from weekly
+  to monthly options there would rank one against the other.
 - **Which strike.** The listed strike nearest the index's close, a tie to the
   lower strike -- the same rule as `nlt.options.contracts`.
 - **Which price.** The option's last *traded* 1-minute close at or before the
@@ -42,15 +40,15 @@ For each session D, at that session's close:
 
 ## The percentile: `iv_percentile`
 
-The value for session D is the percentage of the last `lookback_days`
-sessions' IVs **up to and including D-1** that are strictly below D-1's IV.
-D's own IV is never used for D: a strategy deciding at 09:20 on D cannot know
-D's 15:30 close. Days with no IV are left out of the count (the window is the
-last `lookback_days` days that *have* an IV), and D gets no percentile at all
--- NaN -- if D-1 itself has no IV or fewer than `lookback_days` days of IV
-exist up to D-1. Because D-1 is in its own window and is never below itself,
-the highest possible value is `100 * (lookback_days - 1) / lookback_days`
-(99.6 at 252).
+The value for session D is the percentage of the `lookback_days` sessions'
+IVs **before** D-1 that are strictly below D-1's IV, so it runs 0 to 100
+(until 2026-10-16 D-1 was in its own window and the top was 99.6). D's own
+IV is never used for D: a strategy deciding at 09:20 on D cannot know D's
+15:30 close. Days with no IV are left out of the count (the window is the
+last `lookback_days` days that *have* an IV). If D-1 has no IV, D uses the
+most recent percentile from up to `STALE_SESSIONS` (5) sessions back -- a
+real past value -- and the report counts those days; with none that recent,
+or fewer than `lookback_days` earlier days of IV, D gets NaN.
 
 With data from December 2022 and a 252-day window, the first percentile is
 about a year in: December 2023 for NIFTY and BANKNIFTY; SENSEX options start
@@ -105,7 +103,7 @@ _VOL_TOL = 1e-10
 
 # Bumped whenever the way `daily_atm_iv` works changes, so an old cache file
 # is ignored rather than silently trusted.
-METHOD_VERSION = 2
+METHOD_VERSION = 3
 
 IV_COLUMNS = [
     "iv",
@@ -227,6 +225,23 @@ def _empty_row(reason: str) -> dict:
     return row
 
 
+# Justin, 2026-10-16: BANKNIFTY's IV comes from its monthly options for the
+# whole history. Its weeklies ended after 13 Nov 2024, so a nearest-expiry
+# series switched from weekly to monthly options there, and the percentile
+# compared the two -- not like with like.
+MONTHLY_ONLY = frozenset({"BANKNIFTY"})
+
+
+def _monthly(expiries: set[dt.date]) -> set[dt.date]:
+    """The last listed expiry of each calendar month: the monthly contracts."""
+    last: dict[tuple[int, int], dt.date] = {}
+    for e in expiries:
+        key = (e.year, e.month)
+        if key not in last or e > last[key]:
+            last[key] = e
+    return set(last.values())
+
+
 def _last_trading_day(expiry: dt.date, sessions: list[dt.date]) -> dt.date:
     """The session a contract really expires on: its listed expiry, or the
     session before it when that date is a market holiday.
@@ -267,9 +282,12 @@ def _day_iv(
     if listing.empty:
         return _empty_row("no options listed")
     sessions = sessions or []
+    expiries = set(listing["expiry"])
+    if underlying in MONTHLY_ONLY:
+        expiries = _monthly(expiries)
     later = sorted(
         (_last_trading_day(e, sessions), e)
-        for e in set(listing["expiry"])
+        for e in expiries
         if _last_trading_day(e, sessions) > day
     )
     if not later:
@@ -409,23 +427,42 @@ def iv_percentile(daily_iv: pd.Series, lookback_days: int) -> pd.Series:
     """The IV percentile each session may use, from the sessions before it only.
 
     `daily_iv` is one value per session in date order (NaN where none). The
-    result for session D is `100 * (number of the last lookback_days IVs up
-    to and including D-1 that are strictly below D-1's IV) / lookback_days`,
-    where D-1 is the session before D in `daily_iv` and missing IVs are
-    skipped when counting back. NaN when D-1 has no IV, when fewer than
-    `lookback_days` IVs exist up to D-1, and on the first session.
+    result for session D is `100 * (number of the lookback_days IVs before
+    D-1 that are strictly below D-1's IV) / lookback_days`, where D-1 is the
+    session before D in `daily_iv` and missing IVs are skipped when counting
+    back. If D-1 has no IV, the latest ranking from up to `STALE_SESSIONS`
+    sessions back is used; NaN when there is none, and on the first session.
     """
     if lookback_days < 1:
         raise ValueError("lookback_days must be at least 1")
     valid = daily_iv.dropna()
     values = valid.to_numpy(dtype=float)
     ranks = np.full(len(values), np.nan)
-    for k in range(lookback_days - 1, len(values)):
-        window = values[k - lookback_days + 1 : k + 1]
+    # Ranked against the `lookback_days` IVs BEFORE it, never itself: until
+    # 2026-10-16 the window included the day being ranked, which can never be
+    # below itself, so the top was 99.6 rather than 100.
+    for k in range(lookback_days, len(values)):
+        window = values[k - lookback_days : k]
         ranks[k] = 100.0 * np.count_nonzero(window < values[k]) / lookback_days
     known_at_close = pd.Series(ranks, index=valid.index).reindex(daily_iv.index)
-    # Known at D-1's close, so usable from D's open: move it on one session.
-    return known_at_close.shift(1)
+    # A session with no IV of its own does not blank the next one: the most
+    # recent ranking, at most STALE_SESSIONS sessions back, carries on (a real
+    # past value, never an invented one). Then known at that close, so usable
+    # from the next session's open: moved on one session.
+    return known_at_close.ffill(limit=STALE_SESSIONS - 1).shift(1)
+
+
+# How many sessions old the IV percentile a day uses may be, when the days
+# just before it had no IV (2026-10-16). Older than that, no percentile.
+STALE_SESSIONS = 5
+
+
+def iv_stale_days(daily_iv: pd.Series, lookback_days: int) -> pd.Series:
+    """Sessions whose percentile came from an older session than the one
+    before -- the day before had no IV. For the report's note."""
+    valid = daily_iv.notna()
+    used = iv_percentile(daily_iv, lookback_days).notna()
+    return used & ~valid.shift(1, fill_value=False)
 
 
 def iv_feature(
@@ -451,8 +488,14 @@ def iv_feature(
     by_day = iv_percentile(series, lookback_days)
     lookup = pd.Series(by_day.to_numpy(), index=[d.date() for d in by_day.index])
     days = pd.Index(index_bars.index.date)
-    return pd.Series(
+    out = pd.Series(
         lookup.reindex(days).to_numpy(dtype=float),
         index=index_bars.index,
         name=f"_iv_percentile_{lookback_days}",
     )
+    # The candle days whose percentile was carried over from an older session
+    # (the day before had no IV) -- for the report to count, never hidden.
+    stale = iv_stale_days(series, lookback_days)
+    stale_dates = {d.date() for d, flag in stale.items() if flag}
+    out.attrs["stale_days"] = sorted(stale_dates & set(days))
+    return out

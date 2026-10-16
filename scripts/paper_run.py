@@ -13,9 +13,13 @@ Option runs (Phase 2 batch 3) need two more things, both done here:
     (`nlt.options.margin`). It is published the evening before; from 08:30 on a
     weekday, today's is fetched if missing (at most every 15 minutes).
   * Kite drops an option's prices once it expires, so each day's prices must be
-    saved after the 15:40 close (`nlt.options.live`). The passes up to 15:45 do
-    it; once later each evening every option run gets one more pass anyway, so a
-    late or skipped minute does not lose an expiring contract's last day.
+    saved (`nlt.options.live`). Every pass keeps the minutes so far; a pass
+    after 15:42 (when the day's last minute has closed) saves the whole day.
+    The passes to 15:45 are the scheduled ones, and from 15:46 (`EVENING_FROM`)
+    every option run gets one more pass each evening, retried until it
+    succeeds, so a late or skipped minute does not lose an expiring contract's
+    last day. If the box is off from the last pass until Kite drops the
+    contract, the day is kept up to that pass and the run says so.
 """
 
 from __future__ import annotations

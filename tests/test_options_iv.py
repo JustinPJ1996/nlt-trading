@@ -92,14 +92,16 @@ def _sessions(n: int) -> pd.DatetimeIndex:
 
 
 def test_percentile_is_the_share_of_the_window_below_the_previous_day():
-    values = [0.10, 0.30, 0.20, 0.40, 0.25, 0.99]
-    daily = pd.Series(values, index=_sessions(6))
+    values = [0.10, 0.30, 0.20, 0.40, 0.25, 0.99, 0.50]
+    daily = pd.Series(values, index=_sessions(7))
     out = iv_percentile(daily, 4)
-    # Day 5's value comes from days 1-4 (0.10, 0.30, 0.20, 0.40) and day 4's
-    # IV 0.40: three of the four are below it.
-    assert out.iloc[4] == pytest.approx(75.0)
-    # Day 6: window days 2-5 (0.30, 0.20, 0.40, 0.25), day 5's IV 0.25: one below.
-    assert out.iloc[5] == pytest.approx(25.0)
+    # Day 6 (position 5) uses day 5's IV 0.25, ranked against the 4 IVs before
+    # it (0.10, 0.30, 0.20, 0.40): two are below.
+    assert out.iloc[5] == pytest.approx(50.0)
+    # Position 6: 0.99 against 0.30, 0.20, 0.40, 0.25 -- all four below: 100.
+    # (Until 2026-10-16 the day was in its own window and the top was 99.6.)
+    assert out.iloc[6] == pytest.approx(100.0)
+    assert out.iloc[:5].isna().all()
 
 
 def test_percentile_never_uses_the_day_itself():
@@ -121,22 +123,31 @@ def test_percentile_never_uses_the_day_itself():
 def test_percentile_is_nan_until_a_full_window_exists():
     daily = pd.Series(np.linspace(0.1, 0.2, 30), index=_sessions(30))
     out = iv_percentile(daily, 10)
-    # Session 11 (position 10) is the first whose previous day has 10 IVs up to it.
-    assert out.iloc[:10].isna().all()
-    assert out.iloc[10:].notna().all()
-    # A rising series: the previous day is always the highest of its window.
-    assert out.iloc[10] == pytest.approx(90.0)
+    # Position 11 is the first whose previous day has 10 IVs before it.
+    assert out.iloc[:11].isna().all()
+    assert out.iloc[11:].notna().all()
+    # A rising series: the previous day is above every day before it.
+    assert out.iloc[11] == pytest.approx(100.0)
 
 
-def test_percentile_is_nan_when_the_previous_day_has_no_iv_and_skips_gaps():
-    values = [0.1, 0.2, 0.3, np.nan, 0.15, 0.25]
+def test_a_day_without_iv_does_not_blank_the_next():
+    """2026-10-16: position 4 has no IV; position 5 uses position 3's
+    ranking (0.25 against 0.1, 0.2, 0.3: two below = 66.7), a real past value."""
+    values = [0.1, 0.2, 0.3, 0.25, np.nan, 0.15]
     daily = pd.Series(values, index=_sessions(6))
     out = iv_percentile(daily, 3)
-    assert math.isnan(out.iloc[4])  # previous day (position 3) has no IV
-    # Position 5 uses day 4's IV 0.15 against the last three IVs: 0.2, 0.3, 0.15.
-    assert out.iloc[5] == pytest.approx(0.0)
-    # Position 3 uses day 2 (0.3) against 0.1, 0.2, 0.3.
-    assert out.iloc[3] == pytest.approx(200 / 3)
+    assert out.iloc[4] == pytest.approx(200 / 3)
+    assert out.iloc[5] == pytest.approx(200 / 3)
+    assert iv.iv_stale_days(daily, 3).tolist() == [False] * 5 + [True]
+
+
+def test_a_gap_longer_than_five_sessions_still_blanks():
+    values = [0.1, 0.2, 0.3, 0.25] + [np.nan] * 5 + [0.15]
+    out = iv_percentile(pd.Series(values, index=_sessions(10)), 3)
+    # Positions 4-8 carry position 3's ranking (it is at most 5 sessions old)...
+    assert out.iloc[4:9].notna().all()
+    # ...position 9's would be 6 sessions old: none.
+    assert math.isnan(out.iloc[9])
 
 
 # ------------------------------------------------------ a synthetic options chain
@@ -435,8 +446,8 @@ def test_a_tie_between_two_strikes_goes_to_the_lower():
 
 
 def test_the_feature_gives_every_candle_of_a_day_that_days_percentile():
-    sessions = _sessions(6)
-    daily = pd.Series([0.10, 0.30, 0.20, 0.40, 0.25, 0.99], index=sessions)
+    sessions = _sessions(7)
+    daily = pd.Series([0.10, 0.30, 0.20, 0.40, 0.25, 0.99, 0.50], index=sessions)
     expected = iv_percentile(daily, 4)
     candles = []
     for day in sessions[3:]:
@@ -456,15 +467,14 @@ def test_the_feature_gives_every_candle_of_a_day_that_days_percentile():
             assert (math.isnan(value) and math.isnan(want)) or value == want
         else:
             assert math.isnan(value)
-    assert out.loc["2024-01-05"].tolist() == [75.0] * 3
-    assert out.loc["2024-01-08"].tolist() == [25.0] * 3
+    assert out.loc["2024-01-08"].tolist() == [50.0] * 3
 
 
 def test_the_feature_accepts_the_daily_frame_as_well_as_the_series():
-    sessions = _sessions(6)
-    frame = pd.DataFrame({"iv": [0.10, 0.30, 0.20, 0.40, 0.25, 0.99]}, index=sessions)
+    sessions = _sessions(7)
+    frame = pd.DataFrame({"iv": [0.10, 0.30, 0.20, 0.40, 0.25, 0.99, 0.50]}, index=sessions)
     bars = pd.DataFrame({"close": 1.0}, index=sessions)
-    assert iv_feature("IDX", bars, 4, daily_iv=frame).iloc[5] == 25.0
+    assert iv_feature("IDX", bars, 4, daily_iv=frame).iloc[5] == 50.0
 
 
 # ------------------------------------------------------------------ the cache
@@ -549,3 +559,83 @@ def test_known_answer_nifty_7_june_2024_from_the_real_data():
     assert row["put_price"] == pytest.approx(175.00)
     assert row["call_iv"] == pytest.approx(KNOWN_CALL_IV, abs=5e-5)
     assert row["put_iv"] == pytest.approx(KNOWN_PUT_IV, abs=5e-5)
+
+
+def test_the_feature_names_the_days_that_used_an_older_value():
+    sessions = _sessions(6)
+    daily = pd.Series([0.1, 0.2, 0.3, 0.25, np.nan, 0.15], index=sessions)
+    bars = pd.DataFrame({"close": 1.0}, index=sessions)
+    out = iv_feature("IDX", bars, 3, daily_iv=daily)
+    assert out.attrs["stale_days"] == [sessions[5].date()]
+
+
+def test_the_backtest_says_how_many_days_used_an_older_value():
+    import datetime as dt
+
+    from nlt.spec.models import IvPercentile
+    from tests import test_legs_engine as le
+
+    def iv_fn(_underlying, bars, _lookback):
+        out = pd.Series(80.0, index=bars.index)
+        out.attrs["stale_days"] = [dt.date(2024, 1, 3)]
+        return out
+
+    spec = le._spec(
+        entry=le.All(conditions=[le.AtTime(time=dt.time(9, 20)), IvPercentile(op="gt", value=70)])
+    )
+    res = le._run(spec, le._source(), iv_fn=iv_fn)
+    assert any("On 1 day(s) the IV percentile is an older day's" in w for w in res.warnings)
+
+
+def test_banknifty_uses_its_monthly_options_throughout(monkeypatch):
+    """Justin, 2026-10-16: BANKNIFTY's IV comes from the monthly for its whole
+    history, so its percentile never ranks monthly IV against weekly IV."""
+    monthly = dt.date(2024, 6, 27)
+    src = (
+        Chain()
+        .index(DAY, {(15, 29): 22010.0})
+        .list(DAY, EXPIRY, [22000])
+        .list(DAY, NEXT_EXPIRY, [22000])
+        .list(DAY, monthly, [22000])
+        .source()
+    )
+    assert iv.MONTHLY_ONLY == {"BANKNIFTY"}
+    assert daily_atm_iv("IDX", DAY, DAY, src).iloc[0]["expiry"] == EXPIRY
+    monkeypatch.setattr(iv, "MONTHLY_ONLY", frozenset({"IDX"}))
+    assert daily_atm_iv("IDX", DAY, DAY, src).iloc[0]["expiry"] == monthly
+
+
+_REAL_BN = (
+    __import__("pathlib").Path(__file__).resolve().parents[1] / "data/fno/1m/underlying=BANKNIFTY"
+)
+
+
+@pytest.mark.skipif(not _REAL_BN.exists(), reason="the F&O 1-minute data is not on this machine")
+def test_known_answer_banknifty_iv_from_the_monthly_on_5_jun_2024():
+    """Checked by hand (2026-10-16): BANKNIFTY closed at 48,847.10; the June
+    MONTHLY (26 Jun 2024) 48800 call last traded 1,099.95 and the put 787.60 at
+    15:29 (the weekly of 12 Jun was used before). Black-Scholes, 21 days, 6.5%:
+    call 21.04%, put 19.25%, average 20.14% -- solved separately by bisection."""
+    row = daily_atm_iv("BANKNIFTY", dt.date(2024, 6, 5), dt.date(2024, 6, 5), use_cache=False).iloc[
+        0
+    ]
+    assert row["expiry"] == dt.date(2024, 6, 26)
+    assert (row["strike"], row["spot_close"]) == (48800.0, pytest.approx(48847.10))
+    assert (row["call_price"], row["put_price"]) == (pytest.approx(1099.95), pytest.approx(787.60))
+    assert row["call_iv"] == pytest.approx(0.2104, abs=1e-4)
+    assert row["put_iv"] == pytest.approx(0.19249, abs=1e-4)
+    assert row["iv"] == pytest.approx(0.20145, abs=1e-4)
+
+
+def test_the_readback_says_banknifty_iv_is_from_its_monthly_options():
+    from nlt.translate.readback import describe
+    from nlt.translate.rules import parse
+
+    text = (
+        "Sell the {} monthly ATM straddle at 09:20 with a 30% stop on each leg, only when IV "
+        "percentile is above 70. Square off at 15:15."
+    )
+    bank = parse(text.format("BANKNIFTY")).spec
+    nifty = parse(text.format("NIFTY")).spec
+    assert "at-the-money monthly options at the previous day's close" in describe(bank)
+    assert "at-the-money options at the previous day's close" in describe(nifty)

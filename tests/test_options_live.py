@@ -136,8 +136,9 @@ def test_vix_percentile_uses_yesterdays_close_ranked_against_the_days_before():
     iv = vix_iv_fn(_VixKite(closes), now)("NIFTY", bars, 20)
     # Today's value: yesterday's 5.0 against the 20 sessions to yesterday -> 0.
     assert iv.iloc[-1] == 0.0
-    # Yesterday's value: the day before (48.0, the highest) -> 95 (19 of 20 below).
-    assert iv.iloc[0] == pytest.approx(95.0)
+    # Yesterday's value: the day before (48.0) against the 20 before it, all
+    # lower -> 100 (it was 95 while the day sat in its own window).
+    assert iv.iloc[0] == pytest.approx(100.0)
 
 
 # -------------------------------------------------------------------- gates
@@ -167,7 +168,7 @@ def test_vix_ranks_the_same_for_any_index():
     now = days[-1] + pd.Timedelta(hours=11)
     bars = pd.DataFrame({"close": 1.0}, index=pd.DatetimeIndex([now - pd.Timedelta(hours=1)]))
     fn = vix_iv_fn(_VixKite(closes), now)
-    assert fn("SENSEX", bars, 20).iloc[-1] == fn("NIFTY", bars, 20).iloc[-1] == 95.0
+    assert fn("SENSEX", bars, 20).iloc[-1] == fn("NIFTY", bars, 20).iloc[-1] == 100.0
 
 
 def test_options_are_no_longer_refused_and_say_how_paper_differs():
@@ -273,3 +274,23 @@ def test_nse_futures_trade_until_the_fno_close():
         update={"instrument": spec.instrument.model_copy(update={"timeframe": "15m"})}
     )
     assert runner.is_due({"id": 1}, None, spec, pd.Timestamp("2026-10-15 15:44", tz=IST))
+
+
+def test_a_day_with_no_pass_at_all_is_still_lost(tmp_path):
+    """Nothing was saved that day, and Kite no longer lists the contract."""
+    import datetime as dt
+
+    from nlt.options.live import LiveOptionSource
+
+    class NoTokens:
+        def instruments(self, now):
+            return pd.DataFrame(columns=["name", "tradingsymbol", "instrument_token"])
+
+    now = pd.Timestamp("2026-10-16 10:00", tz=IST)
+    source = LiveOptionSource(NoTokens(), now, root=tmp_path)
+    source._live = pd.DataFrame(columns=["name", "tradingsymbol", "instrument_token"])
+    source.contract_bars(
+        "NIFTY", "NIFTY26O1525000CE", "1m", dt.date(2026, 10, 15), dt.date(2026, 10, 15)
+    )
+    assert source.lost == {("NIFTY26O1525000CE", dt.date(2026, 10, 15))}
+    assert source.cut_short == set()

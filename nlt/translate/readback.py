@@ -976,7 +976,8 @@ def _legs_sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]
         entry.append(
             (
                 f"IV percentile {word} {_num(iv.value)} (implied volatility of the at-the-money "
-                f"options at the previous day's close, ranked against {past})",
+                + ("monthly " if spec.instrument.symbol == "BANKNIFTY" else "")
+                + f"options at the previous day's close, ranked against {past})",
                 "option.iv_method",
             )
         )

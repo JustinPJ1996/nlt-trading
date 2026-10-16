@@ -324,8 +324,9 @@ def test_an_expired_contracts_prices_are_kept_after_kite_forgets_them(bought):
 
 @needs_data
 def test_a_lost_expiry_day_is_said_plainly_never_guessed(tmp_path):
-    """No pass after the close on an expiry day: that day's prices are gone
-    from Kite the next morning, and the run must say so."""
+    """No pass after the close on an expiry day: Kite has dropped the contract
+    by the next morning. Since 2026-10-16 the minutes saved by the day's own
+    passes are kept, and the run says exactly where they stop."""
     spec = BOUGHT.spec
     r = _replay(tmp_path, spec, dt.date(2025, 1, 8), dt.date(2025, 1, 10), evenings=False)
     trades_on_expiring = [
@@ -336,7 +337,9 @@ def test_a_lost_expiry_day_is_said_plainly_never_guessed(tmp_path):
     if not trades_on_expiring:
         pytest.skip("no trade in the expiring weekly in this window")
     status = r.store.paper_status(r.run["id"])
-    assert "were not saved before Kite dropped them" in status["message"]
+    assert "were saved only up to the last check before Kite dropped them" in status["message"]
+    assert "(up to 15:31)" in status["message"]
+    assert "never filled in" in status["message"]
 
 
 @needs_data

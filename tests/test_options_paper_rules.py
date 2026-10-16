@@ -257,3 +257,59 @@ def test_a_combined_stop_on_the_last_index_candle_fills_after_the_close():
     assert (pe.exit_reason, pe.exit_price) == ("combined_stop", 81.0)
     backtest = _run_legs(spec, src).trades[0]
     assert _legs(backtest, LEG_CE)[0].exit_time == _ts(D2, 9, 15)
+
+
+def _reentering_straddle(extra, reentry="fresh_strike_now", **kw):
+    legs = [sell("CE", stop_pct=25, reentry=reentry, reentry_max=1), sell("PE", stop_pct=25)]
+    src = _plus(_legs_source(OPEN_PRICES, PE_FLAT), extra)
+    return _run_legs(_legs_spec(legs, intraday=False), src, **kw).trades[0]
+
+
+def test_a_leg_stopped_after_the_index_close_re_enters_before_the_fno_close():
+    """Justin approved, 2026-10-16. CE stopped at 15:31 on D1 (130, past its
+    127 stop); "a fresh strike now" is picked from the index's last close
+    (21,490 -> 21500, the same strike here) and sold at the next option
+    candle, 15:35, at its open -- not the next morning."""
+    t = _reentering_straddle(
+        [_minute(LEG_CE, _ts(D1, 15, 31), 130.0), _minute(LEG_CE, _ts(D1, 15, 35), 105.0)],
+        fno_close=CLOSE,
+    )
+    ce = _legs(t, LEG_CE)
+    assert [(f.exit_reason, f.reentry) for f in ce][:2] == [("stop", 0), (ce[1].exit_reason, 1)]
+    assert (ce[1].entry_time, ce[1].entry_price) == (_ts(D1, 15, 35), 105.0)
+
+
+def test_the_backtest_still_re_enters_the_next_morning():
+    t = _reentering_straddle(
+        [_minute(LEG_CE, _ts(D1, 15, 31), 130.0), _minute(LEG_CE, _ts(D1, 15, 35), 105.0)]
+    )
+    ce = _legs(t, LEG_CE)
+    assert all(f.entry_time.date() == D1 or f.entry_time.time() >= dt.time(9, 15) for f in ce)
+    assert not [f for f in ce if f.reentry and f.entry_time.date() == D1]
+
+
+def test_no_re_entry_after_the_close_on_expiry_day():
+    """D3 is the weekly's expiry: a 15:31 stop there does not re-enter at
+    15:35 -- everything is valued at the close minutes later."""
+    t = _reentering_straddle(
+        [_minute(LEG_CE, _ts(D3, 15, 31), 130.0), _minute(LEG_CE, _ts(D3, 15, 35), 105.0)],
+        fno_close=CLOSE,
+    )
+    assert not [f for f in _legs(t, LEG_CE) if f.reentry and f.entry_time.date() == D3]
+
+
+def test_no_re_entry_after_the_close_when_the_entry_cut_off_forbids_it():
+    legs = [
+        sell("CE", stop_pct=25, reentry="fresh_strike_now", reentry_max=1),
+        sell("PE", stop_pct=25),
+    ]
+    spec = _legs_spec(legs, intraday=False)
+    spec = spec.model_copy(
+        update={"schedule": spec.schedule.model_copy(update={"entry_cutoff": True})}
+    )
+    src = _plus(
+        _legs_source(OPEN_PRICES, PE_FLAT),
+        [_minute(LEG_CE, _ts(D1, 15, 31), 130.0), _minute(LEG_CE, _ts(D1, 15, 35), 105.0)],
+    )
+    t = _run_legs(spec, src, fno_close=CLOSE).trades[0]
+    assert not [f for f in _legs(t, LEG_CE) if f.reentry and f.entry_time.date() == D1]
