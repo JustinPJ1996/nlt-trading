@@ -5,7 +5,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   api,
-  ApiError,
   type PaperRun,
   type PaperState,
   type SettingsEdits,
@@ -19,13 +18,9 @@ import { SettingsPanel } from "../components/SettingsPanel";
 import { SlippageInput } from "../components/SlippageInput";
 import { TradeTimeline, type TimelineTarget } from "../components/TradeTimeline";
 import { parseRupees } from "../format";
+import { healthTagClass, message } from "../util";
 
-const HEALTH_TONE: Record<string, Tone> = { success: "good", info: "info", warning: "warning", error: "critical" };
 const KITE_TONE: Record<string, Tone> = { connected: "good", expired: "critical", not_connected: "warning", unreachable: "warning" };
-
-function message(err: unknown, fallback: string) {
-  return err instanceof ApiError ? err.message : fallback;
-}
 
 function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () => void }) {
   const [userId, setUserId] = useState("");
@@ -67,10 +62,10 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
         Kite connection
       </h2>
       <Callout tone={KITE_TONE[kite.state] ?? "info"}>{kite.line}</Callout>
-      <details className="panel" style={{ marginTop: 12 }} open={kite.state !== "connected"}>
+      <details className="panel mt-3" open={kite.state !== "connected"}>
         <summary>{kite.has_login ? "Change your Kite login" : "Save your Kite login"}</summary>
-        <form onSubmit={onLogin} style={{ marginTop: 16 }}>
-          <p className="hint" style={{ marginBottom: 16 }}>
+        <form className="mt-4" onSubmit={onLogin}>
+          <p className="hint mb-4">
             Saved on this computer only, readable only by you, and never shown again. The app uses it to
             log in to Kite by itself each morning. If Kite says the password is wrong, it stops trying, so
             that Zerodha does not lock your account.
@@ -88,7 +83,7 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
             <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} required />
             <span className="hint">The long key you set up the authenticator with, not the 6-digit code.</span>
           </label>
-          <div className="btn-row" style={{ marginTop: 16 }}>
+          <div className="btn-row mt-4">
             <button className="btn" type="submit" disabled={busy}>
               Save login
             </button>
@@ -99,9 +94,9 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
             )}
           </div>
         </form>
-        <details style={{ marginTop: 20 }}>
+        <details className="mt-5">
           <summary className="small">Or paste a token by hand</summary>
-          <form onSubmit={onToken} style={{ marginTop: 12 }}>
+          <form className="mt-3" onSubmit={onToken}>
             <label className="field">
               <span className="label">Kite token</span>
               <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} />
@@ -110,13 +105,13 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
                 prices.
               </span>
             </label>
-            <button className="btn secondary" type="submit" disabled={busy || !token} style={{ marginTop: 12 }}>
+            <button className="btn secondary mt-3" type="submit" disabled={busy || !token}>
               Save token
             </button>
           </form>
         </details>
         {error && (
-          <div style={{ marginTop: 12 }}>
+          <div className="mt-3">
             <ErrorLine error={error} />
           </div>
         )}
@@ -186,20 +181,20 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
             {run.alert_only ? "" : ` with ${run.capital_text}`}. Last checked {run.checked || "not yet"}.
           </p>
         </div>
-        <div className="btn-row" style={{ gap: 8 }}>
+        <div className="row tight">
           {run.alert_only && <span className="tag">Alerts only</span>}
-          <span className={`tag ${HEALTH_TONE[run.health] === "good" ? "good" : HEALTH_TONE[run.health] === "critical" ? "critical" : HEALTH_TONE[run.health] === "warning" ? "warning" : ""}`}>
+          <span className={`tag ${healthTagClass(run.health)}`}>
             {run.health_label}
           </span>
         </div>
       </div>
       {run.paused && (
-        <p className="muted small" style={{ marginTop: 4 }}>
+        <p className="muted small mt-1">
           Paused by hand: new signals are being skipped, not queued for later. Stops, targets and other
           exits are still watched.
         </p>
       )}
-      {run.message && <p style={{ marginTop: 8 }}>{run.message}</p>}
+      {run.message && <p className="mt-2">{run.message}</p>}
 
       {run.snapshot && (
         <div className="stats">
@@ -219,7 +214,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
       )}
 
       {run.positions.length > 0 && (
-        <div className="table-wrap" style={{ marginBottom: 16 }}>
+        <div className="table-wrap mb-4">
           <table>
             <thead>
               <tr>
@@ -253,26 +248,35 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
 
       <details>
         <summary>What the strategy is</summary>
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <Readback text={run.readback} compact />
         </div>
       </details>
-      <details style={{ marginTop: 12 }} open={run.events.length > 0}>
+      <details className="mt-3" open={run.events.length > 0}>
         <summary>Activity ({run.events.length})</summary>
         {run.events.length === 0 ? (
-          <p className="muted" style={{ marginTop: 8 }}>
+          <p className="muted mt-2">
             Nothing has happened yet.
           </p>
         ) : (
-          <ul className="log" style={{ marginTop: 8 }}>
+          <ul className="log mt-2">
             {run.events.map((e, i) => (
-              <li
-                key={i}
-                className={e.trade_key ? "clickable" : undefined}
-                onClick={e.trade_key ? () => setOpen({ kind: "trade", runId: run.run_id, tradeKey: e.trade_key! }) : undefined}
-              >
-                <time>{e.when}</time>
-                <span className={e.drift ? "drift" : undefined}>{e.text}</span>
+              <li key={i} className={e.trade_key ? "clickable" : undefined}>
+                {e.trade_key ? (
+                  <button
+                    type="button"
+                    className="row-button"
+                    onClick={() => setOpen({ kind: "trade", runId: run.run_id, tradeKey: e.trade_key! })}
+                  >
+                    <time>{e.when}</time>
+                    <span className={e.drift ? "drift" : undefined}>{e.text}</span>
+                  </button>
+                ) : (
+                  <>
+                    <time>{e.when}</time>
+                    <span className={e.drift ? "drift" : undefined}>{e.text}</span>
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -280,7 +284,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
       </details>
       {open && <TradeTimeline target={open} onClose={() => setOpen(null)} />}
 
-      <div className="btn-row" style={{ marginTop: 20, justifyContent: "space-between" }}>
+      <div className="row mt-5 spread">
         <div className="btn-row">
           <button className="btn secondary" onClick={check} disabled={busy !== null}>
             Check now
@@ -306,7 +310,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
         <p className="hint">Daily strategy: it updates once a day, shortly after the 3:30 PM close.</p>
       )}
       {error && (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <ErrorLine error={error} />
         </div>
       )}
@@ -349,7 +353,7 @@ function StartForm({
     return (
       <div className="panel empty">
         <h2>Nothing to start</h2>
-        <p className="muted" style={{ marginBottom: 20 }}>
+        <p className="muted mb-5">
           Save a strategy from its backtest results first, then start it here.
         </p>
         <button className="btn secondary" onClick={onBuild}>
@@ -426,7 +430,7 @@ function StartForm({
           ))}
         </select>
       </label>
-      <div style={{ margin: "16px 0" }}>
+      <div className="my-4">
         <Readback text={chosen.readback} compact />
       </div>
       {shownSettings && (
@@ -437,7 +441,7 @@ function StartForm({
             onChange={(edit) => setSettingsEdits((e) => ({ ...e, ...edit }))}
           />
           {dirty && (
-            <div className="btn-row" style={{ marginTop: 8, marginBottom: 12 }}>
+            <div className="btn-row mt-2 mb-3">
               <button className="btn secondary" type="button" onClick={saveSettings} disabled={saving}>
                 Save settings
               </button>
@@ -448,12 +452,12 @@ function StartForm({
             </div>
           )}
           {settingsError && (
-            <div style={{ marginBottom: 12 }}>
+            <div className="mb-3">
               <ErrorLine error={settingsError} />
             </div>
           )}
           {fromSaved?.new_version && !dirty && (
-            <div style={{ marginBottom: 12 }}>
+            <div className="mb-3">
               <Callout tone="info">
                 Saved as version {fromSaved.version}. This version has not been backtested yet, so it won't
                 count as proven until you backtest it.
@@ -467,7 +471,7 @@ function StartForm({
       ) : (
         <>
           <div className="grid-2">
-            <label className="field" style={{ marginTop: 0 }}>
+            <label className="field mt-0">
               <span className="label">Pretend starting money</span>
               <span className="money">
                 <span aria-hidden="true">Rs</span>
@@ -479,7 +483,7 @@ function StartForm({
                 />
               </span>
             </label>
-            <label className="field" style={{ marginTop: 0 }}>
+            <label className="field mt-0">
               <span className="label">Trading costs to charge</span>
               <select value={cost} onChange={(e) => setCost(e.target.value)}>
                 {state.cost_models.map((c) => (
@@ -489,20 +493,20 @@ function StartForm({
             </label>
             <SlippageInput value={slippage} onChange={setSlippage} idPrefix="paper-slippage" />
           </div>
-          <p className="hint" style={{ marginTop: 12 }}>
+          <p className="hint mt-3">
             No real orders are placed. From the moment you press Start, the app follows live Kite prices
             and records every decision as it happens.
           </p>
-          <p className="hint" style={{ marginTop: 8 }}>
+          <p className="hint mt-2">
             Alerts only: the strategy runs exactly the same, but only tells you what it would have bought
             or sold. No paper money is tracked, and it never counts as a proving run.
           </p>
           {chosen.notes.map((note) => (
-            <div key={note} style={{ marginTop: 12 }}>
+            <div className="mt-3" key={note}>
               <Callout tone="info">{note}</Callout>
             </div>
           ))}
-          <div className="btn-row" style={{ marginTop: 16 }}>
+          <div className="btn-row mt-4">
             <button className="btn" type="submit" disabled={busy || money === null || money < 1000}>
               Start paper trading
             </button>
@@ -519,7 +523,7 @@ function StartForm({
         </>
       )}
       {error && (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <ErrorLine error={error} />
         </div>
       )}

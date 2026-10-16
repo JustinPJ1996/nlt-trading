@@ -5,33 +5,10 @@
 // functions over the recorded rows.
 
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type ActivityItem } from "../api";
+import { api, type ActivityItem } from "../api";
 import { ErrorLine, Working } from "../components/Callout";
 import { TradeTimeline, type TimelineTarget } from "../components/TradeTimeline";
-
-function message(err: unknown, fallback: string) {
-  return err instanceof ApiError ? err.message : fallback;
-}
-
-const TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  // Always Indian time, whatever the viewer's own clock says: every other
-  // time on screen (and in the feed's own sentences) is IST.
-  timeZone: "Asia/Kolkata",
-});
-
-function when(iso: string): string {
-  if (!iso) return "";
-  try {
-    return TIME_FORMAT.format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
+import { message, when } from "../util";
 
 export function Activity() {
   const [items, setItems] = useState<ActivityItem[] | null>(null);
@@ -77,13 +54,13 @@ export function Activity() {
     <div className="narrow">
       <h1 className="page-title">Activity</h1>
       <p className="page-lede">
-        Everything paper trading and one-off orders have recorded, newest first -- every signal taken, every
+        Everything paper trading and one-off orders have recorded, newest first: every signal taken, every
         signal skipped and why, every fill and exit.
       </p>
       <ErrorLine error={error} />
 
-      <div className="btn-row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-        <label className="field" style={{ marginTop: 0, minWidth: 220 }}>
+      <div className="row spread">
+        <label className="field mt-0 minw-field">
           <span className="label">Source</span>
           <select
             value={sourceId === "all" ? "all" : `${sourceId}`}
@@ -98,7 +75,7 @@ export function Activity() {
             ))}
           </select>
         </label>
-        <label className="check" style={{ marginTop: 0 }}>
+        <label className="check mt-0">
           <input type="checkbox" checked={skipsOnly} onChange={(e) => setSkipsOnly(e.target.checked)} />
           <span>Skipped signals only</span>
         </label>
@@ -106,31 +83,34 @@ export function Activity() {
 
       {!items && !error && <Working>Loading the activity feed...</Working>}
       {items && shown.length === 0 && (
-        <p className="muted" style={{ marginTop: 16 }}>
+        <p className="muted mt-4">
           Nothing recorded yet.
         </p>
       )}
       {items && shown.length > 0 && (
-        <ul className="log" style={{ marginTop: 16, maxHeight: "none" }}>
+        <ul className="log tall mt-4">
           {shown.map((it, i) => {
             const clickable = !!it.trade_key || it.source === "order";
-            return (
-              <li
-                key={i}
-                className={clickable ? "clickable" : undefined}
-                onClick={clickable ? () => openItem(it) : undefined}
-              >
+            const content = (
+              <>
                 <time>{when(it.time)}</time>
                 <span>
                   <strong className="muted small">{it.source_name}</strong>
-                  {it.skip && (
-                    <span className="tag" style={{ marginLeft: 8 }}>
-                      skipped
-                    </span>
-                  )}
+                  {it.skip && <span className="tag ml-2">skipped</span>}
                   <br />
                   <span className={it.skip ? "skip" : it.kind === "drift" ? "drift" : undefined}>{it.text}</span>
                 </span>
+              </>
+            );
+            return (
+              <li key={i} className={clickable ? "clickable" : undefined}>
+                {clickable ? (
+                  <button type="button" className="row-button" onClick={() => openItem(it)}>
+                    {content}
+                  </button>
+                ) : (
+                  content
+                )}
               </li>
             );
           })}

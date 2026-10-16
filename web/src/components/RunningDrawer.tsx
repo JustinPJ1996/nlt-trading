@@ -6,19 +6,9 @@
 // own maths rather than redoing it.
 
 import { useEffect, useState } from "react";
-import { api, ApiError, type RunningItem, type RunningState } from "../api";
+import { api, type RunningItem, type RunningState } from "../api";
 import { ErrorLine, Working } from "./Callout";
-
-const HEALTH_CLASS: Record<string, string> = {
-  success: "good",
-  warning: "warning",
-  error: "critical",
-  info: "",
-};
-
-function message(err: unknown, fallback: string) {
-  return err instanceof ApiError ? err.message : fallback;
-}
+import { healthTagClass, message, useDialog } from "../util";
 
 function moneyClass(value: number): string {
   if (value > 0) return "pos";
@@ -103,9 +93,9 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
             )}
           </div>
         </div>
-        <div className="btn-row" style={{ gap: 8 }}>
+        <div className="row tight">
           {item.alert_only && <span className="tag">Alerts only</span>}
-          <span className={`tag ${HEALTH_CLASS[item.health] ?? ""}`}>{item.health_label}</span>
+          <span className={`tag ${healthTagClass(item.health)}`}>{item.health_label}</span>
         </div>
       </div>
       {item.alert_only ? (
@@ -132,6 +122,7 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
 }
 
 export function RunningDrawer({ onClose }: { onClose: () => void }) {
+  const closeRef = useDialog(onClose);
   const [state, setState] = useState<RunningState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,7 +153,7 @@ export function RunningDrawer({ onClose }: { onClose: () => void }) {
       >
         <div className="modal-head">
           <h3 className="item-name">Running</h3>
-          <button className="btn quiet" onClick={onClose} aria-label="Close">
+          <button className="btn quiet" ref={closeRef} onClick={onClose} aria-label="Close">
             Close
           </button>
         </div>

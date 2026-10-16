@@ -36,7 +36,7 @@ export function Results({
         <h1 className="page-title">Results</h1>
         <div className="panel empty">
           <h2>Nothing tested yet</h2>
-          <p className="muted" style={{ marginBottom: 20 }}>
+          <p className="muted mb-5">
             Describe a strategy, check what was understood, then run a backtest. The result appears here.
           </p>
           <button className="btn" onClick={onEdit}>
@@ -89,14 +89,14 @@ export function Results({
       <div className="versus">
         <div>
           <div className="figure-label">
-            <span className="key" style={{ background: "var(--series-1)" }} />
+            <span className="key s1" />
             Your strategy
           </div>
           <div className="figure-value">{headline.strategy_return}</div>
         </div>
         <div>
           <div className="figure-label">
-            <span className="key" style={{ background: "var(--series-2)" }} />
+            <span className="key s2" />
             {benchmarkLabel}
           </div>
           <div className="figure-value">{headline.benchmark_return}</div>
@@ -113,7 +113,7 @@ export function Results({
       {params.slippage_text && <p className="period">{params.slippage_text}</p>}
 
       {verdict.flags.length > 0 && (
-        <section className="section" aria-labelledby="flags" style={{ marginTop: 32 }}>
+        <section className="section mt-6" aria-labelledby="flags">
           <h2 className="section-title" id="flags">
             Before you trust this
           </h2>
@@ -163,10 +163,10 @@ export function Results({
 
           {result.before_after_charges && (
             <>
-              <h2 className="section-title" id="charges" style={{ marginTop: 28 }}>
+              <h2 className="section-title mt-6" id="charges">
                 Before and after charges
               </h2>
-              <p className="hint" style={{ marginBottom: 10 }}>
+              <p className="hint mb-3">
                 The same strategy tested twice: once with no charges at all, once with brokerage,
                 taxes and fees deducted. The gap is what trading costs took.
               </p>
@@ -252,7 +252,7 @@ export function Results({
           Every trade{result.trades.length ? ` (${result.trades.length})` : ""}
         </h2>
         {result.trades.length > 0 && (
-          <p style={{ marginBottom: 12 }}>
+          <p className="mb-3">
             <a
               className="btn secondary"
               href={`/api/results/${encodeURIComponent(result.result_id)}/trades.csv`}
@@ -291,12 +291,12 @@ export function Results({
                         </div>
                         {t.why && <div className="muted small">{t.why}</div>}
                         {t.legs && t.legs.length > 0 && (
-                          <ul className="muted small" style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                          <ul className="muted small leg-list">
                             {t.legs.map((l, j) => (
                               <li key={j}>
                                 {l.side} {l.quantity} {l.label}
                                 {l.reentry > 0 ? ` (re-entry ${l.reentry})` : ""} at {l.entry_price}, closed{" "}
-                                {l.exited} at {l.exit_price} -- {l.reason}
+                                {l.exited} at {l.exit_price} – {l.reason}
                                 {l.stop ? ` (stop ${l.stop})` : ""}:{" "}
                                 <span className={l.pnl > 0 ? "pos" : l.pnl < 0 ? "neg" : ""}>{l.pnl_text}</span>
                                 <div>{l.why}</div>
@@ -318,7 +318,7 @@ export function Results({
               </table>
             </div>
             {result.trades.length > TRADES_SHOWN && (
-              <button className="btn quiet" style={{ marginTop: 8 }} onClick={() => setAllTrades((v) => !v)}>
+              <button className="btn quiet mt-2" onClick={() => setAllTrades((v) => !v)}>
                 {allTrades ? "Show fewer trades" : `Show all ${result.trades.length} trades`}
               </button>
             )}

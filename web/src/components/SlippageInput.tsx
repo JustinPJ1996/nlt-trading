@@ -27,7 +27,7 @@ export function SlippageInput({
           ? "At most Rs 100."
           : null;
   return (
-    <label className="field" style={{ marginTop: 0 }}>
+    <label className="field mt-0">
       <span className="label">Slippage</span>
       <div className="choices" role="group" aria-label="Slippage kind">
         <button
@@ -47,7 +47,7 @@ export function SlippageInput({
           Rs per unit
         </button>
       </div>
-      <span className="money" style={{ marginTop: 8 }}>
+      <span className="money mt-2">
         <span aria-hidden="true">{value.kind === "pct" ? "%" : "Rs"}</span>
         <input
           type="text"

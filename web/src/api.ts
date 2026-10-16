@@ -35,7 +35,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   }
   if (!res.ok) {
     if (res.status === 401 && path !== "/api/login") onLoggedOut();
-    throw new ApiError(data?.error ?? `The app answered with an error (${res.status}).`, res.status);
+    throw new ApiError(data?.error ?? "Something went wrong on our side. Try again in a moment.", res.status);
   }
   return data as T;
 }

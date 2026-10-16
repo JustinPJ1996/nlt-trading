@@ -51,10 +51,12 @@ export function Readback({
   text,
   labels = null,
   compact = false,
+  testId = "readback",
 }: {
   text: string;
   labels?: (ReadbackLabel | null)[] | null;
   compact?: boolean;
+  testId?: string;
 }) {
   const { title, blocks } = splitReadback(text);
   const lineCount = blocks.reduce((n, b) => n + b.lines.length, 0);
@@ -62,7 +64,7 @@ export function Readback({
   const usable = labels && labels.length === lineCount ? labels : null;
   let index = 0;
   return (
-    <div className={`readback${compact ? " compact" : ""}`} data-testid="readback">
+    <div className={`readback${compact ? " compact" : ""}`} data-testid={testId}>
       <p className="readback-title">{title}</p>
       {blocks.map((b, i) => (
         <div className="readback-section" key={i}>

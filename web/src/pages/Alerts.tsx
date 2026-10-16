@@ -4,31 +4,9 @@
 // server (`/api/notifications`, `.../read`, `.../read-all`).
 
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type NotificationsState } from "../api";
+import { api, type NotificationsState } from "../api";
 import { ErrorLine, Working } from "../components/Callout";
-
-function message(err: unknown, fallback: string) {
-  return err instanceof ApiError ? err.message : fallback;
-}
-
-const TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  // Always Indian time, the same convention as every other time on screen.
-  timeZone: "Asia/Kolkata",
-});
-
-function when(iso: string): string {
-  if (!iso) return "";
-  try {
-    return TIME_FORMAT.format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
+import { message, when } from "../util";
 
 export function Alerts({ onChanged }: { onChanged?: () => void }) {
   const [state, setState] = useState<NotificationsState | null>(null);
@@ -84,7 +62,7 @@ export function Alerts({ onChanged }: { onChanged?: () => void }) {
       {state && (
         <>
           {state.items.length > 0 && (
-            <div className="btn-row" style={{ justifyContent: "flex-end", marginBottom: 16 }}>
+            <div className="row end mb-4">
               <button className="btn secondary small" onClick={markAllRead} disabled={state.unread_count === 0}>
                 Mark all as read
               </button>
@@ -93,24 +71,29 @@ export function Alerts({ onChanged }: { onChanged?: () => void }) {
           {state.items.length === 0 ? (
             <p className="muted">Nothing here yet.</p>
           ) : (
-            <ul className="log" style={{ maxHeight: "none" }}>
-              {state.items.map((n) => (
-                <li
-                  key={n.id}
-                  className={n.read ? undefined : "clickable"}
-                  onClick={n.read ? undefined : () => markRead(n.id)}
-                >
-                  <time>{when(n.when)}</time>
-                  <span>
-                    {!n.read && (
-                      <span className="tag" style={{ marginRight: 8 }}>
-                        unread
-                      </span>
+            <ul className="log tall">
+              {state.items.map((n) => {
+                const content = (
+                  <>
+                    <time>{when(n.when)}</time>
+                    <span>
+                      {!n.read && <span className="tag mr-2">unread</span>}
+                      <span className={n.read ? undefined : "emph"}>{n.text}</span>
+                    </span>
+                  </>
+                );
+                return (
+                  <li key={n.id} className={n.read ? undefined : "clickable"}>
+                    {n.read ? (
+                      content
+                    ) : (
+                      <button type="button" className="row-button" onClick={() => markRead(n.id)}>
+                        {content}
+                      </button>
                     )}
-                    <span style={{ fontWeight: n.read ? 400 : 650 }}>{n.text}</span>
-                  </span>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </>
