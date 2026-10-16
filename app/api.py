@@ -294,6 +294,8 @@ def _spec_payload(
         "allowed_timeframes": logic.allowed_timeframes(spec),
         # The settings screen: algo type, entry cut-off, square-off.
         "settings": logic.schedule_settings(spec),
+        # Boxes for the numbers inside the buy/sell rule (levels, lengths).
+        "rule_boxes": logic.rule_boxes(spec),
         # Why this strategy can only be paper traded (a strike the user named),
         # or None: the Build page then offers saving it instead of a backtest.
         "backtest_problem": logic.backtest_problem(spec),
@@ -1427,6 +1429,70 @@ async def notifications_read_all(request: Request) -> Response:
 # -------------------------------------------------------------------- safety
 
 
+_RUN_KIND_WORDS = {"backtest": "Backtest", "paper": "Paper trading", "live": "Live trading"}
+
+
+def _audit_words(event: str, detail: dict) -> tuple[str, str]:
+    """A Safety-page log entry in words: a title and one plain sentence.
+
+    The log keeps its raw details (the strategy's fingerprint, ids) for anyone
+    auditing the database; the screen says what happened. An event not listed
+    here still shows, in its own words, rather than disappearing.
+    """
+    reason = str(detail.get("reason") or "").strip()
+    because = f" Reason given: {reason}." if reason else ""
+    if event == "strategy_created":
+        return (
+            "Strategy saved",
+            f"Saved \u201c{detail.get('name', '')}\u201d, version {detail.get('version', '')}.",
+        )
+    if event == "state_changed":
+        state = _STATE_WORDS.get(str(detail.get("state")), str(detail.get("state", "")))
+        return "Strategy status changed", f"Now marked: {state}."
+    if event == "proving_gate_override":
+        allowed = bool(detail.get("allow_unproven"))
+        return (
+            "Proving rule changed",
+            (
+                "Allowed to trade before it is proven."
+                if allowed
+                else "Must be proven before trading again."
+            )
+            + because,
+        )
+    if event == "run_started":
+        kind = _RUN_KIND_WORDS.get(str(detail.get("mode")), str(detail.get("mode", "A")))
+        return "Run started", f"{kind} run started."
+    if event == "run_finished":
+        return "Run ended", f"Ended: {str(detail.get('status', '')).replace('_', ' ')}."
+    if event == "run_failed":
+        return "Run failed", str(
+            detail.get("error", "")
+        ).strip() or "The run stopped with an error."
+    if event in ("kill_switch_engaged", "kill_switch_released"):
+        on = event.endswith("engaged")
+        return (
+            f"Live kill switch turned {'on' if on else 'off'}",
+            ("Live trading is blocked." if on else "Live trading is allowed again.") + because,
+        )
+    if event in ("paper_kill_switch_engaged", "paper_kill_switch_released"):
+        on = event.endswith("engaged")
+        return (
+            f"Paper kill switch turned {'on' if on else 'off'}",
+            ("Paper trading is paused." if on else "Paper trading is running again.") + because,
+        )
+    if event == "paper_run_paused":
+        return "Paper run paused", "New signals are skipped until it is resumed." + because
+    if event == "paper_run_resumed":
+        return "Paper run resumed", "It is acting on signals again." + because
+    if event == "one_off_order_saved":
+        return "One-off order saved", "A one-off order was saved and is waiting."
+    if event == "one_off_order_cancelled":
+        return "One-off order cancelled", "A waiting one-off order was cancelled."
+    title = event.replace("_", " ").capitalize()
+    return title, "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in detail.items())
+
+
 def _safety(store: Store) -> dict:
     freshness = []
     for symbol in ("NIFTY", "BANKNIFTY"):
@@ -1451,14 +1517,8 @@ def _safety(store: Store) -> dict:
             )
     trail = []
     for row in store.audit_trail(limit=50):
-        detail = json.loads(row.get("detail_json") or "{}")
-        trail.append(
-            {
-                "when": logic.when(row["at"]),
-                "event": row["event"].replace("_", " "),
-                "detail": ", ".join(f"{k}: {v}" for k, v in detail.items()),
-            }
-        )
+        title, words = _audit_words(row["event"], json.loads(row.get("detail_json") or "{}"))
+        trail.append({"when": logic.when(row["at"]), "event": title, "detail": words})
     return {
         "live": store.kill_switch_engaged(),
         "paper": store.paper_kill_switch_engaged(),

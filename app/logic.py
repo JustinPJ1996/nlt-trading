@@ -2029,6 +2029,218 @@ def _schedule_updates(spec: StrategySpec, timeframe: str, edits: dict) -> dict:
     return out
 
 
+# ------------------------------------------------- boxes for the buy/sell rule
+#
+# "Fine-tune the numbers" can also change the numbers inside the rule itself
+# (Justin, 2026-10-16): the level an oscillator is compared with ("RSI below
+# 30") and the length of each indicator the rule uses (RSI 14, the 200 in a
+# 200-day average). Only numbers already in the rule can change -- the rule's
+# shape never does -- and each is held to the range its indicator can take.
+
+# Oscillators with a fixed scale, and the range a level on that scale can be.
+_LEVEL_RANGES: dict[str, tuple[float, float]] = {
+    "rsi": (0, 100),
+    "stochastic": (0, 100),
+    "stoch_rsi": (0, 100),
+    "mfi": (0, 100),
+    "adx": (0, 100),
+    "williams_r": (-100, 0),
+    "cci": (-400, 400),
+}
+# Indicators whose one "length" setting is offered as a box.
+_LENGTH_TYPES = {
+    "sma",
+    "ema",
+    "wma",
+    "hma",
+    "rsi",
+    "stochastic",
+    "mfi",
+    "adx",
+    "williams_r",
+    "cci",
+    "rolling_extremes",
+    "bollinger",
+    "supertrend",
+    "daily_average",
+    "roc",
+    "momentum",
+}
+_LENGTH_RANGE = (2, 500)
+# Where each condition lives, and the readback part its line belongs to.
+_RULE_ROOTS = (
+    ("entry", "entry", "When to buy"),
+    ("exit.condition", "exit.condition", "When to sell"),
+)
+
+
+def _walk_compares(node: dict | None, path: str):
+    """Every comparison in a condition, with a path naming where it sits."""
+    if not isinstance(node, dict):
+        return
+    if node.get("kind") == "compare":
+        yield path, node
+    for i, child in enumerate(node.get("conditions") or []):
+        yield from _walk_compares(child, f"{path}.{i}")
+
+
+def _node_at(root: dict, root_key: str, path: str) -> dict:
+    node = root
+    for part in path.removeprefix(root_key).split("."):
+        if part:
+            node = node["conditions"][int(part)]
+    return node
+
+
+def _rule_roots(spec_dict: dict) -> list[tuple[str, dict, str, str]]:
+    out = []
+    for key, part, group in _RULE_ROOTS:
+        node = spec_dict["entry"] if key == "entry" else (spec_dict["exit"] or {}).get("condition")
+        if node:
+            out.append((key, node, part, group))
+    return out
+
+
+def rule_boxes(spec: StrategySpec) -> list[dict]:
+    """The boxes for the numbers inside the buy and sell rules, each with the
+    value the strategy has now. Keys are what `adjust_spec` accepts."""
+    from nlt.indicators.registry import REGISTRY
+
+    d = spec.model_dump(mode="json")
+    by_id = {i["id"]: i for i in d["indicators"]}
+    boxes: list[dict] = []
+    used: list[str] = []
+    for root_key, root, _part, group in _rule_roots(d):
+        for path, cmp in _walk_compares(root, root_key):
+            sides = (cmp["left"], cmp["right"])
+            for side_name, side, other in (
+                ("right", sides[1], sides[0]),
+                ("left", sides[0], sides[1]),
+            ):
+                ref_id = other.get("name") if other.get("kind") == "ref" else None
+                if ref_id in by_id and side.get("kind") == "const":
+                    ind = by_id[ref_id]
+                    if ind["type"] in _LEVEL_RANGES:
+                        lo, hi = _LEVEL_RANGES[ind["type"]]
+                        boxes.append(
+                            {
+                                "key": f"level:{path}.{side_name}",
+                                "group": group,
+                                "label": f"{REGISTRY[ind['type']].label} level",
+                                "value": side["value"],
+                                "hint": f"Between {lo:g} and {hi:g}.",
+                            }
+                        )
+            for side in sides:
+                if (
+                    side.get("kind") == "ref"
+                    and side.get("name") in by_id
+                    and side["name"] not in used
+                ):
+                    used.append(side["name"])
+    for ind_id in used:
+        ind = by_id[ind_id]
+        if ind["type"] not in _LENGTH_TYPES:
+            continue
+        length = {**REGISTRY[ind["type"]].params, **ind["params"]}.get("length")
+        if not isinstance(length, (int, float)):
+            continue
+        same = [i for i in used if by_id[i]["type"] == ind["type"]]
+        label = f"{REGISTRY[ind['type']].label} length"
+        if len(same) > 1:
+            # Named by position, not by value: the value is what the box changes.
+            nth = ["first", "second", "third", "fourth"][min(same.index(ind_id), 3)]
+            label = f"{REGISTRY[ind['type']].label} length, {nth} in the rule"
+        boxes.append(
+            {
+                "key": f"length:{ind_id}",
+                "group": "Indicator settings",
+                "label": label,
+                "value": int(length),
+                "hint": f"Candles counted, {_LENGTH_RANGE[0]} to {_LENGTH_RANGE[1]}."
+                if ind["type"] != "daily_average"
+                else f"Days counted, {_LENGTH_RANGE[0]} to {_LENGTH_RANGE[1]}.",
+            }
+        )
+    return boxes
+
+
+def _number(raw, label: str) -> float:
+    text = str(raw if raw is not None else "").strip()
+    if not text:
+        raise AdjustError(f"The {label} cannot be empty.")
+    try:
+        return float(text)
+    except ValueError:
+        raise AdjustError(f"The {label} must be a number.") from None
+
+
+def _apply_rule_edits(spec: StrategySpec, edits: dict) -> tuple[dict, set[str], dict[str, str]]:
+    """The spec (as a dict) with the rule boxes applied; the readback parts they
+    touched; and the boxes as typed. Unknown keys are refused, not ignored."""
+    d = spec.model_dump(mode="json")
+    boxes = {b["key"]: b for b in rule_boxes(spec)}
+    by_id = {i["id"]: i for i in d["indicators"]}
+    parts: set[str] = set()
+    typed: dict[str, str] = {}
+    roots = {key: (node, part) for key, node, part, _g in _rule_roots(d)}
+    for key, raw in edits.items():
+        if not (key.startswith("level:") or key.startswith("length:")):
+            continue
+        box = boxes.get(key)
+        if box is None:
+            raise AdjustError("That box does not belong to this strategy. Check it again.")
+        label = box["label"]
+        value = _number(raw, label)
+        if key.startswith("level:"):
+            path, side = key.removeprefix("level:").rsplit(".", 1)
+            root_key = "exit.condition" if path.startswith("exit.condition") else "entry"
+            node, part = roots[root_key]
+            cmp = _node_at(node, root_key, path)
+            other = cmp["left" if side == "right" else "right"]
+            lo, hi = _LEVEL_RANGES[by_id[other["name"]]["type"]]
+            if not lo < value < hi:
+                raise AdjustError(f"The {label} must be between {lo:g} and {hi:g}.")
+            cmp[side]["value"] = value
+            parts.add(part)
+        else:
+            if value != int(value) or not _LENGTH_RANGE[0] <= value <= _LENGTH_RANGE[1]:
+                raise AdjustError(
+                    f"The {label} must be a whole number from {_LENGTH_RANGE[0]} to {_LENGTH_RANGE[1]}."
+                )
+            ind_id = key.removeprefix("length:")
+            by_id[ind_id]["params"]["length"] = int(value)
+            for root_key, (node, part) in roots.items():
+                if any(
+                    s.get("kind") == "ref" and s.get("name") == ind_id
+                    for _p, c in _walk_compares(node, root_key)
+                    for s in (c["left"], c["right"])
+                ):
+                    parts.add(part)
+        typed[f"form.{key}"] = str(raw).strip()
+    # Two sides of one comparison that are now the same indicator could never
+    # cross or differ: "20 SMA crosses above 20 SMA" would never trade.
+    for root_key, (node, _part) in roots.items():
+        for _p, c in _walk_compares(node, root_key):
+            a, b = c["left"], c["right"]
+            if (
+                a.get("kind") == b.get("kind") == "ref"
+                and a.get("name") in by_id
+                and b.get("name") in by_id
+            ):
+                ia, ib = by_id[a["name"]], by_id[b["name"]]
+                if (ia["type"], ia["params"], a.get("output")) == (
+                    ib["type"],
+                    ib["params"],
+                    b.get("output"),
+                ):
+                    raise AdjustError(
+                        "Both sides of the rule would now be the same line, so it could never "
+                        "trigger. Give them different lengths."
+                    )
+    return d, parts, typed
+
+
 def adjust_spec(
     spec: StrategySpec, edits: dict, sources: dict[str, str] | None
 ) -> tuple[StrategySpec, dict[str, str] | None, dict[str, str]]:
@@ -2044,8 +2256,8 @@ def adjust_spec(
     from nlt.translate.readback import SAID
     from nlt.translate.rules import _vwap_refusal
 
+    rule_dict, rule_parts, typed = _apply_rule_edits(spec, edits)
     exit_updates: dict = {}
-    typed: dict[str, str] = {}
     legs = list(spec.instrument.legs)
     new_legs = None
     if legs:
@@ -2121,9 +2333,9 @@ def adjust_spec(
     try:
         adjusted = StrategySpec.model_validate(
             {
-                **spec.model_dump(),
+                **rule_dict,
                 "instrument": instrument.model_dump(),
-                "exit": {**spec.exit.model_dump(), **exit_updates},
+                "exit": {**rule_dict["exit"], **exit_updates},
                 "schedule": {**spec.schedule.model_dump(), **schedule_updates},
             }
         )
@@ -2141,6 +2353,8 @@ def adjust_spec(
                     sources.pop(part, None)
                 else:
                     sources[part] = SAID
+        for part in rule_parts:
+            sources[part] = SAID
     return adjusted, sources, typed
 
 

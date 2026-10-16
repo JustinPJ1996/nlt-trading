@@ -292,6 +292,108 @@ def test_price_above_moving_average() -> None:
     assert spec.entry.left.name == "close"
 
 
+@pytest.mark.parametrize(
+    ("sentence", "op", "length", "kind"),
+    [
+        ("buy nifty when close crosses above 200 SMA, stop 1%", "crosses_above", 200, "sma"),
+        ("buy nifty when price crosses below the 50 EMA, stop 1%", "crosses_below", 50, "ema"),
+        (
+            "buy nifty when it crosses above the 200 day moving average, stop 1%",
+            "crosses_above",
+            200,
+            "sma",
+        ),
+        ("buy nifty when close goes above 20 ema, stop 1%", "crosses_above", 20, "ema"),
+    ],
+)
+def test_price_crossing_a_moving_average_is_a_crossing(sentence, op, length, kind) -> None:
+    """ "Crosses above the 200 SMA" is the moment it goes through -- read as
+    "is above" it would buy on every candle the price stays above, a very
+    different strategy. Until 2026-10-16 these were refused outright."""
+    result = parse(sentence)
+    assert result.spec is not None, result.questions
+    spec = result.spec
+    assert spec.entry.op == op
+    assert spec.entry.left.name == "close"
+    (ma,) = [i for i in spec.indicators if i.id == spec.entry.right.name]
+    assert (ma.type, ma.params["length"]) == (kind, length)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "buy nifty when rsi crosses above 50 sma, stop 1%",
+        "buy nifty when volume crosses above 20 sma, stop 1%",
+        "buy nifty when macd crosses above 200 sma, stop 1%",
+        "buy nifty when vix crosses above 20 sma, stop 1%",
+        # Another index as the signal is not this instrument's price.
+        "buy banknifty when nifty crosses above 200 sma, stop 1%",
+        "buy banknifty when nifty crosses below the lower bollinger band, stop 1%",
+    ],
+)
+def test_a_crossing_by_something_other_than_the_price_is_still_asked(sentence) -> None:
+    assert parse(sentence).spec is None
+
+
+@pytest.mark.parametrize(
+    ("sentence", "op", "band"),
+    [
+        (
+            "buy nifty when close crosses below the lower bollinger band, stop 1%",
+            "crosses_below",
+            "lower",
+        ),
+        ("buy nifty when price crosses above the lower band, stop 1%", "crosses_above", "lower"),
+        (
+            "sell nifty when price crosses above the upper bollinger band, stop 1%",
+            "crosses_above",
+            "upper",
+        ),
+    ],
+)
+def test_crossing_a_bollinger_band(sentence, op, band) -> None:
+    spec = _spec_of(sentence)
+    assert spec.entry.op == op
+    assert spec.entry.left.name == "close"
+    assert spec.entry.right.output == band
+
+
+@pytest.mark.parametrize(
+    ("sentence", "op"),
+    [
+        ("buy nifty when supertrend turns to an uptrend, stop 1%", "crosses_above"),
+        ("buy nifty when supertrend turns up, stop 1%", "crosses_above"),
+        ("buy nifty when supertrend flips to uptrend, stop 1%", "crosses_above"),
+        ("sell nifty when supertrend turns to a downtrend, stop 1%", "crosses_below"),
+    ],
+)
+def test_supertrend_trend_words(sentence, op) -> None:
+    spec = _spec_of(sentence)
+    assert spec.entry.op == op
+    assert spec.entry.left.output == "direction"
+
+
+@pytest.mark.parametrize(
+    ("sentence", "length", "mult"),
+    [
+        ("buy nifty when supertrend(7, 2) turns green, stop 1%", 7, 2.0),
+        ("buy nifty when supertrend (7,2.5) turns to an uptrend, stop 1%", 7, 2.5),
+        ("buy nifty when supertrend(10, 3) turns green, stop 1%", 10, 3.0),
+        ("buy nifty when supertrend turns green, stop 1%", 10, 3.0),
+    ],
+)
+def test_supertrend_settings_said_are_the_settings_tested(sentence, length, mult) -> None:
+    """Supertrend(7, 2) must be tested as 7 and 2 -- never quietly the standard
+    (10, 3) -- and the readback must say so."""
+    from nlt.indicators.registry import REGISTRY
+
+    spec = _spec_of(sentence)
+    (st,) = [i for i in spec.indicators if i.id == spec.entry.left.name]
+    params = {**REGISTRY["supertrend"].params, **st.params}
+    assert (params["length"], float(params["mult"])) == (length, mult)
+    assert f"Supertrend({length}, {mult})" in describe(spec)
+
+
 def test_close_below_ema() -> None:
     spec = _spec_of("sell nifty when close below the 50 EMA, stop 1%, target 2%")
     assert spec.entry.op == "lt"
