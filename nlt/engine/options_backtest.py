@@ -115,6 +115,10 @@ class _OptionPosition:
     pending_condition_exit: bool = False
 
 
+def _trades_words(n: int | None) -> str:
+    return "one trade" if n == 1 else f"{n} trades"
+
+
 @dataclass
 class _Counts:
     not_traded: int = 0
@@ -123,6 +127,7 @@ class _Counts:
     capital: int = 0
     concurrency: int = 0
     boundary: int = 0
+    daily_limit: int = 0
     expiry_entry: int = 0
     expiry_exit: int = 0
     untraded_exit: int = 0
@@ -286,6 +291,9 @@ def run_option_backtest(
             )
         )
 
+    daily_limit = spec.schedule.max_entries_per_day
+    entries_by_day: dict = {}
+
     for i in range(n):
         ts = bars.index[i]
 
@@ -300,6 +308,11 @@ def run_option_backtest(
                 counts.concurrency += 1
                 decisions.append(
                     Decision(signal_ts, contract.tradingsymbol, "signal_skipped", "concurrency", {})
+                )
+            elif daily_limit is not None and entries_by_day.get(ts.date(), 0) >= daily_limit:
+                counts.daily_limit += 1
+                decisions.append(
+                    Decision(signal_ts, contract.tradingsymbol, "signal_skipped", "daily_limit", {})
                 )
             elif option_bar is None or not bool(option_bar["traded"]):
                 counts.not_traded += 1
@@ -356,6 +369,7 @@ def run_option_backtest(
                     )
                 else:
                     open_positions.append(pos)
+                    entries_by_day[ts.date()] = entries_by_day.get(ts.date(), 0) + 1
                     counts.risk_fallback += int(used_fallback)
                     counts.capped += int(capped)
 
@@ -407,6 +421,9 @@ def run_option_backtest(
                 skip = "paused"
             elif past_entry_cutoff(spec, ts, timeframe):
                 skip = "no_entry_after"
+            elif daily_limit is not None and entries_by_day.get(ts.date(), 0) >= daily_limit:
+                counts.daily_limit += 1
+                skip = "daily_limit"
             elif is_intraday_spec and bool(last_bar_of_session[i]):
                 counts.boundary += 1
                 skip = "boundary"
@@ -870,6 +887,11 @@ def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec) ->
         out.append(
             f"{counts.concurrency} signal(s) skipped: the most positions allowed at once were "
             "already open."
+        )
+    if counts.daily_limit:
+        out.append(
+            f"{counts.daily_limit} signal(s) skipped: this strategy opens at most "
+            f"{_trades_words(spec.schedule.max_entries_per_day)} a day."
         )
     if counts.boundary:
         out.append(

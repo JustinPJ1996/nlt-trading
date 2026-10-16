@@ -352,6 +352,9 @@ class Schedule(Base):
     # None -- every strategy saved before the box existed -- means what it
     # always did: the cut-off applies to an intraday strategy only.
     entry_cutoff: bool | None = None
+    # "Once a day" (Justin, 2026-10-16): at most this many trades open per
+    # session; a signal after that is skipped and said. None = no limit.
+    max_entries_per_day: int | None = Field(default=None, ge=1, le=20)
 
     @property
     def cutoff_applies(self) -> bool:

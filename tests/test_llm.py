@@ -47,6 +47,18 @@ GOOD = {
 }
 
 
+# The same strategy with lengths in candles: on hourly bars "9-day EMA" is a
+# question (a day is not a candle), so the hourly tests say "9 EMA".
+SENTENCE_IN_CANDLES = SENTENCE.replace("-day", "")
+GOOD_IN_CANDLES = {
+    **GOOD,
+    "evidence": [
+        {**e, "quote": e["quote"].replace("-day", "")} if e["field"] == "entry" else e
+        for e in GOOD["evidence"]
+    ],
+}
+
+
 class Scripted:
     """A fake model: returns `reply` and records every call."""
 
@@ -524,8 +536,8 @@ def test_every_ai_recipe_among_the_70_states_a_stop_the_user_gave() -> None:
 
 
 def test_ai_path_hold_overnight_on_hourly_bars() -> None:
-    text = SENTENCE + ", on hourly bars, hold overnight. Backtest the last 2 years."
-    result = llm.parse_llm(text, transport=Scripted(GOOD))
+    text = SENTENCE_IN_CANDLES + ", on hourly bars, hold overnight. Backtest the last 2 years."
+    result = llm.parse_llm(text, transport=Scripted(GOOD_IN_CANDLES))
     assert result.spec is not None, result.questions
     assert result.spec.instrument.timeframe == "1h"
     assert result.spec.schedule.intraday is False
@@ -552,11 +564,27 @@ def test_ai_path_stop_question_has_buttons() -> None:
 
 @pytest.mark.parametrize(("pick", "intraday"), [("overnight", False), ("square_off", True)])
 def test_ai_path_overnight_question_takes_a_button(pick, intraday) -> None:
-    text = SENTENCE + ", on hourly bars, hold overnight, square off at 15:15"
+    text = SENTENCE_IN_CANDLES + ", on hourly bars, hold overnight, square off at 15:15"
     reply = _variant(
         square_off="15:15",
-        evidence=[*GOOD["evidence"], {"field": "square_off", "quote": "square off at 15:15"}],
+        evidence=[
+            *GOOD_IN_CANDLES["evidence"],
+            {"field": "square_off", "quote": "square off at 15:15"},
+        ],
     )
     result = llm.parse_llm(text, answers={"schedule.intraday": pick}, transport=Scripted(reply))
     assert result.spec is not None, result.questions
     assert result.spec.schedule.intraday is intraday
+
+
+def test_ai_path_a_day_length_average_on_hourly_bars_is_asked() -> None:
+    """The model reads "9-day EMA" as length 9; on hourly bars that is nine
+    hours, not nine days -- asked, as on the rules path."""
+    result = llm.parse_llm(SENTENCE + ", on hourly bars, hold overnight", transport=Scripted(GOOD))
+    assert result.spec is None
+    assert "is not the same as" in result.questions[0].text
+
+
+def test_ai_path_a_day_length_average_on_daily_bars_reads() -> None:
+    result = llm.parse_llm(SENTENCE, transport=Scripted(GOOD))
+    assert result.spec is not None, result.questions

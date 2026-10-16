@@ -48,7 +48,11 @@ _EXPECTED_RULES_SPECS: list[int] = [19, 20, 34, 35, 40]
 # checked by hand against its sentence.
 # The leg positions above come from the rules, so the AI path returns them too
 # (the model is never asked about a leg position).
-_EXPECTED_AI_SPECS = [19, 20, 22, 23, 29, 30, 31, 34, 35, 36, 38, 39, 40, 41, 42]
+# 36 left (2026-10-16): "buy when a candle closes above the first-15-minute
+# high" now asks "Once a day" or "Every time it crosses" first -- it had been
+# read as "whenever the price is above", buying again straight after a stop.
+# `test_36_asks_how_often_then_reads_each_answer` covers both answers.
+_EXPECTED_AI_SPECS = [19, 20, 22, 23, 29, 30, 31, 34, 35, 38, 39, 40, 41, 42]
 
 
 def _facts(spec) -> dict:
@@ -180,3 +184,24 @@ def test_ai_path_labels_for_a_template() -> None:
     assert labels["Hold overnight: no square-off before the close"] == SAID
     entry = next(line for line in labels if line.startswith("When "))
     assert labels[entry] == WORKED_OUT
+
+
+@pytest.mark.parametrize(("pick", "limit"), [("once", 1), ("every", None)])
+def test_36_asks_how_often_then_reads_each_answer(pick, limit) -> None:
+    from nlt.spec.models import Compare
+
+    replies = json.loads(_REPLIES_PATH.read_text())["replies"]
+    case = next(c for c in TEMPLATES if c["n"] == 36)
+    asked = llm.translate(case["text"], transport=lambda _s, u: replies[u])
+    assert [q.field for q in asked.questions] == ["schedule.daily_limit"]
+    assert [c.value for c in asked.questions[0].choices] == ["once", "every"]
+
+    answered = llm.translate(
+        case["text"], answers={"schedule.daily_limit": pick}, transport=lambda _s, u: replies[u]
+    )
+    assert answered.spec is not None, answered.questions
+    assert _wrong(case, answered) is None
+    assert answered.spec.schedule.max_entries_per_day == limit
+    entry = answered.spec.entry
+    assert isinstance(entry, Compare) and entry.op == "crosses_above"
+    assert entry.left.name == "close" and entry.right.output == "high"

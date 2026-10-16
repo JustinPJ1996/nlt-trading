@@ -52,6 +52,7 @@ from nlt.indicators.patterns import PATTERNS
 from nlt.indicators.registry import REGISTRY
 from nlt.spec.models import (
     INDICES,
+    PRICE_FIELDS,
     All,
     Any_,
     Compare,
@@ -120,6 +121,13 @@ OVERNIGHT_CHOICES = [
     Choice("Square off the same day", "square_off"),
 ]
 
+# "Buy when a candle closes above the first-15-minute high": once that day, or
+# every time it crosses? Asked, never assumed (Justin, 2026-10-16).
+REPEAT_CHOICES = [
+    Choice("Once a day", "once"),
+    Choice("Every time it crosses", "every"),
+]
+
 
 @dataclass
 class TranslationResult:
@@ -143,10 +151,15 @@ class _Indicators:
     by_key: dict[tuple[str, tuple], str] = field(default_factory=dict)
     order: list[str] = field(default_factory=list)
     specs: dict[str, dict] = field(default_factory=dict)
+    # Averages whose length the user gave in days ("50-day SMA", "50 DMA").
+    # On intraday candles that is not 50 candles -- see `_days_on_intraday`.
+    in_days: set[str] = field(default_factory=set)
 
-    def declare(self, ind_id: str, ind_type: str, params: dict) -> str:
+    def declare(self, ind_id: str, ind_type: str, params: dict, *, in_days: bool = False) -> str:
         key = (ind_type, tuple(sorted(params.items())))
         if key in self.by_key:
+            if in_days:
+                self.in_days.add(self.by_key[key])
             return self.by_key[key]
         # id collision with a different indicator -- disambiguate deterministically.
         candidate = ind_id
@@ -157,10 +170,15 @@ class _Indicators:
         self.by_key[key] = candidate
         self.order.append(candidate)
         self.specs[candidate] = {"type": ind_type, "params": params}
+        if in_days:
+            self.in_days.add(candidate)
         return candidate
 
     def as_list(self) -> list[dict]:
-        return [{"id": i, **self.specs[i]} for i in self.order]
+        return [
+            {"id": i, **self.specs[i], **({"in_days": True} if i in self.in_days else {})}
+            for i in self.order
+        ]
 
 
 # Filler words stripped out before deciding what counts as "unparsed" input.
@@ -619,19 +637,27 @@ def _build_rsi_cross(op: str):
     return build
 
 
-def _ma_ref(ind: _Indicators, kind: str, length: int) -> Ref:
+def _ma_ref(ind: _Indicators, kind: str, length: int, *, in_days: bool = False) -> Ref:
     normalized = _MA_TYPE_WORD.get(kind.lower().strip(), "sma")
     ind_id, n = _len_suffix(normalized, length, 20)
-    ind.declare(ind_id, normalized, {"length": n})
-    return Ref(name=ind_id)
+    real_id = ind.declare(ind_id, normalized, {"length": n}, in_days=in_days)
+    return Ref(name=real_id)
+
+
+def _said_in_days(m: re.Match, length_group: str, type_group: str) -> bool:
+    """ "50-day SMA" / "50 day ema" / "50 DMA": the length was given in days."""
+    if (m.group(type_group) or "").lower().strip() == "dma":
+        return True
+    end = m.start(type_group) if m.group(type_group) else m.end()
+    return "day" in m.string[m.end(length_group) : end]
 
 
 def _build_ma_cross(op: str):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         t1 = m.group("t1") or "ma"
         t2 = m.group("t2") or t1
-        left = _ma_ref(ind, t1, int(m.group("len1")))
-        right = _ma_ref(ind, t2, int(m.group("len2")))
+        left = _ma_ref(ind, t1, int(m.group("len1")), in_days=_said_in_days(m, "len1", "t1"))
+        right = _ma_ref(ind, t2, int(m.group("len2")), in_days=_said_in_days(m, "len2", "t2"))
         return Compare(op=op, left=left, right=right)
 
     return build
@@ -639,7 +665,7 @@ def _build_ma_cross(op: str):
 
 def _build_price_vs_ma(op: str):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
-        ref = _ma_ref(ind, m.group("t"), int(m.group("len")))
+        ref = _ma_ref(ind, m.group("t"), int(m.group("len")), in_days=_said_in_days(m, "len", "t"))
         return Compare(op=op, left=Ref(name="close"), right=ref)
 
     return build
@@ -1163,9 +1189,9 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "ma_crosses_above",
         re.compile(
-            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*"
+            r"(?P<len1>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*"
             r"crosses(?:\s*above)?\s*(?:the\s*)?"
-            r"(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
+            r"(?P<len2>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
         ),
         _build_ma_cross("crosses_above"),
         "20 MA crosses above 50 MA",
@@ -1173,9 +1199,9 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "ma_crosses_below",
         re.compile(
-            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*"
+            r"(?P<len1>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*"
             r"crosses below\s*(?:the\s*)?"
-            r"(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
+            r"(?P<len2>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
         ),
         _build_ma_cross("crosses_below"),
         "20 MA crosses below 50 MA",
@@ -1183,8 +1209,8 @@ CONDITION_PATTERNS: list[PatternRule] = [
     PatternRule(
         "ma_above",
         re.compile(
-            r"(?P<len1>\d{1,3})\s*(?:day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*above\s*"
-            r"(?:the\s*)?(?P<len2>\d{1,3})\s*(?:day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
+            r"(?P<len1>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t1>ema|sma|wma|hma|dma|ma|moving average)\s*above\s*"
+            r"(?:the\s*)?(?P<len2>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t2>ema|sma|wma|hma|dma|ma|moving average)?"
         ),
         _build_ma_cross("gt"),
         "20 EMA above 200 EMA",
@@ -1197,7 +1223,7 @@ CONDITION_PATTERNS: list[PatternRule] = [
             # resolved (the universe or a bare ticker), "above the N-day
             # average" can only sensibly mean each stock's own price.
             r"(?:(?:price|close)\s*(?:is\s*)?)?above\s*(?:the\s*)?"
-            r"(?P<len>\d{1,3})\s*(?:day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
+            r"(?P<len>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
         ),
         _build_price_vs_ma("gt"),
         "price above the 200 day moving average",
@@ -1206,7 +1232,7 @@ CONDITION_PATTERNS: list[PatternRule] = [
         "price_below_ma",
         re.compile(
             r"(?:(?:price|close)\s*(?:is\s*)?)?below\s*(?:the\s*)?"
-            r"(?P<len>\d{1,3})\s*(?:day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
+            r"(?P<len>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
         ),
         _build_price_vs_ma("lt"),
         "close below the 50 EMA",
@@ -2024,6 +2050,92 @@ def _overnight_conflict_question() -> Question:
     )
 
 
+def _range_repeat_question() -> Question:
+    return Question(
+        text=(
+            "After it trades on a break of the opening range, should it trade only once that "
+            "day, or again every time the price crosses the level?"
+        ),
+        why=(
+            "After a stop loss the price is often still beyond the level. Read one way it "
+            "trades again at once; read the other it waits for tomorrow. The results differ a "
+            "lot, so we ask rather than pick."
+        ),
+        suggestion=None,
+        field="schedule.daily_limit",
+        choices=REPEAT_CHOICES,
+    )
+
+
+def _range_ids(indicators) -> set[str]:
+    """Ids of opening-range indicators, from spec objects or the reader's dicts."""
+    out = set()
+    for i in indicators:
+        kind, ind_id = (i["type"], i["id"]) if isinstance(i, dict) else (i.type, i.id)
+        if kind == "opening_range":
+            out.add(ind_id)
+    return out
+
+
+_STATE_TO_CROSS = {
+    "gt": "crosses_above",
+    "gte": "crosses_above",
+    "lt": "crosses_below",
+    "lte": "crosses_below",
+}
+_FLIP = {
+    "gt": "lt",
+    "gte": "lte",
+    "lt": "gt",
+    "lte": "gte",
+    "crosses_above": "crosses_below",
+    "crosses_below": "crosses_above",
+}
+
+
+def _range_compare(c, range_ids: set[str]) -> bool:
+    return isinstance(c, Compare) and any(
+        isinstance(side, Ref) and side.name in range_ids for side in (c.left, c.right)
+    )
+
+
+def _as_crossing(cond: Condition, range_ids: set[str]) -> Condition:
+    """Price against the opening range, said as a state ("closes above the
+    high"), turned into the crossing the user has just confirmed by answering
+    the question. The range is put on the right: "the range high is below the
+    close" is "the close crosses above the range high"."""
+    if isinstance(cond, (All, Any_)):
+        return cond.model_copy(
+            update={"conditions": [_as_crossing(c, range_ids) for c in cond.conditions]}
+        )
+    if not _range_compare(cond, range_ids):
+        return cond
+    left, right, op = cond.left, cond.right, cond.op
+    if isinstance(left, Ref) and left.name in range_ids:
+        left, right, op = right, left, _FLIP.get(op, op)
+    if not (isinstance(left, Ref) and left.name in PRICE_FIELDS and not right.bars_ago):
+        return cond
+    return Compare(op=_STATE_TO_CROSS.get(op, op), left=left, right=right)
+
+
+def range_repeat(
+    entry: Condition | None, indicators, answers: dict[str, str]
+) -> tuple[Condition | None, int | None, Question | None, bool]:
+    """(entry, max_entries_per_day, question, answered) for an entry on the
+    opening range. Anything else passes through untouched, unasked."""
+    range_ids = _range_ids(indicators)
+    if entry is None or not range_ids:
+        return entry, None, None, False
+    from nlt.translate.readback import _conditions_in
+
+    if not any(_range_compare(c, range_ids) for c in _conditions_in(entry)):
+        return entry, None, None, False
+    pick = answers.get("schedule.daily_limit", "").strip()
+    if pick not in {c.value for c in REPEAT_CHOICES}:
+        return entry, None, _range_repeat_question(), False
+    return _as_crossing(entry, range_ids), (1 if pick == "once" else None), None, True
+
+
 def overnight_answer(answers: dict[str, str]) -> str | None:
     """The user's pick on the overnight-or-square-off question, if they made one."""
     value = answers.get("schedule.intraday", "").strip()
@@ -2100,6 +2212,7 @@ def _indicator_dicts_to_specs(dicts: list[dict]):
 
 def _merge_indicators(*groups: list[dict]) -> list[dict]:
     merged: dict[str, dict] = {}
+    days: set[str] = set()
     for group in groups:
         for d in group:
             if d["id"] in merged and merged[d["id"]] != {"type": d["type"], "params": d["params"]}:
@@ -2108,7 +2221,9 @@ def _merge_indicators(*groups: list[dict]) -> list[dict]:
                 # spec validation catch anything that actually conflicts.
                 continue
             merged[d["id"]] = {"type": d["type"], "params": d["params"]}
-    return [{"id": k, **v} for k, v in merged.items()]
+            if d.get("in_days"):
+                days.add(d["id"])
+    return [{"id": k, **v, **({"in_days": True} if k in days else {})} for k, v in merged.items()]
 
 
 # ------------------------------------------------------------------------- vwap
@@ -2165,6 +2280,21 @@ def _intraday_only_refusal(indicators: list[dict], instrument_kwargs: dict) -> Q
             else:
                 continue
             return Question(text=text, why=why, suggestion=None, field="instrument.timeframe")
+        if d.get("in_days") and timeframe != "1d":
+            from nlt.translate.readback import _TIMEFRAME_WORDS
+
+            n = int(d["params"].get("length", 0))
+            return Question(
+                text=(
+                    f"On {_TIMEFRAME_WORDS.get(timeframe, timeframe)} candles, a {n}-day average is not the "
+                    f"same as {n} candles. Say 'the {n} SMA' for an average of the last {n} "
+                    f"candles, or 'the daily close is above the {n}-day SMA' to compare the "
+                    f"previous day's close with its {n}-day average."
+                ),
+                why=why,
+                suggestion=None,
+                field="instrument.timeframe",
+            )
         if d["type"] == "daily_average" and timeframe == "1d":
             return Question(
                 text=(
@@ -2537,6 +2667,12 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             )
         )
 
+    entry_condition, daily_limit, repeat_question, repeat_said = range_repeat(
+        entry_condition, all_indicators, answers
+    )
+    if repeat_question is not None:
+        questions.append(repeat_question)
+
     if questions or entry_condition is None:
         return TranslationResult(
             spec=None, questions=questions, notes=notes, unparsed=unparsed, source="rules"
@@ -2563,6 +2699,8 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         rest_exits.get("_intraday"),
         overnight=overnight,
     )
+    if daily_limit is not None:
+        schedule_kwargs["max_entries_per_day"] = daily_limit
 
     name = _name_from(original)
 
@@ -2604,6 +2742,10 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         ),
         premium_said=premium_said,
     )
+    if repeat_said:
+        from nlt.translate.readback import SAID
+
+        sources["schedule.daily_limit"] = SAID
     return TranslationResult(
         spec=spec,
         questions=[],
@@ -2870,9 +3012,17 @@ def _parse_legs(
                 )
             )
 
+    entry_condition, daily_limit, repeat_question, repeat_said = range_repeat(
+        entry_condition, all_indicators, answers
+    )
+    if repeat_question is not None:
+        return ask(repeat_question)
+
     schedule_kwargs = _schedule_kwargs(instrument_kwargs, square_off, same_day, overnight=holds)
     if timing.weekdays:
         schedule_kwargs["weekdays"] = timing.weekdays
+    if daily_limit is not None:
+        schedule_kwargs["max_entries_per_day"] = daily_limit
 
     conditions = [*timing.conditions, *([entry_condition] if entry_condition is not None else [])]
     entry = conditions[0] if len(conditions) == 1 else All(conditions=conditions)
@@ -2924,6 +3074,8 @@ def _parse_legs(
         sources["exit.combined_target"] = sources["exit.target"]
     if position.reentry_said:
         sources["legs.reentry"] = SAID
+    if repeat_said:
+        sources["schedule.daily_limit"] = SAID
     return TranslationResult(
         spec=spec, questions=[], notes=notes, source="rules", period=period, sources=sources
     )

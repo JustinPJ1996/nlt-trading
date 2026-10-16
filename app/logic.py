@@ -1495,6 +1495,7 @@ _SKIP_REASON_WORDS = {
     ),
     "weekday": "it fired on a day of the week this strategy is not allowed to trade on",
     "no_entry_after": "it fired after the time of day this strategy stops opening new trades",
+    "daily_limit": "this strategy had already opened as many trades as it may in one day",
     "paused": "the strategy was paused for this stretch of time",
     "slots": ("the basket's maximum number of positions open at once was already reached"),
 }
@@ -1721,6 +1722,10 @@ def activity_feed(store: Store) -> list[dict]:
 
 
 TRADE_CSV_COLUMNS = [
+    "position",
+    "row_type",
+    "leg",
+    "side",
     "symbol",
     "direction",
     "entered",
@@ -1732,6 +1737,12 @@ TRADE_CSV_COLUMNS = [
     "profit_before_charges",
     "charges",
     "profit_after_charges",
+    # Leg rows only. A leg row leaves the three "profit"/"charges" columns above
+    # blank, so adding those columns up still gives the run's total once.
+    "re_entry",
+    "leg_profit_before_charges",
+    "leg_charges",
+    "leg_profit_after_charges",
 ]
 
 
@@ -1739,8 +1750,11 @@ def trades_csv(result: PipelineResult) -> str:
     """Every trade of a run as CSV, for a spreadsheet (competitor review C4).
 
     Plain numbers (no "Rs", no commas) so a spreadsheet can add them up; the
-    columns are the same trades the results screen lists, and the last column
-    adds up to the run's profit after charges.
+    columns are the same trades the results screen lists, and the
+    `profit_after_charges` column adds up to the run's profit after charges.
+    A multi-leg position is its own row followed by one row per option bought
+    or sold inside it; the leg rows carry their own `leg_*` figures and leave
+    the position-level money columns blank so nothing is counted twice.
     """
     import csv
     import io
@@ -1751,9 +1765,13 @@ def trades_csv(result: PipelineResult) -> str:
     spec = result.backtest.spec
     # A daily candle has no time of day; printing 00:00 would suggest one.
     when = "%Y-%m-%d" if spec.instrument.timeframe == "1d" else "%Y-%m-%d %H:%M"
-    for t in result.backtest.trades:
+    for n, t in enumerate(result.backtest.trades, start=1):
         writer.writerow(
             [
+                n,
+                "position",
+                "",
+                "",
                 t.symbol or spec.instrument.symbol,
                 "buy" if t.direction == "long" else "short",
                 t.entry_time.strftime(when),
@@ -1765,8 +1783,36 @@ def trades_csv(result: PipelineResult) -> str:
                 round(float(t.gross_pnl), 2),
                 round(float(t.charges), 2),
                 round(float(t.net_pnl), 2),
+                "",
+                "",
+                "",
+                "",
             ]
         )
+        for f in t.legs:
+            writer.writerow(
+                [
+                    n,
+                    "leg",
+                    f.label,
+                    f.side,
+                    f.symbol,
+                    "",  # the position's direction does not apply to one leg
+                    f.entry_time.strftime(when),
+                    round(float(f.entry_price), 2),
+                    f.exit_time.strftime(when),
+                    round(float(f.exit_price), 2),
+                    int(f.quantity),
+                    _EXIT_WORDS.get(f.exit_reason, f.exit_reason),
+                    "",
+                    "",
+                    "",
+                    f"re-entry {f.reentry}" if f.reentry else "",
+                    round(float(f.gross_pnl), 2),
+                    round(float(f.charges), 2),
+                    round(float(f.net_pnl), 2),
+                ]
+            )
     return buf.getvalue()
 
 
@@ -2070,17 +2116,38 @@ def adjust_spec(
 # their own tested numbers. Each must read with no questions and take trades at
 # the default capital (tests/test_library.py). Tapping one puts its sentence in
 # the box, where it can be changed like anything the user typed.
+# Chosen 2026-10-16 by trade count, never by result (Justin: "swap in more
+# active strategies"). Sixteen plain strategies were run to 25 Sep 2026; these
+# are every one with 40 or more trades -- the first six cards all showed
+# "Serious warning signs", five of them for too few trades (12-22). Four of
+# these lose money and say so: picking only winners would make the library a
+# brochure. Candidates and their counts are in the 2026-10-16 HANDOFF entry.
 LIBRARY: list[dict[str, str]] = [
-    {"title": "NIFTY oversold bounce", "sentence": EXAMPLE_STRATEGIES[0]},
-    {"title": "NIFTY moving-average crossover", "sentence": EXAMPLE_STRATEGIES[1]},
-    {"title": "RELIANCE oversold bounce", "sentence": EXAMPLE_STRATEGIES[2]},
-    {"title": "INFY EMA crossover", "sentence": EXAMPLE_STRATEGIES[3]},
+    {
+        "title": "NIFTY 2-day RSI dip",
+        "sentence": "Buy NIFTY when RSI(2) crosses below 10. Target 2%, stop loss 2%. "
+        "Backtest the last 5 years.",
+    },
+    {
+        "title": "NIFTY stochastic crossover",
+        "sentence": "Buy NIFTY when stochastic %K crosses above %D. Target 2%, stop loss 1%. "
+        "Backtest the last 5 years.",
+    },
+    {
+        "title": "ICICIBANK MACD crossover",
+        "sentence": "Buy ICICIBANK when MACD crosses above signal. Target 5%, stop loss 2%. "
+        "Backtest the last 5 years.",
+    },
+    {
+        "title": "SBIN MACD crossover",
+        "sentence": "Buy SBIN when MACD crosses above signal. Target 5%, stop loss 2%. "
+        "Backtest the last 5 years.",
+    },
     {"title": "TCS trend follower", "sentence": EXAMPLE_STRATEGIES[4]},
     {
-        "title": "MARUTI 20-day breakout",
-        "sentence": "Buy MARUTI when the close is above the highest high of the last 20 days. "
-        "Sell when the close falls below the lowest low of the last 10 days. Stop loss 3%. "
-        "Backtest the last 5 years.",
+        "title": "Oversold NIFTY 50 stocks",
+        "sentence": "Buy NIFTY 50 stocks when RSI(14) crosses below 30. Target 5%, stop loss 2%. "
+        "Backtest the last 3 years.",
     },
 ]
 

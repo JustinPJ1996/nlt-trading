@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,801 tests passing (2026-10-15, Phase 2 batch 3)
+- **State:** 1,891 tests passing (2026-10-16, leftovers batch A)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -257,14 +257,10 @@ were tightened, and two no-op code paths found that way were removed.
   futures" for a share strategy); daily CSV rows carry no made-up 00:00.
 
 Open after the second batch, for Justin:
-- **Every library card currently shows "Serious warning signs"** -- mostly too few
-  trades over 3-5 years. Honest, but it is what a newcomer sees first; longer
-  test periods or more active strategies would change it.
+- ~~Every library card shows "Serious warning signs"~~ -- swapped 2026-10-16 (see Leftovers).
 - A **stop at a price level** ("stop at the low of the opening range") would let
   Tradl's opening-range breakout run.
-- Wording still clunky in places: "MACD(12, 26, 9) macd crosses above ... signal
-  line"; the rules reader does not read "50-day SMA" on daily charts ("50 sma"
-  and "50 dma" work).
+- ~~Wording around MACD; "50-day SMA" not read~~ -- fixed 2026-10-16 (see Leftovers).
 
 **Where we are already ahead -- keep it that way.** Tradl's own backtest of
 "Buy RELIANCE at RSI 30, 5% stop, 10% target" bought **1 share** of a Rs 1,00,000
@@ -330,9 +326,7 @@ What exists:
   every figure checked against the raw 1-minute rows.
 
 Open after batch 1, for Justin:
-- Tradl #36 "buy when a candle closes above the first-15-minute high" is read by
-  the AI as a *state* ("whenever the price is above"), not a one-off breakout:
-  after a stop it can buy again at once. The readback says so honestly.
+- ~~Tradl #36 read as a state~~ -- asks "Once a day / Every time it crosses" since 2026-10-16.
 - The old Streamlit dashboard has no Slippage box; the one-off order form shows
   it even for alerts, where it does nothing.
 - A year of 15-minute signals takes about a minute to run.
@@ -413,7 +407,7 @@ Open after batch 2, for Justin:
   against older weekly IV; 1-day-to-expiry IV is jumpy; a day without IV
   blocks the next day.
 - Stop question buttons for a sold option are 20/30/50%.
-- The CSV export is one row per position, without the legs.
+- ~~The CSV export is one row per position~~ -- leg rows since 2026-10-16.
 - Some vendor 1-minute prices are not on the 5-paise tick (e.g. 40.54); used as
   they are.
 - Bought straddles/strangles, debit/calendar/ratio spreads, fixed strikes and
@@ -541,6 +535,45 @@ What changed:
 - Known answers re-checked against the raw rows for the minute's close: the
   BANKNIFTY call of 1 Jan 2025 squares off at 1,087.75 (15:15) and 1,109.70
   (15:25); the 2 Jan 2025 straddle's put at 0.15 (net 5,694.10).
+
+### Leftovers from finished phases — **batch A BUILT 2026-10-16**
+
+Plan: `~/.claude/plans/can-we-fix-these-binary-widget.md`. Three batches
+(`leftovers-a/b/c`). Justin's decisions, each offered as a trade-off: library --
+swap in more active strategies, keep the general tag; breakout -- **ask the
+user**; fixed strike -- **paper only**; BANKNIFTY IV -- **monthly throughout**.
+
+**Batch A** (branch `leftovers-a`). Every rule broken on purpose; each break
+failed a test (one survived at first -- the signal-time daily check hidden by
+the fill-time one -- and the test was tightened to catch it).
+- **Readback wording.** No raw output names: "MACD(12, 26, 9) line crosses
+  above its signal line", "the previous day's high", "Supertrend(10, 3.0) turns
+  to an uptrend", pivots/CPR/Fibonacci/Ichimoku in words. "its" only when both
+  sides are one indicator.
+- **"50-day SMA"** now reads (a hyphen was missing from five patterns; our own
+  refusal suggested the phrase that failed). **Found on the way, a wrong read:**
+  on intraday candles "50 day SMA" / "50 DMA" was silently 50 *candles*. Now a
+  question on both readers (`_Indicators.in_days`, `llm._length_said_in_days`);
+  "50 SMA" on 15-minute candles still means 50 candles.
+- **Breakout: once a day or every time.** An entry on the opening range asks
+  (`rules.range_repeat`, field `schedule.daily_limit`, both readers). Either
+  answer makes it a crossing (the AI read #36 as a state); "Once a day" sets
+  `Schedule.max_entries_per_day = 1`, which all three engines enforce (a signal
+  past it is skipped, said in the feed and the run's notes). The readback says
+  which. Tradl #36 left the AI-path count (it asks now). Also fixed: a cross
+  could never fire on the first candle after the range (the level was blank on
+  the candle before) -- `conditions.SESSION_LEVELS_ATTR`.
+- **CSV**: a multi-leg position is its row plus one row per option (side,
+  re-entry, its own gross/charges/net); leg rows leave the position money
+  columns blank so a column sum still equals the run.
+- **Library** (`LIBRARY`): sixteen plain strategies run to 25 Sep 2026; every
+  one with 40+ trades kept, whatever its result -- NIFTY RSI(2) dip 61, NIFTY
+  stochastic 175, ICICIBANK MACD 44, SBIN MACD 46, TCS trend 218, NIFTY 50 stocks
+  RSI 307. Dropped for too few: NIFTY RSI(14) 12, NIFTY 10/30 EMA 15, RELIANCE
+  RSI 15, RELIANCE/HDFCBANK/INFY 9/21 EMA 27/25/32, BANKNIFTY and NIFTY 5/20 EMA
+  34/31, MARUTI breakout 22. **On 16 Oct, 5 of 6 still show "Serious warning
+  signs" -- each because it lost money, none for too few trades.**
+  `test_every_card_has_enough_trades_to_judge` pins 30+.
 
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 

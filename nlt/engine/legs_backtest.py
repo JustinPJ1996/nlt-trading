@@ -242,6 +242,11 @@ class _Position:
     closed: bool = False
 
 
+def _daily_limit_words(n: int | None) -> str:
+    trades = "one position" if n == 1 else f"{n} positions"
+    return f"This strategy opens at most {trades} a day."
+
+
 @dataclass
 class _Counts:
     leg_not_traded: int = 0
@@ -251,6 +256,7 @@ class _Counts:
     margin_unavailable: dict[str, int] = field(default_factory=dict)
     concurrency: int = 0
     boundary: int = 0
+    daily_limit: int = 0
     expiry_entry: int = 0
     expiry_exit: int = 0
     untraded_exit: int = 0
@@ -532,10 +538,17 @@ def run_legs_backtest(
         if note:
             counts.margin_notes[note] = counts.margin_notes.get(note, 0) + 1
 
+    daily_limit = spec.schedule.max_entries_per_day
+    entries_by_day: dict = {}
+
     def try_open(i: int, ts: pd.Timestamp, signal_ts: pd.Timestamp, chosen) -> None:
         if len(positions) >= max_concurrent:
             counts.concurrency += 1
             skip(signal_ts, "concurrency", "The most positions allowed at once were already open.")
+            return
+        if daily_limit is not None and entries_by_day.get(ts.date(), 0) >= daily_limit:
+            counts.daily_limit += 1
+            skip(signal_ts, "daily_limit", _daily_limit_words(daily_limit))
             return
         fills = []
         for leg, contract, why in chosen:
@@ -657,6 +670,8 @@ def run_legs_backtest(
             )
         credit_basis = sum(-leg.sign() * leg.basis * leg.quantity for leg in legs)
         entry_net = sum(-leg.sign() * leg.spec.lots * leg.entry_price for leg in legs)
+        # A leg re-entering later is part of this position, not a new trade.
+        entries_by_day[ts.date()] = entries_by_day.get(ts.date(), 0) + 1
         positions.append(
             _Position(
                 legs=legs,
@@ -1077,6 +1092,9 @@ def run_legs_backtest(
                 reason = "paused"
             elif past_entry_cutoff(spec, ts, timeframe):
                 reason = "no_entry_after"
+            elif daily_limit is not None and entries_by_day.get(ts.date(), 0) >= daily_limit:
+                counts.daily_limit += 1
+                reason = "daily_limit"
             elif is_intraday_spec and bool(last_bar_of_session[i]):
                 counts.boundary += 1
                 reason = "boundary"
@@ -1369,6 +1387,11 @@ def _count_warnings(counts: _Counts, square_off: dt.time, spec: StrategySpec, ca
         out.append(
             f"{counts.concurrency} signal(s) skipped: the most positions allowed at once were "
             "already open."
+        )
+    if counts.daily_limit:
+        out.append(
+            f"{counts.daily_limit} signal(s) skipped: "
+            f"{_daily_limit_words(spec.schedule.max_entries_per_day).lower()}"
         )
     if counts.boundary:
         out.append(

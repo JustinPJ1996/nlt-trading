@@ -103,3 +103,11 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv(api.auth.ENV_VAR, "correct horse")
     app = api.create_app(Store(tmp_path / "web.sqlite"), secret="test-secret")
     return TestClient(app, base_url="https://testserver")
+
+
+@pytest.mark.parametrize("entry", logic.LIBRARY, ids=lambda e: e["title"])
+def test_every_card_has_enough_trades_to_judge(entry) -> None:
+    """The cards were swapped on 2026-10-16 because five of six had too few
+    trades to mean anything (12-22). Chosen by count, never by result."""
+    card = logic.library_card(entry, PINNED)
+    assert card["trades"] >= 30, card
