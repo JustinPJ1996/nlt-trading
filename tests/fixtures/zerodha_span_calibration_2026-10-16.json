@@ -1,0 +1,215 @@
+{
+ "captured_on": "2026-10-16",
+ "captured_at_ist": "2026-10-16T10:20+05:30",
+ "zerodha_page": "https://zerodha.com/margin-calculator/SPAN/",
+ "files": {
+  "NSE": {
+   "source_name": "nsccl.20261016.i1",
+   "created": "202610152109",
+   "index_close": {
+    "BANKNIFTY": 55810.5,
+    "NIFTY": 22997.35
+   }
+  },
+  "BSE": {
+   "source_name": "BSERISK20261016-00",
+   "created": "202610160057",
+   "index_close": {
+    "SENSEX": 74315.61
+   }
+  }
+ },
+ "positions": [
+  {
+   "name": "NIFTY short ATM call, weekly",
+   "underlying": "NIFTY",
+   "legs": [
+    {
+     "option_type": "CE",
+     "strike": 23000.0,
+     "expiry": "2026-10-19",
+     "quantity": -65,
+     "zerodha_scrip": "NIFTY26O19"
+    }
+   ],
+   "zerodha": {
+    "span": 134531,
+    "exposure": 31196.555,
+    "netoptionvalue": 5746,
+    "spread": 0,
+    "total": 165727.555,
+    "screen": "Combined margin requirements | Span Rs. 1,34,531 | Exposure margin Rs. 31,197 | Premium receivable ? Rs. 5,746 | Total margin ? Rs. 1,65,728"
+   },
+   "ours_at_capture": {
+    "span": 134530.5,
+    "exposure": 29896.56,
+    "total": 164427.05
+   }
+  },
+  {
+   "name": "NIFTY bull call spread (debit), weekly",
+   "underlying": "NIFTY",
+   "legs": [
+    {
+     "option_type": "CE",
+     "strike": 23000.0,
+     "expiry": "2026-10-19",
+     "quantity": 65,
+     "zerodha_scrip": "NIFTY26O19"
+    },
+    {
+     "option_type": "CE",
+     "strike": 23200.0,
+     "expiry": "2026-10-19",
+     "quantity": -65,
+     "zerodha_scrip": "NIFTY26O19"
+    }
+   ],
+   "zerodha": {
+    "span": 0.25,
+    "exposure": 31196.555,
+    "netoptionvalue": 0,
+    "spread": 0,
+    "total": 31196.805,
+    "screen": "Combined margin requirements | Span Rs. 0 | Exposure margin Rs. 31,197 | Total margin ? Rs. 31,197 | Margin benefit Rs. 1,22,869"
+   },
+   "ours_at_capture": {
+    "span": 0.0,
+    "exposure": 29896.56,
+    "total": 29896.56
+   }
+  },
+  {
+   "name": "NIFTY bear put spread (debit), weekly",
+   "underlying": "NIFTY",
+   "legs": [
+    {
+     "option_type": "PE",
+     "strike": 23000.0,
+     "expiry": "2026-10-19",
+     "quantity": 65,
+     "zerodha_scrip": "NIFTY26O19"
+    },
+    {
+     "option_type": "PE",
+     "strike": 22800.0,
+     "expiry": "2026-10-19",
+     "quantity": -65,
+     "zerodha_scrip": "NIFTY26O19"
+    }
+   ],
+   "zerodha": {
+    "span": 0,
+    "exposure": 31196.555,
+    "netoptionvalue": 0,
+    "spread": 0,
+    "total": 31196.555,
+    "screen": "Combined margin requirements | Span Rs. 0 | Exposure margin Rs. 31,197 | Total margin ? Rs. 31,197 | Margin benefit Rs. 1,25,179"
+   },
+   "ours_at_capture": {
+    "span": 0.0,
+    "exposure": 29896.56,
+    "total": 29896.56
+   }
+  },
+  {
+   "name": "NIFTY call ratio 1x2, weekly",
+   "underlying": "NIFTY",
+   "legs": [
+    {
+     "option_type": "CE",
+     "strike": 23000.0,
+     "expiry": "2026-10-19",
+     "quantity": 65,
+     "zerodha_scrip": "NIFTY26O19"
+    },
+    {
+     "option_type": "CE",
+     "strike": 23200.0,
+     "expiry": "2026-10-19",
+     "quantity": -130,
+     "zerodha_scrip": "NIFTY26O19"
+    }
+   ],
+   "zerodha": {
+    "span": 111207.5,
+    "exposure": 62393.11,
+    "netoptionvalue": 0,
+    "spread": 0,
+    "total": 173600.61,
+    "screen": "Combined margin requirements | Span Rs. 1,11,208 | Exposure margin Rs. 62,393 | Total margin ? Rs. 1,73,601 | Margin benefit Rs. 1,34,530"
+   },
+   "ours_at_capture": {
+    "span": 111207.2,
+    "exposure": 59793.11,
+    "total": 171000.31
+   }
+  },
+  {
+   "name": "NIFTY put ratio 1x2, monthly",
+   "underlying": "NIFTY",
+   "legs": [
+    {
+     "option_type": "PE",
+     "strike": 23000.0,
+     "expiry": "2026-10-27",
+     "quantity": 65,
+     "zerodha_scrip": "NIFTY26OCT"
+    },
+    {
+     "option_type": "PE",
+     "strike": 22700.0,
+     "expiry": "2026-10-27",
+     "quantity": -130,
+     "zerodha_scrip": "NIFTY26OCT"
+    }
+   ],
+   "zerodha": {
+    "span": 96445.5,
+    "exposure": 62393.11,
+    "netoptionvalue": 0,
+    "spread": 0,
+    "total": 158838.61,
+    "screen": "Combined margin requirements | Span Rs. 96,446 | Exposure margin Rs. 62,393 | Total margin ? Rs. 1,58,839 | Margin benefit Rs. 1,34,382"
+   },
+   "ours_at_capture": {
+    "span": 96445.05,
+    "exposure": 59793.11,
+    "total": 156238.16
+   }
+  },
+  {
+   "name": "NIFTY long straddle, weekly",
+   "underlying": "NIFTY",
+   "legs": [
+    {
+     "option_type": "CE",
+     "strike": 23000.0,
+     "expiry": "2026-10-19",
+     "quantity": 65,
+     "zerodha_scrip": "NIFTY26O19"
+    },
+    {
+     "option_type": "PE",
+     "strike": 23000.0,
+     "expiry": "2026-10-19",
+     "quantity": 65,
+     "zerodha_scrip": "NIFTY26O19"
+    }
+   ],
+   "zerodha": {
+    "span": 0,
+    "exposure": 0,
+    "netoptionvalue": 0,
+    "spread": 0,
+    "total": 0,
+    "screen": "Combined margin requirements | Span Rs. 0 | Exposure margin Rs. 0 | Total margin ? Rs. 0"
+   },
+   "ours_at_capture": {
+    "span": 0.0,
+    "exposure": 0.0,
+    "total": 0.0
+   }
+  }
+ ]
+}

@@ -67,11 +67,13 @@ def test_iron_condor_needs_no_stop() -> None:
     _spec(legs, {"combined_target_pct": 50})
 
 
-def test_a_hedge_on_the_wrong_side_is_no_hedge() -> None:
-    # Bought put ABOVE the sold put does not cap the sold put's loss.
+def test_a_bought_put_nearer_the_money_still_caps_the_sold_put() -> None:
+    """A bear put spread (buy the -200 put, sell the -400): the most it can lose
+    is what was paid. Justin, 2026-10-16: covered at any strike; until then
+    this was asked for a stop it did not need."""
     legs = [_leg("sell", "PE", strike_points=-400), _leg("buy", "PE", strike_points=-200)]
-    with pytest.raises(ValidationError, match="needs a stop loss"):
-        _spec(legs, {"combined_target_pct": 50})
+    _spec(legs, {"combined_target_pct": 50})
+    assert is_defined_risk([OptionLeg(**leg) for leg in legs])
 
 
 def test_a_call_cannot_hedge_a_put() -> None:
@@ -84,9 +86,10 @@ def test_a_ratio_spread_is_not_covered() -> None:
     assert not is_defined_risk([OptionLeg(**leg) for leg in legs])
 
 
-def test_mixed_strike_units_are_not_assumed_covered() -> None:
+def test_mixed_strike_units_cover_too() -> None:
+    """Which strike is further out no longer matters, so mixed units do not either."""
     legs = [_leg("sell", "PE", strike_offset=1), _leg("buy", "PE", strike_points=-500)]
-    assert not is_defined_risk([OptionLeg(**leg) for leg in legs])
+    assert is_defined_risk([OptionLeg(**leg) for leg in legs])
 
 
 def test_a_hedge_in_another_expiry_is_not_covered() -> None:
@@ -170,6 +173,12 @@ def test_at_time_refuses_daily_candles() -> None:
         evaluate(AtTime(time=dt.time(9, 20)), pd.DataFrame({"close": 1.0}, index=idx))
 
 
-def test_an_offset_hedge_nearer_the_money_is_no_hedge() -> None:
+def test_a_bull_call_spread_is_covered() -> None:
+    """Buy the call 1 strike out, sell the one 3 strikes out: a debit spread."""
     legs = [_leg("sell", "CE", strike_offset=3), _leg("buy", "CE", strike_offset=1)]
+    assert is_defined_risk([OptionLeg(**leg) for leg in legs])
+
+
+def test_fewer_bought_lots_than_sold_is_not_covered_at_any_strike() -> None:
+    legs = [_leg("sell", "CE", strike_offset=3, lots=2), _leg("buy", "CE", strike_offset=1)]
     assert not is_defined_risk([OptionLeg(**leg) for leg in legs])

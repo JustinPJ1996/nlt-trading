@@ -105,6 +105,29 @@ def test_matches_zerodha_on_the_calibration_day(position):
     assert "start of day" in ours.source and "14 Oct 2026" in ours.source
 
 
+# A second capture (16 Oct 2026): the debit spreads, ratios and bought
+# straddle the leftovers work made readable. Same calculator, same quirk --
+# Zerodha's exposure again used NIFTY at 23,997.35 (the file says 22,997.35).
+CALIBRATION_1016 = json.loads((FIXTURES / "zerodha_span_calibration_2026-10-16.json").read_text())
+
+
+@pytest.mark.parametrize("position", CALIBRATION_1016["positions"], ids=lambda p: p["name"])
+def test_matches_zerodha_on_debit_spreads_and_ratios(position):
+    margin = SpanMargin(root=FIXTURES / "span")
+    day = dt.date.fromisoformat(CALIBRATION_1016["captured_on"])
+    und = position["underlying"]
+    close = CALIBRATION_1016["files"]["NSE"]["index_close"][und]
+    single = next(
+        p for p in CALIBRATION_1016["positions"] if p["name"] == "NIFTY short ATM call, weekly"
+    )
+    zerodha_index = single["zerodha"]["exposure"] / (0.02 * -single["legs"][0]["quantity"])
+    ours = margin.margin(und, day, _legs(position), index_prev_close=close)
+    z = position["zerodha"]
+    assert ours.span == pytest.approx(z["span"], abs=1.0)
+    assert ours.exposure * zerodha_index / close == pytest.approx(z["exposure"], abs=1.0)
+    assert "16 Oct 2026" in ours.source
+
+
 def test_the_calibration_covers_what_it_claims():
     """The fixture exercises the cases the brief asked for, not just singles."""
     names = [p["name"] for p in CALIBRATION["positions"]]

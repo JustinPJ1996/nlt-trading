@@ -395,6 +395,17 @@ _add(
 )
 _add(
     IndicatorDef(
+        name="session_open",
+        fn=lambda df: levels.session_open(df.open, df.close),
+        inputs=("open", "close"),
+        outputs=("open", "gap_pct"),
+        params={},
+        label="Day Open",
+        description="Today's open and its gap from the previous close in %, from the first candle.",
+    )
+)
+_add(
+    IndicatorDef(
         name="fibonacci",
         fn=lambda df, length=60: levels.fibonacci_retracement(df.high, df.low, length),
         inputs=("high", "low"),

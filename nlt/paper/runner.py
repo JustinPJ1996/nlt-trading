@@ -325,6 +325,7 @@ def _run_option_engine(
         instrument.option_type,
         instrument.strike_offset,
         instrument.expiry,
+        strike=instrument.strike,
     )
     return run_option_backtest(spec, bars, execution, **common)
 

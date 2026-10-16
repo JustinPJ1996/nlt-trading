@@ -227,6 +227,8 @@ def _special_ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> 
         if ref.output in ("swing_high", "swing_low"):
             words = "highest high" if ref.output == "swing_high" else "lowest low"
             return f"the {words} of the last {bars}"
+    if spec.type == "session_open":
+        return "today's open" if ref.output == "open" else "today's gap from the previous close (%)"
     if spec.type == "daily_average":
         if ref.output == "close":
             return "the previous day's close"
@@ -307,11 +309,38 @@ def _trend_turn_desc(cond: Compare, indicators: dict[str, dict], timeframe: str)
     return f"{label} {_TREND_WORDS[cond.op]}"
 
 
+def _gap_desc(cond: Compare, indicators: dict[str, dict]) -> str | None:
+    """ "the day opened more than 0.5% below the previous day's close"."""
+    left, right = cond.left, cond.right
+    if not (
+        isinstance(left, Ref)
+        and left.output == "gap_pct"
+        and not left.bars_ago
+        and isinstance(right, Const)
+        and cond.op in ("lt", "lte", "gt", "gte")
+    ):
+        return None
+    spec = indicators.get(left.name)
+    if spec is None or spec.type != "session_open":
+        return None
+    v = right.value
+    down = cond.op in ("lt", "lte")
+    if (down and v >= 0) or (not down and v <= 0):
+        return None  # "gap below +0.3%" is not a gap down; worded plainly below
+    amount = (
+        f"{_num(abs(v))}% or more" if cond.op in ("lte", "gte") else f"more than {_num(abs(v))}%"
+    )
+    return f"the day opened {amount} {'below' if down else 'above'} the previous day's close"
+
+
 def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe: str) -> str:
     if isinstance(cond, Compare):
         trend = _trend_turn_desc(cond, indicators, timeframe)
         if trend is not None:
             return trend
+        gap = _gap_desc(cond, indicators)
+        if gap is not None:
+            return gap
         left = _operand_desc(cond.left, indicators, timeframe)
         right = _operand_desc(cond.right, indicators, timeframe)
         if (
@@ -414,7 +443,17 @@ def _instrument_desc(spec: StrategySpec) -> str:
         side = "call" if spec.instrument.option_type == "CE" else "put"
 
     offset = spec.instrument.strike_offset
-    if offset == 0:
+    if spec.instrument.strike is not None:
+        expiry_word = {
+            "nearest_weekly": "nearest weekly expiry",
+            "next_weekly": "next weekly expiry",
+            "monthly": "monthly expiry",
+        }[spec.instrument.expiry]
+        return (
+            f"{spec.instrument.symbol}, {spec.instrument.strike:,} {side} option, {expiry_word} "
+            "(that strike exactly; no trade if it isn't listed)"
+        )
+    elif offset == 0:
         strike = "at-the-money"
     else:
         direction_word = "out of the money" if offset > 0 else "in the money"
@@ -467,6 +506,19 @@ def _exit_lines(
     if e.stop_atr_mult:
         atr_label, _d = _indicator_desc(e.atr_id, indicators, timeframe)
         lines.append((f"Stop loss at {_num(e.stop_atr_mult)}x {atr_label}", "exit.atr_stop"))
+    if e.stop_level is not None:
+        level = _ref_desc(e.stop_level, indicators, timeframe)
+        signal = "buy" if spec.direction == "long" else "short"
+        lines.append(
+            (
+                f"Stop loss at {level} (its value when the {signal} signal appears, kept "
+                "for the whole trade)",
+                "exit.stop",
+            )
+        )
+    if sum(bool(x) for x in (e.stop_pct, e.stop_atr_mult, e.stop_level)) > 1:
+        # `backtest._fixed_stop_distance`: the tighter one is the one hit first.
+        lines.append(("Of the stop losses above, the one nearer the price applies", "exit.stop"))
     if e.condition is not None:
         condition = _describe_condition(e.condition, indicators, timeframe)
         lines.append((f"Exit when {condition}", "exit.condition"))
@@ -692,6 +744,8 @@ _TYPE_WORD = {"CE": "call", "PE": "put"}
 
 
 def _leg_strike(leg: OptionLeg) -> str:
+    if leg.strike is not None:
+        return f"the {leg.strike:,} strike exactly (no trade if it isn't listed)"
     if leg.strike_points is not None:
         if leg.strike_points == 0:
             return "at-the-money (the strike nearest the index)"
@@ -820,7 +874,16 @@ def _legs_exit_lines(
         bars = _plural(e.max_bars_held, _bar_word(timeframe))
         lines.append((f"Exit after {bars} if still open", "exit.max_bars_held"))
 
-    if any(leg.side == "sell" for leg in legs):
+    if not any(leg.side == "sell" for leg in legs):
+        stopped = e.combined_stop_pct or any(leg.stop_pct for leg in legs)
+        lines.append(
+            (
+                "Only bought options: the most it can lose is what was paid for them, plus "
+                "charges" + ("" if stopped else ", so no stop loss is needed"),
+                "option.hedge",
+            )
+        )
+    elif any(leg.side == "sell" for leg in legs):
         if is_defined_risk(legs):
             lines.append(
                 ("The bought options cap the worst loss, so no stop loss is needed", "option.hedge")
@@ -850,6 +913,16 @@ def _legs_exit_lines(
         other_exits = any(part.startswith("exit.") for _line, part in lines)
         lines.append(
             (f"Otherwise {held}" if other_exits else held[0].upper() + held[1:], "schedule")
+        )
+    if len({leg.expiry for leg in legs}) > 1:
+        # `legs_backtest`: the position's expiry is its first leg's, and every
+        # leg closes then (a calendar is not carried on as a lone option).
+        lines.append(
+            (
+                "Two expiries: every option is closed on the expiry day of whichever expires "
+                f"first, at {square_off} -- the later one too, not held on by itself",
+                "option.expiry_close",
+            )
         )
     lines.append(
         (
@@ -885,10 +958,13 @@ def _legs_sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]
     at = next((c for c in parts if isinstance(c, AtTime)), None)
     if at is not None:
         t = f"{at.time:%H:%M}"
+        picked = any(leg.strike is None for leg in legs)
         entry.append(
             (
                 f"Opens at the {t} price; the strikes are picked from the index's close on the "
-                f"candle ending {t}",
+                f"candle ending {t}"
+                if picked
+                else f"Opens at the {t} price",
                 "option.entry_fill",
             )
         )

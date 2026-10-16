@@ -535,6 +535,9 @@ def backtest_spec(
     """
     if translation is None:
         translation = TranslationResult(spec=spec)
+    problem = backtest_problem(spec)
+    if problem:
+        return PipelineResult(translation=translation, spec=spec, error=problem)
     if spec.instrument.legs:
         return _backtest_legs_spec(
             spec,
@@ -796,6 +799,7 @@ def _backtest_option_spec(
                 spec.instrument.option_type,
                 spec.instrument.strike_offset,
                 spec.instrument.expiry,
+                strike=spec.instrument.strike,
             )
             result = run_option_backtest(
                 spec,
@@ -1149,6 +1153,31 @@ def _uses_iv_percentile(spec: StrategySpec) -> bool:
     return any(isinstance(c, IvPercentile) for cond in conditions for c in _walk(cond))
 
 
+def named_strike(spec: StrategySpec) -> int | None:
+    """The strike the strategy names ("the 24,000 call"), if any."""
+    if spec.instrument.strike is not None:
+        return spec.instrument.strike
+    return next((leg.strike for leg in spec.instrument.legs if leg.strike is not None), None)
+
+
+def backtest_problem(spec: StrategySpec) -> str | None:
+    """Why this strategy cannot be backtested, in plain English, or None.
+
+    A named strike (Justin, 2026-10-16: paper trading only): over past months
+    the index was far from it -- NIFTY spent 2023 near 18,000 -- so a backtest
+    would mostly test an option nobody would have chosen, or skip every day it
+    was not listed.
+    """
+    strike = named_strike(spec)
+    if strike is not None:
+        return (
+            f"A fixed strike like {strike:,} can't be backtested: over past months "
+            f"{spec.instrument.symbol} was far from it, so the test would mostly trade an "
+            "option nobody would have picked. Paper trade it instead -- it uses today's prices."
+        )
+    return None
+
+
 def paper_problem(spec: StrategySpec) -> str | None:
     """Why this strategy cannot be paper traded, in plain English, or None."""
     if spec.instrument.is_universe and spec.instrument.timeframe != "1d":
@@ -1496,6 +1525,10 @@ _SKIP_REASON_WORDS = {
     "weekday": "it fired on a day of the week this strategy is not allowed to trade on",
     "no_entry_after": "it fired after the time of day this strategy stops opening new trades",
     "daily_limit": "this strategy had already opened as many trades as it may in one day",
+    "stop_level": (
+        "its stop level was not on the safe side of the price when the trade would have "
+        "opened, so there was no stop to protect it"
+    ),
     "paused": "the strategy was paused for this stretch of time",
     "slots": ("the basket's maximum number of positions open at once was already reached"),
 }

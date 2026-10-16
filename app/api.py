@@ -294,6 +294,9 @@ def _spec_payload(
         "allowed_timeframes": logic.allowed_timeframes(spec),
         # The settings screen: algo type, entry cut-off, square-off.
         "settings": logic.schedule_settings(spec),
+        # Why this strategy can only be paper traded (a strike the user named),
+        # or None: the Build page then offers saving it instead of a backtest.
+        "backtest_problem": logic.backtest_problem(spec),
     }
 
 
@@ -663,6 +666,22 @@ async def save(request: Request) -> Response:
         slippage=params.get("slippage"),
     )
     return JSONResponse({"strategy_id": strategy_id, "name": result.spec.name})
+
+
+async def save_untested(request: Request) -> Response:
+    """Save a strategy that was never backtested -- only one that cannot be.
+
+    Every other strategy must be backtested before it can be saved.
+    """
+    body = await _json_body(request)
+    spec = _parse_spec(body.get("spec"))
+    if logic.backtest_problem(spec) is None:
+        raise _BadRequest("This strategy can be tested on past prices. Run the backtest first.")
+    problem = logic.paper_problem(spec)
+    if problem is not None:
+        raise _BadRequest(problem)
+    strategy_id = await _run(logic.save_strategy, _store(request), spec)
+    return JSONResponse({"strategy_id": strategy_id, "name": spec.name})
 
 
 async def library(request: Request) -> Response:
@@ -1536,6 +1555,7 @@ def create_app(store: Store | None = None, secret: str | None = None) -> Starlet
         r("/api/library", library),
         r("/api/strategies", strategies),
         r("/api/strategies", save, ["POST"]),
+        r("/api/strategies/untested", save_untested, ["POST"]),
         r("/api/strategies/{sid:int}/spec", strategy_spec),
         r("/api/strategies/{sid:int}/settings", strategy_settings, ["POST"]),
         r("/api/paper", paper),

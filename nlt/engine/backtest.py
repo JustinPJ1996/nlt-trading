@@ -542,6 +542,8 @@ def run_backtest(
     daily_limit = spec.schedule.max_entries_per_day
     entries_by_day: dict = {}
     daily_limit_skipped_count = 0
+    level_skipped_count = 0
+    entry_side = "buy" if spec.direction == "long" else "sell"
 
     for i in range(n):
         ts = bars.index[i]
@@ -552,9 +554,19 @@ def run_backtest(
             pending_entry = False
             signal_ts = pending_entry_ts
             pending_entry_ts = None
+            level_problem = level_stop_problem(
+                spec, features, i, _apply_slippage(bar.open, entry_side, slippage)
+            )
             if daily_limit is not None and entries_by_day.get(ts.date(), 0) >= daily_limit:
                 daily_limit_skipped_count += 1
                 decisions.append(Decision(signal_ts, symbol, "signal_skipped", "daily_limit", {}))
+            elif level_problem is not None:
+                level_skipped_count += 1
+                decisions.append(
+                    Decision(
+                        signal_ts, symbol, "signal_skipped", "stop_level", {"why": level_problem}
+                    )
+                )
             elif len(open_positions) < max_concurrent:
                 capital_total = capital + realized_pnl
                 # Capital already tied up in other open positions is not spare
@@ -851,6 +863,11 @@ def run_backtest(
             f"{expiry_entry_skipped_count} entry signal(s) skipped: they fired on the last candle "
             "of an expiring contract, so the trade would have been placed in the next contract "
             "at a different price, with its stop and target measured from the old one"
+        )
+    if level_skipped_count:
+        warnings.append(
+            f"{level_skipped_count} entry signal(s) skipped: the stop level was not on the "
+            "safe side of the price when the trade would have opened (or not known yet)."
         )
     if daily_limit_skipped_count:
         warnings.append(
@@ -1193,11 +1210,55 @@ def _fixed_stop_distance(
 
     if exit_rules.stop_pct is not None:
         candidates.append(basis * exit_rules.stop_pct / 100.0)
+    level = level_stop(spec, features, i)
+    if level is not None:
+        # The stop sits AT the level: the distance is from the fill.
+        candidates.append(abs(entry_price - level))
     if exit_rules.stop_atr_mult is not None and exit_rules.atr_id is not None and i >= 1:
         atr_val = features[exit_rules.atr_id].iloc[i - 1]
         if pd.notna(atr_val):
             candidates.append(exit_rules.stop_atr_mult * float(atr_val))
     return min(candidates) if candidates else None
+
+
+def level_stop(spec: StrategySpec, features: pd.DataFrame, i: int) -> float | None:
+    """`exit.stop_level`'s value on the signal candle (bar `i-1`), or None.
+
+    Read once, at the signal, and kept for the trade's life: "stop at the low
+    of the opening range" is the low as it stood when the trade was decided.
+    """
+    ref = spec.exit.stop_level
+    if ref is None or i < 1:
+        return None
+    value = features[ref.key()].iloc[i - 1]
+    return float(value) if pd.notna(value) else None
+
+
+def level_stop_problem(
+    spec: StrategySpec, features: pd.DataFrame, i: int, entry_price: float
+) -> str | None:
+    """Why a level stop cannot protect this trade, or None.
+
+    A long's stop must sit below both the signal close and the fill (a short's
+    above). A level the price has already passed -- or one not known yet --
+    would stop the trade out on its first candle or never; the signal is
+    skipped and said, never given another stop.
+    """
+    if spec.exit.stop_level is None:
+        return None
+    level = level_stop(spec, features, i)
+    if level is None:
+        return "the stop level was not known yet on the signal candle"
+    basis = signal_close(features, i, entry_price)
+    below = spec.direction == "long"
+    if (
+        (level >= basis or level >= entry_price)
+        if below
+        else (level <= basis or level <= entry_price)
+    ):
+        side = "below" if below else "above"
+        return f"the stop level ({level:,.2f}) was not {side} the price when the trade would open"
+    return None
 
 
 def signal_close(features: pd.DataFrame, i: int, fallback: float) -> float:

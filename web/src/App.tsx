@@ -153,6 +153,7 @@ export function App() {
               setResult(r);
               go("results");
             }}
+            onPaper={() => go("paper")}
           />
         )}
         {page === "results" && (

@@ -253,8 +253,8 @@
     "n": 24,
     "name": "Opening Range Breakout",
     "text": "On HDFCBANK 5-minute bars, buy when the close breaks above the high of the first 15 minutes. Stop at the low of the opening range, target 1.2%, square off at 15:15. Backtest the last 1 year.",
-    "klass": "unsupported-stop",
-    "needs": "a stop at the opening range low -- not a percent; first-15-minute high (A6)"
+    "klass": "needs-answer",
+    "needs": "asks once-a-day or every time, then reads with the opening-range low as its stop (2026-10-16; tests/test_level_stop.py)"
   },
   {
     "n": 25,
@@ -267,8 +267,18 @@
     "n": 26,
     "name": "Gap Down Put Buy",
     "text": "On NIFTY 5-minute bars, when the day opens more than 0.5% below the previous close, buy the weekly ATM put at 09:30 if price is still below the open. Stop 30%, target 60%. Square off at 15:15. Backtest the last 6 months.",
-    "klass": "options-later",
-    "needs": "options (Phase 2)"
+    "klass": "strategy",
+    "needs": "a gap at the open and an entry time (2026-10-16)",
+    "expect": {
+      "symbol": "NIFTY",
+      "timeframe": "5m",
+      "stop_pct": 30.0,
+      "target_pct": 60.0,
+      "intraday": true,
+      "option_type": "PE",
+      "strike_offset": 0,
+      "expiry": "nearest_weekly"
+    }
   },
   {
     "n": 27,

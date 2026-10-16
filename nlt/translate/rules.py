@@ -1148,7 +1148,82 @@ _A6_PATTERNS: list[PatternRule] = [
 ]
 
 
+def _session_open_ref(ind: _Indicators, output: str) -> Ref:
+    ind.declare("dayopen", "session_open", {})
+    return Ref(name="dayopen", output=output)
+
+
+def _build_gap(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+    """ "the day opens more than 0.5% below the previous close" / "gaps down 0.5%".
+
+    No qualifier ("opens 0.5% below") is read as 0.5% or more, and the
+    readback says "or more" out loud."""
+    down = m.group("dir") in ("below", "under", "down")
+    value = float(m.group("v"))
+    strict = bool(m.group("more")) and not m.group("more").startswith("at")
+    op = ("lt" if strict else "lte") if down else ("gt" if strict else "gte")
+    return Compare(
+        op=op, left=_session_open_ref(ind, "gap_pct"), right=Const(value=-value if down else value)
+    )
+
+
+def _build_vs_day_open(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+    op = "lt" if m.group("dir") in ("below", "under") else "gt"
+    return Compare(op=op, left=Ref(name="close"), right=_session_open_ref(ind, "open"))
+
+
+_GAP_MORE = r"(?P<more>more\s*than|over|at\s*least|by\s*more\s*than|by\s*at\s*least)?\s*"
+_PREV_CLOSE = (
+    r"(?:the\s*)?(?:previous|prior|yesterday'?s?|last)\s*(?:day'?s?\s*|session'?s?\s*)?close"
+)
+# Gap at the open (Tradl #26), 2026-10-16.
+_GAP_PATTERNS: list[PatternRule] = [
+    PatternRule(
+        "gap_vs_previous_close",
+        re.compile(
+            r"(?:the\s*)?(?:day|market|index|price|it)?\s*opens?\s*(?:with\s*a\s*gap\s*)?"
+            + _GAP_MORE
+            + r"(?P<v>\d+(?:\.\d+)?)\s*%\s*(?P<dir>below|under|above|over)\s*"
+            + _PREV_CLOSE
+        ),
+        _build_gap,
+        "the day opens more than 0.5% below the previous close",
+    ),
+    PatternRule(
+        "gap_up_down",
+        re.compile(
+            r"\bgaps?\s*(?P<dir>down|up)\s*(?:by\s*)?" + _GAP_MORE + r"(?P<v>\d+(?:\.\d+)?)\s*%"
+        ),
+        _build_gap,
+        "it gaps down more than 0.5%",
+    ),
+    # "The open" alone could be the candle's own open; it is the day's only
+    # when said so, or with "still" ("still below the open" -- since it opened).
+    PatternRule(
+        "vs_day_open",
+        re.compile(
+            r"(?:(?:the\s*)?(?:price|close|it)\s*(?:is\s*)?)?(?:still\s*(?P<dir>below|under|above|over)"
+            r"\s*(?:the\s*|today'?s\s*|the\s*day'?s\s*)open|(?P<dir2>below|under|above|over)\s*"
+            r"(?:today'?s|the\s*day'?s)\s*open)\b"
+        ),
+        lambda m, ind, notes: _build_vs_day_open(
+            _DirMatch(m.group("dir") or m.group("dir2")), ind, notes
+        ),
+        "the price is still below the open",
+    ),
+]
+
+
+class _DirMatch:
+    def __init__(self, direction: str):
+        self._d = direction
+
+    def group(self, _name: str) -> str:
+        return self._d
+
+
 CONDITION_PATTERNS: list[PatternRule] = [
+    *_GAP_PATTERNS,
     *_A6_PATTERNS,
     PatternRule(
         "rsi_crosses_below",
@@ -1639,7 +1714,8 @@ _TARGET_PATTERNS = [
     re.compile(r"exit at \+?(?P<v>\d+(?:\.\d+)?)\s*%"),
     re.compile(r"sell at\s*(?P<v>\d+(?:\.\d+)?)\s*%\s*gain"),
     re.compile(r"(?:^|\s)\+(?P<v>\d+(?:\.\d+)?)\s*%"),
-    re.compile(r"(?:up|gain of)\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
+    # Not "gaps up 1%": that is an entry at the open, not a target.
+    re.compile(r"(?:(?<!gap\s)(?<!gaps\s)\bup|gain of)\s*(?P<v>\d+(?:\.\d+)?)\s*%"),
     # value-first, "profit" rather than "gain": "sell at 2% profit", "Sell at
     # 3% profit" -- the exact wording fixture #58/#59/#33 use. Kept as its own
     # pattern rather than widening "sell at N% gain" above, so "gain" and
@@ -1710,9 +1786,67 @@ def _extract_percent_exits(text: str) -> tuple[str, dict]:
     return text, out
 
 
+# "Stop at the low of the opening range" (Tradl #24), "stop at the previous
+# day's low", "stop at the lowest low of the last 10 candles": a stop at a
+# price level (2026-10-16). Read first, before "stop N%" and before the entry
+# could take "the low of the first 15 minutes" for a condition. Resolved
+# against the entry and the candle size by `_resolve_level_stop`.
+_LEVEL_STOPW = r"\b(?:stop(?:[\s-]*loss)?|sl)\s*(?:is\s*)?(?:at|below|under|above|on)?\s*"
+_LEVEL_STOP_PATTERNS = [
+    (
+        "opening_range",
+        re.compile(
+            _LEVEL_STOPW + r"(?:the\s*)?(?P<hl>low|high)\s*of\s*(?:the\s*)?"
+            r"(?:opening\s*range|first\s*(?P<n>\d{1,3})\s*(?:minutes?|mins?))\b"
+        ),
+    ),
+    (
+        "prior_period",
+        re.compile(
+            _LEVEL_STOPW + r"(?:the\s*)?(?:previous|prior|yesterday'?s?)\s*(?:day'?s?\s*)?"
+            r"(?P<hl>low|high)\b"
+        ),
+    ),
+    (
+        "rolling_extremes",
+        re.compile(
+            _LEVEL_STOPW + r"(?:the\s*)?(?P<hl>lowest\s*low|highest\s*high|low|high)\s*of\s*"
+            r"the\s*last\s*(?P<n>\d{1,3})\s*(?P<unit>days?|candles?|bars?)\b"
+        ),
+    ),
+]
+
+
+def read_level_stop(text: str) -> tuple[str, dict | None, tuple[int, int] | None]:
+    """(text with the words blanked, the level stop said, where it was) -- both readers."""
+    for kind, pattern in _LEVEL_STOP_PATTERNS:
+        m = pattern.search(text)
+        if m:
+            groups = m.groupdict()
+            level = {
+                "kind": kind,
+                "low": groups["hl"].startswith("low"),
+                "n": int(groups["n"]) if groups.get("n") else None,
+                "unit": groups.get("unit"),
+            }
+            blanked = text[: m.start()] + " " * (m.end() - m.start()) + text[m.end() :]
+            return blanked, level, (m.start(), m.end())
+    return text, None, None
+
+
+LEVEL_STOP_ON_OPTION = (
+    "A stop at a price level is measured on the index, but an option's stop is on its own "
+    "price. Say e.g. 'stop 30% on the premium'."
+)
+
+
 def _extract_exit_rest(text: str, ind: _Indicators) -> tuple[str, dict, list[str]]:
     out: dict = {}
     notes: list[str] = []
+
+    text, level, _span = read_level_stop(text)
+    if level is not None:
+        out["_level_stop"] = level
 
     text, m = _consume(text, _ATR_STOP_PATTERN)
     if m:
@@ -1789,6 +1923,69 @@ def _find_antecedent(
     if len(labels_seen) == 1:
         return tokens[0], None, candidates
     return None, None, candidates
+
+
+def _resolve_level_stop(
+    level: dict, entry_inds: list[dict], timeframe: str, ind: _Indicators
+) -> tuple[Ref | None, Question | None]:
+    """The indicator output a level stop sits at, declared in `ind`, or a question."""
+
+    def ask(text: str) -> tuple[None, Question]:
+        return None, Question(
+            text=text,
+            why="A stop at a level we guessed could close the trade somewhere you never meant.",
+            suggestion=None,
+            field="exit.rule",
+        )
+
+    if level["kind"] == "opening_range":
+        minutes = level["n"]
+        if minutes is None:
+            ranges = {
+                int(d["params"]["minutes"]) for d in entry_inds if d["type"] == "opening_range"
+            }
+            if len(ranges) != 1:
+                return ask(
+                    "Which opening range should the stop sit at? Say e.g. 'stop at the low of "
+                    "the first 15 minutes'."
+                )
+            minutes = ranges.pop()
+        same = next(
+            (
+                d["id"]
+                for d in entry_inds
+                if d["type"] == "opening_range" and int(d["params"]["minutes"]) == minutes
+            ),
+            None,
+        )
+        ind_id = same or ind.declare(f"orange{minutes}", "opening_range", {"minutes": minutes})
+        return Ref(name=ind_id, output="low" if level["low"] else "high"), None
+    if level["kind"] == "prior_period":
+        if timeframe == "1d":
+            # A daily signal is judged at the close and filled next morning:
+            # "the previous day" could be the signal day or the one before.
+            return ask(
+                "On daily candles, 'the previous day' could mean the day of the signal or the "
+                "day before it. Use minute or hourly candles, or a percentage stop."
+            )
+        return _prior_ref(ind, "day", "low" if level["low"] else "high"), None
+    n, unit = level["n"], level["unit"]
+    if unit.startswith("day") and timeframe != "1d":
+        return ask(
+            f"On {_TIMEFRAME_WORDS_SHORT.get(timeframe, timeframe)} candles, the last {n} days "
+            f"is not {n} candles. Say 'the last {n} candles', or use daily candles."
+        )
+    return _extremes_ref(ind, n, "lowest" if level["low"] else "highest"), None
+
+
+_TIMEFRAME_WORDS_SHORT = {
+    "1m": "1-minute",
+    "3m": "3-minute",
+    "5m": "5-minute",
+    "15m": "15-minute",
+    "30m": "30-minute",
+    "1h": "hourly",
+}
 
 
 def _extract_exit_condition(
@@ -2605,6 +2802,31 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
             )
         )
 
+    stop_level = None
+    level = rest_exits.get("_level_stop")
+    if level is not None:
+        if instrument_kwargs.get("trade_as") == "option":
+            return TranslationResult(
+                spec=None,
+                questions=[
+                    Question(
+                        text=LEVEL_STOP_ON_OPTION,
+                        why="Mixing the two would close the option at a point you never chose.",
+                        suggestion=None,
+                        field="exit.rule",
+                    )
+                ],
+                notes=notes,
+                source="rules",
+            )
+        stop_level, level_question = _resolve_level_stop(
+            level, entry_inds, instrument_kwargs.get("timeframe", "1d"), exit_ind
+        )
+        if level_question is not None:
+            return TranslationResult(
+                spec=None, questions=[level_question], notes=notes, source="rules"
+            )
+
     all_indicators = _merge_indicators(entry_inds, exit_ind.as_list(), exit_cond_inds)
 
     vwap_question = _vwap_refusal(all_indicators, instrument_kwargs)
@@ -2621,7 +2843,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     trailing = rest_exits.get("trailing_stop_pct")
     max_bars_held = rest_exits.get("max_bars_held")
 
-    has_any_stop = bool(stop_pct or stop_atr_mult or trailing)
+    has_any_stop = bool(stop_pct or stop_atr_mult or trailing or stop_level)
     if not has_any_stop:
         stop_pct = _float_answer(answers, "exit.stop_pct")
         if not stop_pct:
@@ -2688,6 +2910,8 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
     if stop_atr_mult:
         exit_kwargs["stop_atr_mult"] = stop_atr_mult
         exit_kwargs["atr_id"] = rest_exits["atr_id"]
+    if stop_level is not None:
+        exit_kwargs["stop_level"] = stop_level
     if exit_condition is not None:
         exit_kwargs["condition"] = exit_condition
     if max_bars_held:
@@ -2789,13 +3013,22 @@ def _parse_legs(
             field=field_name,
         )
 
+    # "sell 2 lots of the straddle" / "buy 2 ... sell 4 ...": the size said
+    # inside the option clauses (`options_words._ratio`).
+    clause_sets = instrument_kwargs.pop("_sets", None)
+
     exit_ind = _Indicators()
     text, rest_exits, exit_notes = _extract_exit_rest(text, exit_ind)
     notes.extend(exit_notes)
-    if rest_exits.get("stop_atr_mult") or rest_exits.get("trailing_stop_pct"):
+    if (
+        rest_exits.get("stop_atr_mult")
+        or rest_exits.get("trailing_stop_pct")
+        or rest_exits.get("_level_stop")
+    ):
         return ask(
             plain(
-                "A trailing stop or an ATR stop is measured on the index, so it can't be put "
+                "A trailing stop, an ATR stop or a stop at a price level is measured on the "
+                "index, so it can't be put "
                 "on options. Use a stop on each sold option, e.g. 'a 25% stop on each leg'.",
                 "exit.rule",
             )
@@ -2858,6 +3091,10 @@ def _parse_legs(
                 "sizing",
             )
         )
+    if clause_sets is not None:
+        if sizing_said:
+            return ask(plain("That gives the size twice. Say it once.", "sizing"))
+        sizing, sizing_said = Sizing(mode="fixed_lots", lots=clause_sets), True
 
     # "at RSI 30" and a bare "harami" take their meaning from the trade's
     # direction; a position of legs has none to take it from.

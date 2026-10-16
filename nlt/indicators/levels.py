@@ -152,3 +152,21 @@ def daily_average(close: pd.Series, length: int = 50, kind: str = "sma") -> pd.D
     average = {"sma": smoothing.sma, "ema": smoothing.ema}[kind](daily, int(length))
     prev = pd.DataFrame({"close": daily, "average": average}).shift(1)
     return prev.reindex(close.index, method="ffill")
+
+
+def session_open(open_: pd.Series, close: pd.Series) -> pd.DataFrame:
+    """Today's open, and how far it gapped from the previous session's close (%).
+
+    Both are known from the session's first price onwards, so every candle of
+    the day may read them: the first candle's own open is not a look into the
+    future, it is the price the day started at. The previous close is the last
+    close of the session before -- never today's. The first session in the
+    data has no previous close, so no gap.
+    """
+    idx = open_.index
+    day = idx.normalize()
+    day_open = open_.groupby(day).transform("first")
+    last_close = close.groupby(day).last()
+    prev_close = pd.Series(day, index=idx).map(last_close.shift(1))
+    gap = 100.0 * (day_open / prev_close - 1.0)
+    return pd.DataFrame({"open": day_open, "gap_pct": gap}, index=idx)

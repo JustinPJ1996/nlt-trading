@@ -43,6 +43,7 @@ import pandas as pd
 from nlt.data.source import IST
 from nlt.options.contracts import Contract, Resolution
 from nlt.options.contracts import resolve as _resolve_contract
+from nlt.options.contracts import resolve_fixed as _resolve_fixed
 from nlt.options.contracts import resolve_points as _resolve_points
 from nlt.options.data import CONTRACT_NATIVE_TIMEFRAME, OptionSource
 
@@ -183,16 +184,20 @@ class OptionExecution:
         option_type: str = "CE",
         offset: int = 0,
         expiry_kind: str = "nearest_weekly",
+        strike: float | None = None,
     ) -> None:
         """`option_type` / `offset` / `expiry_kind` describe batch 1's single
-        bought option, for `resolve`. A multi-leg run passes each leg to
-        `resolve_leg` instead and can leave them at their defaults."""
+        bought option, for `resolve`; `strike` is a strike the user named
+        ("the 24,000 call"), used exactly or not at all. A multi-leg run
+        passes each leg to `resolve_leg` instead and can leave them at their
+        defaults."""
         self.source = source
         self.underlying = underlying
         self.timeframe = timeframe
         self.option_type = option_type
         self.offset = offset
         self.expiry_kind = expiry_kind
+        self.strike = strike
         self._bars_cache: dict[str, pd.DataFrame] = {}
         # Remembers the signal day each contract was resolved on, so the
         # bars cache always spans *that* day through expiry -- never a later
@@ -212,15 +217,20 @@ class OptionExecution:
     def resolve(self, signal_time: dt.datetime, spot_close: float) -> Resolution:
         day = signal_time.date()
         chain = self.listing(day)
-        resolution = _resolve_contract(
-            chain,
-            self.underlying,
-            signal_time,
-            spot_close,
-            self.option_type,
-            self.offset,
-            self.expiry_kind,
-        )
+        if self.strike is not None:
+            resolution = _resolve_fixed(
+                chain, self.underlying, signal_time, self.option_type, self.strike, self.expiry_kind
+            )
+        else:
+            resolution = _resolve_contract(
+                chain,
+                self.underlying,
+                signal_time,
+                spot_close,
+                self.option_type,
+                self.offset,
+                self.expiry_kind,
+            )
         if resolution.contract is not None:
             self._signal_day.setdefault(resolution.contract.tradingsymbol, day)
         return resolution
@@ -234,7 +244,11 @@ class OptionExecution:
         """
         day = signal_time.date()
         chain = self.listing(day)
-        if leg.strike_points is not None:
+        if leg.strike is not None:
+            resolution = _resolve_fixed(
+                chain, self.underlying, signal_time, leg.option_type, leg.strike, leg.expiry
+            )
+        elif leg.strike_points is not None:
             resolution = _resolve_points(
                 chain,
                 self.underlying,
