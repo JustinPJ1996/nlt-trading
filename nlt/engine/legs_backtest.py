@@ -349,6 +349,12 @@ def run_legs_backtest(
             from nlt.options.iv import iv_feature as iv_fn
         column = iv_fn(underlying, bars, lookback)
         features[iv_percentile_column(lookback)] = column.reindex(bars.index)
+        stale = column.attrs.get("stale_days", [])
+        if stale:
+            warnings.append(
+                f"On {len(stale)} day(s) the IV percentile is an older day's (at most 5 "
+                "sessions back): the session before had no IV of its own."
+            )
         known = column.dropna()
         if known.empty:
             warnings.append(
@@ -815,18 +821,27 @@ def run_legs_backtest(
         An exit decided on that last candle (combined target or stop, the exit
         rule) fills at the next option candle's open; each leg's own stop and
         target are watched; a combined exit decided on these candles fills at
-        the one after. Re-entries wait for the next day. On expiry day, what
-        is still open is valued at its last trade before the close.
+        the one after. A leg stopped here re-enters here too (Justin approved,
+        2026-10-16), by its own rule, when the entry cut-off allows: "same
+        strike at cost" once its price closes back at the first fill, "a fresh
+        strike now" from the index's last close (the index has no later
+        price), each filled at the next option candle. What has not re-entered
+        by the close waits for the next day as before. On expiry day, what is
+        still open is valued at its last trade before the close.
         """
         stamps = sorted(
             {
                 at
                 for leg in pos.legs
-                if leg.is_open
+                if leg.is_open or leg.waiting
                 for at in execution.bar_times(leg.contract, ts, fno_close)
             }
         )
-        for at in stamps:
+        stopped_here: dict[int, pd.Timestamp] = {}
+        for k, at in enumerate(stamps):
+            for leg in pos.legs:
+                if leg.pending is not None and not leg.is_open:
+                    fill_reentry(pos, leg, i, at)
             bars_now = {id(leg): execution.bar(leg.contract, at) for leg in pos.legs if leg.is_open}
             for leg in pos.legs:
                 bar = bars_now.get(id(leg))
@@ -854,15 +869,31 @@ def run_legs_backtest(
                 if reason == "stop" and leg.reentries < leg.spec.reentry_max:
                     leg.waiting = True
                     leg.stopped_at = i
+                    stopped_here[id(leg)] = at
                 else:
                     leg.waiting = False
-            if not any(leg.is_open for leg in pos.legs):
+            nxt = stamps[k + 1] if k + 1 < len(stamps) else None
+            # Never on expiry day: everything is valued at the close minutes later.
+            if (
+                nxt is not None
+                and ts.date() != pos.expiry
+                and not past_entry_cutoff(spec, at, timeframe)
+            ):
+                for leg in pos.legs:
+                    if leg.waiting and not leg.is_open and leg.pending is None:
+                        leg.pending = _queue_reentry_after_close(
+                            leg, at, nxt, stopped_here.get(id(leg)), float(bars["close"].iloc[i])
+                        )
+            if not any(leg.is_open or leg.pending is not None for leg in pos.legs):
                 break
             decided = _combined_decision(pos, spec, execution, at)
             if decided is not None:
                 pos.pending_exit, both = decided
                 pos.pending_both = pos.pending_both or both
                 counts.combined_both += int(both)
+        for leg in pos.legs:
+            # Not filled by the close: waits for the next day, as before.
+            leg.pending = None
 
         if ts.date() == pos.expiry:
             if any(leg.is_open for leg in pos.legs):
@@ -880,6 +911,28 @@ def run_legs_backtest(
             finalize(pos)
         elif not any(leg.is_open or leg.waiting for leg in pos.legs):
             finalize(pos)
+
+    def _queue_reentry_after_close(leg, at, nxt, stopped_at, index_close):
+        """`_queue_reentry` on the options' own candles after the index's last."""
+        if leg.spec.reentry == "same_strike_at_cost":
+            if stopped_at is not None and at <= stopped_at:
+                return None  # not the candle the stop happened in
+            bar = execution.bar(leg.contract, at)
+            if bar is None or not bool(bar["traded"]):
+                return None
+            close = float(bar["close"])
+            back = close <= leg.first_fill if leg.side == "sell" else close >= leg.first_fill
+            if not back or nxt.date() > leg.contract.expiry:
+                return None
+            return at, leg.contract, leg.why, close
+        resolution = execution.resolve_leg(at.to_pydatetime(), index_close, leg.spec)
+        contract = resolution.contract
+        if contract is None:
+            return None  # tried again tomorrow by the usual rule
+        basis = execution.price_at_signal(contract, at)
+        if basis is None:
+            return None
+        return at, contract, resolution.why, basis
 
     def reentry_allowed_at(i: int, ts: pd.Timestamp) -> bool:
         """Do the strategy's own rules still allow a re-entry after this candle?
@@ -1044,8 +1097,9 @@ def run_legs_backtest(
                 pos.pending_exit = "condition"
             if pos.pending_exit is not None:
                 continue
-            allowed = reentry_allowed_at(i, ts)
-            for leg in pos.legs:
+            waiting = [leg for leg in pos.legs if leg.waiting]
+            allowed = bool(waiting) and reentry_allowed_at(i, ts)
+            for leg in waiting:
                 if not leg.waiting or leg.is_open or leg.pending is not None:
                     continue
                 if not allowed:

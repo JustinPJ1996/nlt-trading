@@ -891,6 +891,14 @@ def _option_gaps_text(source, trade_from: pd.Timestamp) -> str:
             "(no pass ran between the close and expiry), so trades in them can no longer "
             "be re-checked; what was recorded stands."
         )
+    cut = sorted((d, s, t) for s, d, t in getattr(source, "cut_short", ()) if d >= since)
+    if cut:
+        parts = ", ".join(f"{s} on {d:%d %b} (up to {t:%H:%M})" for d, s, t in cut)
+        text += (
+            f" Prices for {parts} were saved only up to the last check before Kite dropped "
+            "them (no check ran after that before expiry); later minutes are missing, never "
+            "filled in."
+        )
     missing = sorted(d for d in getattr(source, "missing_listing_days", ()) if d >= since)
     if missing:
         days = ", ".join(f"{d:%d %b}" for d in missing)

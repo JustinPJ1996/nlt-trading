@@ -23,9 +23,11 @@ So this module saves, under `data/fno_live/`:
 
 Justin's choice (2026-10-15): only the contracts paper runs actually use are
 kept, not the whole chain. A contract's day is saved by the first pass after
-that day has finished; if no pass runs between the close and the contract's
-expiry, its last day is lost, and the source says so (`lost`) rather than
-inventing anything.
+that day has finished, and -- since 2026-10-16 -- every pass during the day
+also keeps the minutes so far (`<YYYY-MM-DD>.partial.parquet`). If no pass
+runs between the close and Kite dropping the contract, the day is kept up to
+the last pass and the source says where it stops (`cut_short`); with no pass
+at all that day it is lost (`lost`). Nothing is ever invented.
 
 ## The same traded-only rule as the dataset
 
@@ -174,6 +176,9 @@ class LiveOptionSource:
         self.today = self.now.date()
         self.root = Path(root) if root is not None else LIVE_ROOT
         self.lost: set[tuple[str, dt.date]] = set()
+        # Days kept only up to a minute (saved part-way through, then Kite
+        # dropped the contract): (tradingsymbol, day, last saved minute's end).
+        self.cut_short: set[tuple[str, dt.date, dt.time]] = set()
         self.missing_listing_days: set[dt.date] = set()
         self._live: pd.DataFrame | None = None
         self._listings: dict[tuple[str, dt.date], pd.DataFrame] = {}
@@ -238,6 +243,12 @@ class LiveOptionSource:
     def _bars_path(self, underlying: str, tradingsymbol: str, day: dt.date) -> Path:
         return self.root / "bars" / underlying / tradingsymbol / f"{day.isoformat()}.parquet"
 
+    def _partial_path(self, underlying: str, tradingsymbol: str, day: dt.date) -> Path:
+        """Today's minutes so far, rewritten by every pass (2026-10-16): if
+        the box is off from the close until Kite drops an expiring option,
+        only the minutes after the last pass are lost, not the whole day."""
+        return self._bars_path(underlying, tradingsymbol, day).with_suffix(".partial.parquet")
+
     def _day_complete(self, day: dt.date) -> bool:
         return day < self.today or (day == self.today and self.now.time() >= DAY_COMPLETE_AT)
 
@@ -293,17 +304,30 @@ class LiveOptionSource:
             token = self._token(underlying, tradingsymbol)
             if token is None:
                 # Expired (or never seen live): Kite no longer has these days.
-                self.lost.update((tradingsymbol, day) for day in wanted)
+                # What an earlier pass saved part-way through the day is used,
+                # and said to stop where it stops; nothing is filled in.
+                for day in wanted:
+                    partial = self._partial_path(underlying, tradingsymbol, day)
+                    if partial.exists():
+                        part = pd.read_parquet(partial)
+                        frames.append(part)
+                        end = (part.index.max() + _MINUTE).time() if len(part) else dt.time(9, 15)
+                        self.cut_short.add((tradingsymbol, day, end))
+                    else:
+                        self.lost.add((tradingsymbol, day))
             else:
                 fetched = _shape(self.client.minute_candles(token, wanted[0], wanted[-1]))
                 for day in wanted:
                     part = fetched[fetched.index.date == day]
                     if self._day_complete(day):
                         path = self._bars_path(underlying, tradingsymbol, day)
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        tmp = path.with_suffix(".tmp")
-                        part.to_parquet(tmp)
-                        tmp.replace(path)
+                        _write(part, path)
+                        self._partial_path(underlying, tradingsymbol, day).unlink(missing_ok=True)
+                    else:
+                        _write(
+                            part[part.index + _MINUTE <= self.now],
+                            self._partial_path(underlying, tradingsymbol, day),
+                        )
                     frames.append(part)
 
         frames = [f for f in frames if not f.empty]
@@ -315,6 +339,13 @@ class LiveOptionSource:
         out = out[out.index + _MINUTE <= self.now]
         out["traded"] = out["traded"].astype(bool)
         return out[BAR_COLUMNS]
+
+
+def _write(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    frame.to_parquet(tmp)
+    tmp.replace(path)
 
 
 # ------------------------------------------------------------- India VIX

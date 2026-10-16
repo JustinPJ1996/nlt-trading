@@ -1198,7 +1198,9 @@ def paper_notes(spec: StrategySpec) -> list[str]:
             "Options trade until 3:40 PM, ten minutes after the index's last price. A "
             "position held overnight has its stop and target checked on the option's own "
             "prices until then, and an exit rule met on the day's last candle sells at the "
-            "next option price instead of the next morning."
+            "next option price instead of the next morning. An option stopped then can "
+            "re-enter before 3:40 PM by its own re-entry rule (never on expiry day, and not "
+            "after the entry cut-off)."
         )
         notes.append(
             "One difference from the description above: in paper trading, an option still "

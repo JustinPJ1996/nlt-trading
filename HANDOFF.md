@@ -24,7 +24,7 @@ IT REPORTS   This strategy lost money, and it also did far worse than
 ```
 
 - **Repo:** `~/trading-strategy-builder`, GitHub `JustinPJ1996/nlt-trading` (public)
-- **State:** 1,980 tests passing (2026-10-16, leftovers batch B)
+- **State:** 2,029 tests passing (2026-10-16, leftovers batch C)
 - **Run it:** `.venv/bin/python scripts/fetch_data.py` then `.venv/bin/streamlit run app/main.py`
 
 ### Who the user is
@@ -328,7 +328,7 @@ Open after batch 1, for Justin:
 - ~~Tradl #36 read as a state~~ -- asks "Once a day / Every time it crosses" since 2026-10-16.
 - The old Streamlit dashboard has no Slippage box; the one-off order form shows
   it even for alerts, where it does nothing.
-- A year of 15-minute signals takes about a minute to run.
+- ~~A year of 15-minute signals takes about a minute~~ -- about 7 s since 2026-10-16.
 
 **Batch 2 reading (2026-10-14, workstream C).** `options_words.read` now reads
 a sold call or put, sold straddles and strangles, iron condors and iron
@@ -402,9 +402,8 @@ What exists:
   prices and filled at the next open.
 
 Open after batch 2, for Justin:
-- IV: top reading is 99.6, not 100; BANKNIFTY after Nov 2024 ranks monthly IV
-  against older weekly IV; 1-day-to-expiry IV is jumpy; a day without IV
-  blocks the next day.
+- ~~IV: top 99.6; BANKNIFTY weekly/monthly mix; a day without IV blocks the next~~ --
+  fixed 2026-10-16 (Leftovers C). 1-day-to-expiry IV is still jumpy.
 - Stop question buttons for a sold option are 20/30/50%.
 - ~~The CSV export is one row per position~~ -- leg rows since 2026-10-16.
 - Some vendor 1-minute prices are not on the 5-paise tick (e.g. 40.54); used as
@@ -478,12 +477,13 @@ What exists:
 
 Open after batch 3, for Justin:
 - 15:30-15:40 in paper (`fno_close`, `_after_close` / `after_close`):
-  re-entries wait for the next morning; a combined exit decided on those
+  ~~re-entries wait for the next morning~~ (re-enter before 15:40 since 2026-10-16); a combined exit decided on those
   candles fills on the next of them, or the next morning; on 1-hour and
   30-minute candles the 15:15 option candle already spans to 15:40, so there
   is nothing after it.
-- If the job is down from 15:42 until a weekly expires, that contract's last
-  day is lost and its trades can no longer be re-checked; the run says so.
+- If the job is down from its last pass until a weekly expires, that
+  contract's last day is kept only up to that pass (since 2026-10-16; before,
+  the whole day was lost); the run says where it stops.
 - Kite's list is used only once it is today's; until it is published (early
   morning) option runs report the feed as down.
 
@@ -535,7 +535,7 @@ What changed:
   BANKNIFTY call of 1 Jan 2025 squares off at 1,087.75 (15:15) and 1,109.70
   (15:25); the 2 Jan 2025 straddle's put at 0.15 (net 5,694.10).
 
-### Leftovers from finished phases — **batches A-B BUILT 2026-10-16**
+### Leftovers from finished phases — **batches A-C BUILT 2026-10-16**
 
 Plan: `~/.claude/plans/can-we-fix-these-binary-widget.md`. Three batches
 (`leftovers-a/b/c`). Justin's decisions, each offered as a trade-off: library --
@@ -625,6 +625,33 @@ ignored; a named strike on a leg; "gaps down"; each now has a test).
   wrong; the 43 gained #26 (readback checked by hand, entry pinned); #30's exit
   now reads "the price is below VWAP" (was "crosses below") -- same candle for an
   exit from a trade bought above VWAP.
+
+**Batch C** (branch `leftovers-c`, built 2026-10-16). Every change broken on
+purpose and a test seen to fail.
+- **IV percentile** (`nlt/options/iv.py`, `METHOD_VERSION` 3, cache rebuilt):
+  D-1 is ranked against the 252 IVs *before* it, so the top is 100 (was 99.6);
+  BANKNIFTY uses its **monthly** options for the whole history (Justin), and
+  the readback says "monthly"; a session with no IV no longer blanks the next --
+  the latest ranking up to 5 sessions old carries on, and the run counts those
+  days. Known answer: BANKNIFTY 5 Jun 2024 from the June monthly 48800 call and
+  put (21.04% / 19.25%, solved separately by bisection; it used the 12 Jun weekly
+  before).
+- **Paper, 15:30-15:40**: a leg stopped after the index's last candle re-enters
+  before 15:40 by its own rule (Justin approved) -- never on expiry day, never
+  past the entry cut-off; a fresh strike is picked from the index's last close.
+  What has not re-entered by 15:40 waits for the next day as before.
+  Backtests unchanged.
+- **Lost expiry day narrowed**: every pass saves today's finished minutes
+  (`<day>.partial.parquet`); if Kite drops the contract before a pass after
+  15:42, the day is used up to the last pass and the run says where it stops
+  ("saved only up to 15:31"). A day with no pass at all is still lost, said.
+- **Speed**: the dataset is discovered once per root; `ParquetSource`
+  remembers each read (a backtest runs twice, with and without charges);
+  candles are built in one pass (`execution._aggregate`, checked against the
+  old loop row for row on made-up and real contracts); a candle lookup is a
+  plain row. A year of 15-minute NIFTY option signals: 24 s -> 7 s; a year of
+  1-minute 09:20 straddles: 83 s -> 31 s (mostly reading a new contract pair
+  each day). Trades and notes identical before and after on all three.
 
 ### Phase 3 — Paper trading — **BUILT (prototype)**
 

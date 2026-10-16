@@ -93,40 +93,33 @@ def _bucket_start(index: pd.DatetimeIndex, bucket_minutes: int) -> pd.DatetimeIn
     return day_open + pd.to_timedelta(bucket_index * bucket_minutes, unit="m")
 
 
-def _aggregate_bucket(bucket_start: pd.Timestamp, group: pd.DataFrame) -> dict[str, object]:
-    """One bucket's row: traded-only OHLCV, last-row-in-bucket oi/bid/ask.
+def _aggregate(work: pd.DataFrame) -> pd.DataFrame:
+    """One row per `_bucket`, all at once (2026-10-16: the bucket-by-bucket
+    loop it replaced was a third of an option backtest's time).
 
-    Shared by `resample_traded` (minute buckets) and `resample_daily` (whole
-    calendar days) -- the aggregation rule is identical, only the grouping
-    key differs.
+    The same rule, column by column: open/close are the first/last TRADED
+    row's (whatever their value, as `.iloc` takes them), high/low/volume over
+    traded rows only, and oi/bid/ask from the bucket's last row of any kind.
+    A bucket with no trade has NaN prices, volume 0 and traded False.
+    `tests/test_options_execution.py` checks it against the loop, row for row.
     """
-    traded_rows = group[group["traded"]].sort_index()
-    last_any = group.sort_index().iloc[-1]
-    if traded_rows.empty:
-        return {
-            "timestamp": bucket_start,
-            "open": float("nan"),
-            "high": float("nan"),
-            "low": float("nan"),
-            "close": float("nan"),
-            "volume": 0.0,
-            "oi": last_any.get("oi", float("nan")),
-            "bid": last_any.get("bid", float("nan")),
-            "ask": last_any.get("ask", float("nan")),
-            "traded": False,
-        }
-    return {
-        "timestamp": bucket_start,
-        "open": traded_rows["open"].iloc[0],
-        "high": traded_rows["high"].max(),
-        "low": traded_rows["low"].min(),
-        "close": traded_rows["close"].iloc[-1],
-        "volume": traded_rows["volume"].sum(),
-        "oi": last_any.get("oi", float("nan")),
-        "bid": last_any.get("bid", float("nan")),
-        "ask": last_any.get("ask", float("nan")),
-        "traded": True,
-    }
+    work = work.sort_index(kind="stable")
+    buckets = pd.Index(work["_bucket"].unique()).sort_values()
+    traded = work[work["traded"].astype(bool)]
+    by = traded.groupby("_bucket", sort=True)
+    out = pd.DataFrame(index=buckets)
+    out["open"] = by.head(1).set_index("_bucket")["open"]
+    out["high"] = by["high"].max()
+    out["low"] = by["low"].min()
+    out["close"] = by.tail(1).set_index("_bucket")["close"]
+    out["volume"] = by["volume"].sum()
+    out["volume"] = out["volume"].fillna(0.0)
+    last_any = work.groupby("_bucket", sort=True).tail(1).set_index("_bucket")
+    for column in ("oi", "bid", "ask"):
+        out[column] = last_any[column] if column in last_any.columns else float("nan")
+    out["traded"] = out.index.isin(traded["_bucket"].unique())
+    out.index.name = "timestamp"
+    return out[BAR_COLUMNS]
 
 
 def resample_traded(df: pd.DataFrame, bucket_minutes: int) -> pd.DataFrame:
@@ -137,15 +130,7 @@ def resample_traded(df: pd.DataFrame, bucket_minutes: int) -> pd.DataFrame:
 
     work = df.copy()
     work["_bucket"] = _bucket_start(work.index, bucket_minutes)
-
-    rows = [
-        _aggregate_bucket(bucket_start, group)
-        for bucket_start, group in work.groupby("_bucket", sort=True)
-    ]
-
-    out = pd.DataFrame(rows).set_index("timestamp").sort_index()
-    out.index.name = "timestamp"
-    return out[BAR_COLUMNS]
+    return _aggregate(work)
 
 
 def resample_daily(df: pd.DataFrame) -> pd.DataFrame:
@@ -161,15 +146,7 @@ def resample_daily(df: pd.DataFrame) -> pd.DataFrame:
 
     work = df.copy()
     work["_bucket"] = pd.DatetimeIndex(work.index).normalize()
-
-    rows = [
-        _aggregate_bucket(bucket_start, group)
-        for bucket_start, group in work.groupby("_bucket", sort=True)
-    ]
-
-    out = pd.DataFrame(rows).set_index("timestamp").sort_index()
-    out.index.name = "timestamp"
-    return out[BAR_COLUMNS]
+    return _aggregate(work)
 
 
 class OptionExecution:
@@ -205,6 +182,7 @@ class OptionExecution:
         # lookback (`last_trade`) needs to see past its own calling day.
         self._signal_day: dict[str, dt.date] = {}
         self._listing_cache: dict[dt.date, pd.DataFrame] = {}
+        self._rows: dict[str, tuple[pd.DataFrame, dict]] = {}
 
     def listing(self, day: dt.date) -> pd.DataFrame:
         """The options listed on `day` (and nothing later), read once per day."""
@@ -298,13 +276,20 @@ class OptionExecution:
         self._bars_cache[contract.tradingsymbol] = bars
         return bars
 
-    def bar(self, contract: Contract, ts: dt.datetime) -> pd.Series | None:
-        """The bar starting exactly at `ts`, or None if the contract has none there."""
+    def bar(self, contract: Contract, ts: dt.datetime) -> dict | None:
+        """The bar starting exactly at `ts` (its columns by name), or None if
+        the contract has none there.
+
+        A plain row, looked up in a table built once per contract: the
+        engines ask this for every open option on every candle (170,000 times
+        in a year of 1-minute straddles), and a pandas row each time was a
+        third of the run (2026-10-16)."""
         bars = self._contract_bars(contract, ts.date())
-        ts = pd.Timestamp(ts)
-        if ts in bars.index:
-            return bars.loc[ts]
-        return None
+        rows = self._rows.get(contract.tradingsymbol)
+        if rows is None or rows[0] is not bars:
+            rows = (bars, dict(zip(bars.index, bars.to_dict("records"), strict=True)))
+            self._rows[contract.tradingsymbol] = rows
+        return rows[1].get(pd.Timestamp(ts))
 
     def bar_times(
         self, contract: Contract, after: dt.datetime, until: dt.time

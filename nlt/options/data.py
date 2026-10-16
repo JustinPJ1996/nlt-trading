@@ -96,11 +96,24 @@ def _timeframe_root(timeframe: str) -> Path:
     return FNO_ROOT / timeframe
 
 
+_DATASETS: dict[str, ds.Dataset] = {}
+
+
 def _dataset(timeframe: str) -> ds.Dataset | None:
+    """The hive dataset under `FNO_ROOT/timeframe`, discovered once per root.
+
+    Discovery walks every partition directory; done on each read it was a
+    tenth of an option backtest's time (2026-10-16). The dataset is the
+    imported history and does not change while a process runs; a different
+    `FNO_ROOT` (the tests) is a different key.
+    """
     root = _timeframe_root(timeframe)
-    if not root.exists():
-        return None
-    return ds.dataset(root, format="parquet", partitioning="hive")
+    key = str(root)
+    if key not in _DATASETS:
+        if not root.exists():
+            return None
+        _DATASETS[key] = ds.dataset(root, format="parquet", partitioning="hive")
+    return _DATASETS[key]
 
 
 def traded_mask(df: pd.DataFrame) -> pd.Series:
@@ -390,7 +403,21 @@ class OptionSource(Protocol):
 
 class ParquetSource:
     """The real data source: thin wrapper over this module's module-level
-    functions, so `OptionExecution` can take either this or `FrameSource`."""
+    functions, so `OptionExecution` can take either this or `FrameSource`.
+
+    Remembers each listing and contract read (2026-10-16): a backtest runs
+    twice -- with and without charges -- and re-reads the same contracts for
+    square-off and expiry prices. Each answer is handed out as a copy, so no
+    caller can change another's.
+    """
+
+    def __init__(self) -> None:
+        self._memo: dict[tuple, pd.DataFrame] = {}
+
+    def _remember(self, key: tuple, read) -> pd.DataFrame:
+        if key not in self._memo:
+            self._memo[key] = read()
+        return self._memo[key].copy()
 
     def coverage(self, underlying: str, timeframe: str) -> tuple[dt.date, dt.date] | None:
         return coverage(underlying, timeframe)
@@ -401,12 +428,15 @@ class ParquetSource:
         return underlying_bars(underlying, timeframe, start, end)
 
     def listing(self, underlying: str, day: dt.date) -> pd.DataFrame:
-        return listing(underlying, day)
+        return self._remember(("listing", underlying, day), lambda: listing(underlying, day))
 
     def contract_bars(
         self, underlying: str, tradingsymbol: str, timeframe: str, start: dt.date, end: dt.date
     ) -> pd.DataFrame:
-        return contract_bars(underlying, tradingsymbol, timeframe, start, end)
+        return self._remember(
+            ("bars", underlying, tradingsymbol, timeframe, start, end),
+            lambda: contract_bars(underlying, tradingsymbol, timeframe, start, end),
+        )
 
 
 # -------------------------------------------------------------- FrameSource
