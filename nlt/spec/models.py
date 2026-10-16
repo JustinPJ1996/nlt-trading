@@ -205,6 +205,12 @@ class IndicatorSpec(Base):
                 continue
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise ValueError(f"{self.type}.{key} must be a number, got {value!r}")
+            # A decimal setting stays a decimal: a spec that went through the
+            # browser comes back with 2.0 as 2 (JSON from JavaScript does not
+            # keep the difference), and the readback must not change its words
+            # -- "Supertrend(7, 2.0)" then "(7, 2)" -- for the same strategy.
+            if isinstance(default, float) and isinstance(value, int):
+                self.params[key] = float(value)
             if "length" in key or key in {"fast", "slow", "signal", "period"}:
                 if value < 1 or value > 500:
                     raise ValueError(f"{self.type}.{key}={value} is outside 1..500")

@@ -99,3 +99,18 @@ def test_a_value_the_rule_cannot_take_is_refused(text, edits, says) -> None:
 def test_a_rule_with_no_level_or_length_offers_no_boxes() -> None:
     # MACD's crossing has no level, and its three settings are not one length.
     assert _boxes("buy nifty when macd crosses above signal, stop loss 1%") == {}
+
+
+def test_a_spec_back_from_the_browser_reads_back_in_the_same_words() -> None:
+    """JSON from the browser turns 2.0 into 2; the readback must not change."""
+    import json
+
+    from nlt.spec.models import StrategySpec
+
+    spec = _read("buy nifty when supertrend(7, 2) turns green, stop loss 1%").spec
+    raw = json.loads(json.dumps(spec.model_dump(mode="json")).replace("2.0", "2"))
+    back = StrategySpec.model_validate(raw)
+    assert logic.describe_spec(back) == logic.describe_spec(spec)
+    t = _read("buy nifty when supertrend(7, 2) turns green, stop loss 1%")
+    edited, _s, _t = logic.adjust_spec(back, {"length:supertrend7x2": "12"}, t.sources)
+    assert "Supertrend(12, 2.0)" in logic.describe_spec(edited)
