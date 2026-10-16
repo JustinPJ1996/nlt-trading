@@ -162,10 +162,12 @@ export function Results({
           </div>
 
           {result.before_after_charges && (
-            <>
-              <h2 className="section-title mt-6" id="charges">
-                Before and after charges
-              </h2>
+            <details className="fold mt-6">
+              <summary>
+                <span className="section-title" id="charges">
+                  Before and after charges
+                </span>
+              </summary>
               <p className="hint mb-3">
                 The same strategy tested twice: once with no charges at all, once with brokerage,
                 taxes and fees deducted. The gap is what trading costs took.
@@ -196,7 +198,7 @@ export function Results({
                   </tbody>
                 </table>
               </div>
-            </>
+            </details>
           )}
         </section>
 
@@ -222,10 +224,13 @@ export function Results({
       )}
 
       {(result.assumptions.length > 0 || result.weak_spots.length > 0) && (
-        <section className="section method" aria-labelledby="method">
-          <h2 className="section-title" id="method">
-            How this was tested
-          </h2>
+        <details className="section method fold">
+          <summary>
+            <span className="section-title" id="method">
+              How this was tested
+            </span>
+            <span className="fold-hint">What the test assumed, and where it could be wrong</span>
+          </summary>
           <div className="method-grid">
             <div>
               <h3 className="method-title">What it assumed</h3>
@@ -244,7 +249,7 @@ export function Results({
               </ul>
             </div>
           </div>
-        </section>
+        </details>
       )}
 
       <section className="section" aria-labelledby="trades">
@@ -254,7 +259,7 @@ export function Results({
         {result.trades.length > 0 && (
           <p className="mb-3">
             <a
-              className="btn secondary"
+              className="btn secondary no-underline"
               href={`/api/results/${encodeURIComponent(result.result_id)}/trades.csv`}
               download
             >
@@ -266,8 +271,8 @@ export function Results({
           <p className="muted">This strategy never took a trade in the period tested.</p>
         ) : (
           <>
-            <div className="table-wrap">
-              <table>
+            <div className="table-wrap trades-wrap">
+              <table className="trades-table">
                 <thead>
                   <tr>
                     <th scope="col">Entered</th>
@@ -284,7 +289,7 @@ export function Results({
                 <tbody>
                   {trades.map((t, i) => (
                     <tr key={i}>
-                      <td>
+                      <td className="trade-entered">
                         {t.entered}
                         <div className="muted small">
                           {t.direction} {t.symbol}
@@ -305,13 +310,15 @@ export function Results({
                           </ul>
                         )}
                       </td>
-                      <td>{t.exited}</td>
-                      <td className="num">
+                      <td data-label="Exited">{t.exited}</td>
+                      <td className="num" data-label="Bought / sold at">
                         {t.entry_price}
                         <div className="muted small">{t.exit_price}</div>
                       </td>
-                      <td>{t.reason}</td>
-                      <td className={`num ${t.pnl > 0 ? "pos" : t.pnl < 0 ? "neg" : ""}`}>{t.pnl_text}</td>
+                      <td data-label="Why it closed">{t.reason}</td>
+                      <td className={`num trade-result ${t.pnl > 0 ? "pos" : t.pnl < 0 ? "neg" : ""}`} data-label="Result after costs">
+                        {t.pnl_text}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -326,7 +333,7 @@ export function Results({
         )}
       </section>
 
-      <div className="panel save-bar">
+      <div className="save-bar">
         <div>
           {savedName ? (
             <p>
@@ -334,7 +341,7 @@ export function Results({
               you can also start paper trading it.
             </p>
           ) : (
-            <p className="muted">Save this strategy to paper trade it on live prices later.</p>
+            <p className="muted save-note">Save this strategy to paper trade it on live prices later.</p>
           )}
           <ErrorLine error={saveError} />
         </div>

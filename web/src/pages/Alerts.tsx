@@ -69,7 +69,16 @@ export function Alerts({ onChanged }: { onChanged?: () => void }) {
             </div>
           )}
           {state.items.length === 0 ? (
-            <p className="muted">Nothing here yet.</p>
+            <div className="panel empty">
+              <h2>No alerts yet</h2>
+              <p className="muted mb-5">
+                When a one-off alert fires, or a strategy running as alerts only spots a signal, it lands
+                here. Nothing is traded.
+              </p>
+              <a className="btn secondary no-underline" href="#/orders">
+                Set up a one-off alert
+              </a>
+            </div>
           ) : (
             <ul className="log tall">
               {state.items.map((n) => {

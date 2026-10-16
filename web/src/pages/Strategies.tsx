@@ -47,7 +47,7 @@ export function Strategies({
         <div className="panel empty">
           <h2>No saved strategies yet</h2>
           <p className="muted mb-5">
-            Build a strategy, test it, then press "Save this strategy" on its results.
+            Describe a strategy in plain words, test it on past prices, then press "Save this strategy" on its results. It will show up here.
           </p>
           <button className="btn" onClick={onBuild}>
             Build a strategy
@@ -79,7 +79,7 @@ export function Strategies({
                 <p className="muted">You wrote: "{s.description}"</p>
                 <Readback text={s.readback} compact />
                 {s.runs.length > 0 && (
-                  <div className="table-wrap mt-4">
+                  <div className="table-wrap cards mt-4">
                     <table>
                       <thead>
                         <tr>
@@ -97,14 +97,14 @@ export function Strategies({
                       <tbody>
                         {s.runs.map((r) => (
                           <tr key={r.id}>
-                            <td>{friendly(r.kind)}</td>
-                            <td>{r.started}</td>
-                            <td>
+                            <td data-label="Run">{friendly(r.kind)}</td>
+                            <td data-label="Started">{r.started}</td>
+                            <td data-label="Status">
                               {friendly(r.status)}
                               {r.error && <div className="small neg">{r.error}</div>}
                             </td>
-                            <td className="num">{r.capital_text}</td>
-                            <td className="num">{r.return_text}</td>
+                            <td className="num" data-label="Money">{r.capital_text}</td>
+                            <td className="num" data-label="Return">{r.return_text}</td>
                           </tr>
                         ))}
                       </tbody>

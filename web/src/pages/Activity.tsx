@@ -83,9 +83,24 @@ export function Activity() {
 
       {!items && !error && <Working>Loading the activity feed...</Working>}
       {items && shown.length === 0 && (
-        <p className="muted mt-4">
-          Nothing recorded yet.
-        </p>
+        <div className="panel empty mt-4">
+          <h2>{skipsOnly || sourceId !== "all" ? "Nothing matches this filter" : "Nothing recorded yet"}</h2>
+          <p className="muted mb-5">
+            {skipsOnly || sourceId !== "all"
+              ? "Try choosing Everything, or untick the skipped-signals box."
+              : "Once a paper-trading run or a one-off order does something, each step shows up here."}
+          </p>
+          {!skipsOnly && sourceId === "all" && (
+            <div className="btn-row">
+              <a className="btn secondary no-underline" href="#/paper">
+                Start paper trading
+              </a>
+              <a className="btn quiet no-underline" href="#/orders">
+                Write a one-off order
+              </a>
+            </div>
+          )}
+        </div>
       )}
       {items && shown.length > 0 && (
         <ul className="log tall mt-4">
