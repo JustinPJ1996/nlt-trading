@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type SavedStrategy, type Understood } from "../api";
 import { ErrorLine, Working } from "../components/Callout";
 import { Readback } from "../components/Readback";
+import { friendly } from "../util";
 
 export function Strategies({
   onTestAgain,
@@ -45,7 +46,7 @@ export function Strategies({
       {list && list.length === 0 && (
         <div className="panel empty">
           <h2>No saved strategies yet</h2>
-          <p className="muted" style={{ marginBottom: 20 }}>
+          <p className="muted mb-5">
             Build a strategy, test it, then press "Save this strategy" on its results.
           </p>
           <button className="btn" onClick={onBuild}>
@@ -61,7 +62,7 @@ export function Strategies({
                 <span className="item-head">
                   <span className="item-name">{s.name}</span>
                   <span className="item-meta">Version {s.version}</span>
-                  <span className="tag">{s.state}</span>
+                  <span className="tag">{friendly(s.state)}</span>
                   {s.proven ? (
                     <span className="tag good">
                       <span aria-hidden="true">{"✓"}</span> Proven
@@ -69,7 +70,7 @@ export function Strategies({
                   ) : (
                     <span className="tag">Not proven yet</span>
                   )}
-                  <span className="item-meta" style={{ marginLeft: "auto" }}>
+                  <span className="item-meta ml-auto">
                     Saved {s.created}
                   </span>
                 </span>
@@ -78,7 +79,7 @@ export function Strategies({
                 <p className="muted">You wrote: "{s.description}"</p>
                 <Readback text={s.readback} compact />
                 {s.runs.length > 0 && (
-                  <div className="table-wrap" style={{ marginTop: 16 }}>
+                  <div className="table-wrap mt-4">
                     <table>
                       <thead>
                         <tr>
@@ -96,10 +97,10 @@ export function Strategies({
                       <tbody>
                         {s.runs.map((r) => (
                           <tr key={r.id}>
-                            <td>{r.kind}</td>
+                            <td>{friendly(r.kind)}</td>
                             <td>{r.started}</td>
                             <td>
-                              {r.status}
+                              {friendly(r.status)}
                               {r.error && <div className="small neg">{r.error}</div>}
                             </td>
                             <td className="num">{r.capital_text}</td>
@@ -110,11 +111,11 @@ export function Strategies({
                     </table>
                   </div>
                 )}
-                <div className="btn-row" style={{ marginTop: 16 }}>
+                <div className="btn-row mt-4">
                   <button className="btn secondary" onClick={() => testAgain(s.id)} disabled={opening !== null}>
                     Test again
                   </button>
-                  <a className="btn secondary" href="#/paper" style={{ textDecoration: "none" }}>
+                  <a className="btn secondary no-underline" href="#/paper">
                     Paper trade it
                   </a>
                   {opening === s.id && <Working>Opening...</Working>}

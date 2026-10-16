@@ -10,10 +10,12 @@
 //  - A suggested answer is a hint, never pre-filled.
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type OrderPosition, type OrderReading, type OrdersState, type SavedOrder, type Slippage, ZERO_SLIPPAGE } from "../api";
+import { api, type OrderPosition, type OrderReading, type OrdersState, type SavedOrder, type Slippage, ZERO_SLIPPAGE } from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
+import { Readback } from "../components/Readback";
 import { SlippageInput } from "../components/SlippageInput";
 import { TradeTimeline } from "../components/TradeTimeline";
+import { message } from "../util";
 
 const EXAMPLES = [
   "If Nifty spot goes below 22000, buy 1 lot Nifty Futures",
@@ -42,20 +44,9 @@ const CHECKER_TONE: Record<string, Tone> = {
   error: "critical",
 };
 
-function message(err: unknown, fallback: string) {
-  return err instanceof ApiError ? err.message : fallback;
-}
-
+// An order's readback arrives as lines, the first its title.
 function Lines({ lines }: { lines: string[] }) {
-  return (
-    <div className="readback" data-testid="order-readback">
-      {lines.map((line, i) => (
-        <p className={i === 0 ? "readback-title" : "readback-line"} key={i}>
-          {line}
-        </p>
-      ))}
-    </div>
-  );
+  return <Readback text={lines.join("\n")} testId="order-readback" />;
 }
 
 function NewOrder({ onSaved }: { onSaved: () => void }) {
@@ -155,7 +146,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
         />
         {!text && (
           <div className="examples" aria-label="Examples">
-            <span className="muted small" style={{ alignSelf: "center" }}>
+            <span className="muted small">
               Or try:
             </span>
             {EXAMPLES.map((ex) => (
@@ -173,7 +164,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
             ))}
           </div>
         )}
-        <div className="btn-row" style={{ marginTop: 16 }}>
+        <div className="btn-row mt-4">
           <button className="btn" type="submit" disabled={busy !== null || !text.trim()}>
             Read my order
           </button>
@@ -191,7 +182,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
 
       {!!r && !r.order && r.questions.length > 0 && (
         <form className="panel reveal" onSubmit={onAnswers}>
-          <p style={{ fontWeight: 650, marginBottom: 16 }}>I need a little more detail first.</p>
+          <p className="emph mb-4">I need a little more detail first.</p>
           {r.questions.map((q) => (
             <div className="question" key={q.field + q.text}>
               <label className="field">
@@ -208,7 +199,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
               </label>
             </div>
           ))}
-          <div className="btn-row" style={{ marginTop: 8 }}>
+          <div className="btn-row mt-2">
             <button
               className="btn"
               type="submit"
@@ -268,7 +259,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
             <fieldset className="panel">
               <legend className="label">Which positions should this close?</legend>
               {picks.map((p) => (
-                <label className="check" key={p.id} style={{ marginTop: 8 }}>
+                <label className="check mt-2" key={p.id}>
                   <input
                     type="checkbox"
                     checked={chosen.includes(p.id)}
@@ -361,7 +352,7 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
             {positions.map((p) => (
               <tr key={p.id}>
                 <td>
-                  #{p.id} {p.what}
+                  {p.what}
                   <div className="muted small">
                     Since {p.entered}. Expires {p.expiry}.
                   </div>
@@ -423,33 +414,35 @@ function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void })
       <div className="run-head">
         <div>
           <h3 className="item-name">
-            #{order.id} {order.sentence}
+            {order.sentence}
           </h3>
           <p className="muted small">Saved {order.saved}.</p>
         </div>
         <span className={`tag ${STATUS_TAG[order.status]}`}>{order.status_label}</span>
       </div>
       {order.result_text && (
-        <p style={{ marginTop: 8 }}>
+        <p className="mt-2">
           Result after charges:{" "}
           <span className={order.result && order.result > 0 ? "pos" : order.result && order.result < 0 ? "neg" : ""}>
             {order.result_text}
           </span>
         </p>
       )}
-      <details style={{ marginTop: 12 }} open={order.status === "waiting" || order.status === "open"}>
+      <details className="mt-3" open={order.status === "waiting" || order.status === "open"}>
         <summary>What this order does</summary>
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <Lines lines={order.readback} />
         </div>
       </details>
       {order.events.length > 0 && (
         <>
-          <ul className="log clickable" style={{ marginTop: 12 }} onClick={() => setShowTimeline(true)}>
+          <ul className="log mt-3">
             {order.events.map((e, i) => (
               <li key={i} className="clickable">
-                <time>{e.when}</time>
-                <span>{e.text}</span>
+                <button type="button" className="row-button" onClick={() => setShowTimeline(true)}>
+                  <time>{e.when}</time>
+                  <span>{e.text}</span>
+                </button>
               </li>
             ))}
           </ul>
@@ -460,7 +453,7 @@ function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void })
         <TradeTimeline target={{ kind: "order", orderId: order.id }} onClose={() => setShowTimeline(false)} />
       )}
       {order.can_cancel && (
-        <div className="btn-row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
+        <div className="row mt-4 end">
           <label className="check small">
             <input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} />
             <span>Cancel this order</span>
@@ -560,7 +553,7 @@ export function Orders() {
           </section>
 
           <section className="section" aria-labelledby="active">
-            <div className="btn-row" style={{ justifyContent: "space-between" }}>
+            <div className="row spread">
               <h2 className="section-title" id="active">
                 Waiting and open
               </h2>

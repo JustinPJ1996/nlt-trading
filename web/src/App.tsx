@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, whenLoggedOut, type Options, type Result } from "./api";
 import { Working } from "./components/Callout";
 import { RunningDrawer } from "./components/RunningDrawer";
+import { Sidebar, type NavPage } from "./components/Sidebar";
 import { Activity } from "./pages/Activity";
 import { Alerts } from "./pages/Alerts";
 import { Build, emptyBuild, type BuildState } from "./pages/Build";
@@ -13,34 +14,57 @@ import { Safety } from "./pages/Safety";
 import { Strategies } from "./pages/Strategies";
 
 const PAGES = [
-  { id: "build", label: "Build" },
-  { id: "results", label: "Results" },
-  { id: "strategies", label: "My strategies" },
-  { id: "paper", label: "Paper trading" },
-  { id: "orders", label: "One-off orders" },
-  { id: "activity", label: "Activity" },
-  { id: "safety", label: "Safety" },
-] as const;
+  { id: "build", label: "Build", icon: "build", phone: "Build" },
+  { id: "results", label: "Results", icon: "results", phone: "Results" },
+  { id: "strategies", label: "My strategies", icon: "strategies", phone: "Saved" },
+  { id: "paper", label: "Paper trading", icon: "paper", phone: "Paper" },
+  { id: "orders", label: "One-off orders", icon: "orders" },
+  { id: "activity", label: "Activity", icon: "activity" },
+] as const satisfies readonly NavPage[];
 
-type PageId = (typeof PAGES)[number]["id"] | "alerts";
+type PageId = (typeof PAGES)[number]["id"] | "alerts" | "safety";
 
 function pageFromHash(): PageId {
   const id = window.location.hash.replace(/^#\/?/, "");
-  if (id === "alerts") return "alerts";
+  if (id === "alerts" || id === "safety") return id;
   return (PAGES.find((p) => p.id === id)?.id ?? "build") as PageId;
 }
 
 function pageTitle(page: PageId): string {
   if (page === "alerts") return "Alerts";
+  if (page === "safety") return "Safety";
   return PAGES.find((p) => p.id === page)?.label ?? "";
+}
+
+// What is on the Build and Results pages survives a reload of the tab (but not
+// closing it), so a refresh never throws away a strategy being checked.
+const SAVED_BUILD = "sd-build";
+const SAVED_RESULT = "sd-result";
+
+function remembered<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function remember(key: string, value: unknown): void {
+  try {
+    if (value == null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage full or blocked: the page still works, it just forgets on reload.
+  }
 }
 
 export function App() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [page, setPage] = useState<PageId>(pageFromHash);
   const [options, setOptions] = useState<Options | null>(null);
-  const [build, setBuild] = useState<BuildState>(emptyBuild);
-  const [result, setResult] = useState<Result | null>(null);
+  const [build, setBuild] = useState<BuildState>(() => remembered<BuildState>(SAVED_BUILD) ?? emptyBuild());
+  const [result, setResult] = useState<Result | null>(() => remembered<Result>(SAVED_RESULT));
   const [killed, setKilled] = useState(false);
   const [runningCount, setRunningCount] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -80,6 +104,9 @@ export function App() {
     };
   }, [user, refreshKill, refreshRunningCount, refreshUnreadCount]);
 
+  useEffect(() => remember(SAVED_BUILD, build), [build]);
+  useEffect(() => remember(SAVED_RESULT, result), [result]);
+
   useEffect(() => {
     document.title = `${pageTitle(page)} - Strategy Desk`;
     window.scrollTo(0, 0);
@@ -99,37 +126,22 @@ export function App() {
   if (user === null) return <Login onDone={setUser} />;
 
   return (
-    <>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <span className="wordmark">Strategy Desk</span>
-          <nav className="nav" aria-label="Main">
-            {PAGES.map((p) => (
-              <a key={p.id} href={`#/${p.id}`} aria-current={page === p.id ? "page" : undefined}>
-                {p.label}
-              </a>
-            ))}
-          </nav>
-          <button className="btn secondary small" onClick={() => setDrawerOpen(true)}>
-            Running &middot; {runningCount}
-          </button>
-          <button
-            className="bell-btn"
-            aria-label={unreadCount > 0 ? `Alerts, ${unreadCount} unread` : "Alerts"}
-            aria-current={page === "alerts" ? "page" : undefined}
-            onClick={() => (window.location.hash = "/alerts")}
-          >
-            <span aria-hidden="true">&#128276;</span>
-            {unreadCount > 0 && <span className="bell-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
-          </button>
-          <button
-            className="signout"
-            onClick={() => api.logout().finally(() => setUser(null))}
-          >
-            Log out
-          </button>
-        </div>
-      </header>
+    <div className="shell">
+      <Sidebar
+        pages={PAGES}
+        current={page}
+        runningCount={runningCount}
+        unreadCount={unreadCount}
+        onRunning={() => setDrawerOpen(true)}
+        onLogout={() => {
+          api.logout().finally(() => {
+            remember(SAVED_BUILD, null);
+            remember(SAVED_RESULT, null);
+            setUser(null);
+          });
+        }}
+      />
+      <div className="content">
       {killed && (
         <div className="killbanner" role="alert">
           A kill switch is on. <a href="#/safety">See Safety</a>
@@ -189,6 +201,7 @@ export function App() {
         {page === "safety" && <Safety onChange={(s) => setKilled(s.live || s.paper)} />}
         {page === "alerts" && <Alerts onChanged={refreshUnreadCount} />}
       </main>
-    </>
+      </div>
+    </div>
   );
 }

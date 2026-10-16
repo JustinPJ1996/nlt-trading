@@ -58,15 +58,15 @@ export function SettingsPanel({
   return (
     <div className="settings-panel">
       <p className="label">Settings</p>
-      <label className="field" style={{ marginTop: 0 }}>
-        <span className="label">Algo type</span>
+      <label className="field mt-0">
+        <span className="label">Trading style</span>
         <select
           value={settings.algo_type}
           disabled={!settings.can_be_intraday}
           onChange={(e) => onChange({ algo_type: e.target.value === "intraday" ? "intraday" : "multi_day" })}
         >
-          <option value="intraday">Intraday Algo</option>
-          <option value="multi_day">Multi-day Algo</option>
+          <option value="intraday">Same-day (closes every day)</option>
+          <option value="multi_day">Multi-day (can hold overnight)</option>
         </select>
         {!settings.can_be_intraday && <span className="hint">Daily candles are always multi-day.</span>}
       </label>
@@ -79,7 +79,7 @@ export function SettingsPanel({
             checked={settings.entry_cutoff}
             onChange={(e) => onChange({ entry_cutoff: e.target.checked })}
           />
-          <span className="label" style={{ margin: 0 }}>Entry cut-off time</span>
+          <span className="label m-0">Entry cut-off time</span>
         </label>
         <span className="hint">No new entries within this many minutes before market close</span>
         <Stepper
@@ -97,19 +97,19 @@ export function SettingsPanel({
       <div className="field">
         <label className="check-row" htmlFor={`${idPrefix}-eod`}>
           <input id={`${idPrefix}-eod`} type="checkbox" checked={intraday} disabled readOnly />
-          <span className="label" style={{ margin: 0 }}>Square off all open positions EOD</span>
+          <span className="label m-0">Square off all open positions at the end of the day</span>
         </label>
         <span className="hint">
           {intraday
-            ? "Always on for intraday algos — disable by switching the algo type to multi-day"
-            : "Off for multi-day algos: positions are held overnight"}
+            ? "Always on for same-day strategies. Switch the trading style to multi-day to turn it off."
+            : "Off for multi-day strategies: positions are held overnight"}
         </span>
       </div>
 
       {intraday && (
         <div className="field">
           <span className="label">Minutes before market close</span>
-          <span className="hint" style={{ marginTop: 0, marginBottom: 6 }}>
+          <span className="hint mt-0 mb-2">
             Time before market close at which open positions get squared off
           </span>
           <Stepper

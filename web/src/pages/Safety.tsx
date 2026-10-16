@@ -72,7 +72,7 @@ function KillSwitch({
         )}
       </div>
       {error && (
-        <div style={{ marginTop: 12 }}>
+        <div className="mt-3">
           <ErrorLine error={error} />
         </div>
       )}
@@ -120,7 +120,7 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
                 <tbody>
                   {state.freshness.map((f) => (
                     <tr key={f.symbol}>
-                      <th scope="row" style={{ width: 140 }}>
+                      <th scope="row" className="col-label">
                         {f.symbol}
                       </th>
                       <td>
@@ -155,7 +155,7 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
                   <tbody>
                     {state.audit.map((a, i) => (
                       <tr key={i}>
-                        <td style={{ whiteSpace: "nowrap" }}>{a.when}</td>
+                        <td className="nowrap">{a.when}</td>
                         <td>
                           {a.event.charAt(0).toUpperCase() + a.event.slice(1)}
                           {a.detail && <div className="muted small">{a.detail}</div>}

@@ -27,7 +27,7 @@ export function Login({ onDone }: { onDone: (user: string) => void }) {
     <div className="login-page">
       <form className="login-card panel" onSubmit={submit}>
         <h1 className="wordmark">Strategy Desk</h1>
-        <p className="muted" style={{ marginBottom: 24 }}>
+        <p className="muted mb-5">
           Log in to build and test your strategies.
         </p>
         <label className="field">
@@ -38,9 +38,9 @@ export function Login({ onDone }: { onDone: (user: string) => void }) {
           <span className="label">Password</span>
           <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
-        <div style={{ marginTop: 20 }} className="stack">
+        <div className="stack mt-5">
           <ErrorLine error={error} />
-          <button className="btn" type="submit" disabled={busy} style={{ width: "100%", justifyContent: "center" }}>
+          <button className="btn full" type="submit" disabled={busy}>
             {busy ? "Logging in..." : "Log in"}
           </button>
         </div>

@@ -1,74 +1,91 @@
 /* Strategy Desk -- one stylesheet, written against named roles.
 
-   Two voices. The app *speaks* in Newsreader: the readback ("here is what I
-   understood") and the verdict. Everything you operate -- buttons, fields,
-   tables -- is Public Sans. Keeping the serif to those moments is what makes
-   them read as statements to check rather than more interface.
+   Indigo ink on a cool ground, and one loud thing: the readback, which is the
+   safety story, wears a marigold highlighter. Everything else stays quiet so
+   that it reads as "check this", not as more interface.
 
-   Chart series colours are slots 1 and 2 of the dataviz reference palette,
-   validated for colour-blind separation in both modes. Status colours are
-   reserved for state and always travel with an icon and a word. */
+   Two faces. Bricolage Grotesque for page titles, the verdict and the big
+   numbers; Public Sans for everything you read closely or operate.
+
+   Green and red are kept for money made and lost and always travel with a
+   word. The theme follows the computer until the switch in the menu is used
+   (data-theme on <html>, set in main.tsx). */
 
 :root {
   color-scheme: light;
-  --paper: #edf1f5;
+  --paper: #f3f4f7;
   --surface: #ffffff;
-  --sunk: #f5f7fa;
-  --ink: #15203a;
-  --ink-2: #4c576b;
-  --ink-3: #6b7588;
-  --rule: #d4dbe4;
-  --rule-strong: #b7c1ce;
-  --mark: #e3a02f; /* the readback's margin: "read this" */
-  --focus: #2459d6;
-  --action: #15203a;
+  --sunk: #f6f7fa;
+  --rail: #eceef4;
+  --ink: #1e2550;
+  --ink-2: #4f5578;
+  --ink-3: #6e7390;
+  --rule: #dcdfe9;
+  --rule-strong: #bfc3d4;
+  --mark: #e8a317; /* the readback's highlighter: "read this" */
+  --mark-wash: #fdf1d6;
+  --focus: #3d4fd6;
+  --action: #2a338a;
   --action-ink: #ffffff;
+  --accent-wash: #e7e9f8;
 
-  --good: #0b7a3e;
-  --good-wash: #e5f4ea;
-  --critical: #b8312b;
+  --good: #12775a;
+  --good-wash: #e2f3ec;
+  --critical: #b93a33;
   --critical-wash: #fbeceb;
   --warning: #8a5a00;
   --warning-wash: #fdf3dc;
-  --info-wash: #e9eef5;
+  --info-wash: #eceef8;
 
   --series-1: #2a78d6;
   --series-2: #eb6834;
 
-  --serif: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  --display: "Bricolage Grotesque Variable", "Public Sans Variable", system-ui, sans-serif;
+  --serif: var(--display);
   --sans: "Public Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  --radius-s: 6px;
-  --radius-m: 10px;
-  --shadow: 0 1px 2px rgba(21, 32, 58, 0.06), 0 4px 16px rgba(21, 32, 58, 0.05);
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  --radius-s: 8px; /* controls */
+  --radius-m: 14px; /* panels */
+  --radius-pill: 999px; /* chips and tags */
+  --shadow: 0 1px 2px rgba(30, 37, 80, 0.05), 0 6px 20px rgba(30, 37, 80, 0.05);
+  --rail-width: 232px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --paper: #10172a;
-    --surface: #182136;
-    --sunk: #1d2740;
-    --ink: #eef2f8;
-    --ink-2: #b6c0d0;
-    --ink-3: #8e99ad;
-    --rule: #2c3852;
-    --rule-strong: #43506c;
-    --mark: #e8ab45;
-    --focus: #7ea6ff;
-    --action: #eef2f8;
-    --action-ink: #10172a;
-    --good: #5cc98a;
-    --good-wash: #15302a;
-    --critical: #f08a83;
-    --critical-wash: #3a1f25;
-    --warning: #f0c060;
-    --warning-wash: #352c17;
-    --info-wash: #1f2a44;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #13162b;
+  --surface: #1b1f3a;
+  --sunk: #20253f;
+  --rail: #171a32;
+  --ink: #eceef8;
+  --ink-2: #b7bbd6;
+  --ink-3: #9196b5;
+  --rule: #2d3256;
+  --rule-strong: #454b74;
+  --mark: #f2b740;
+  --mark-wash: #3a3020;
+  --focus: #93a2ff;
+  --action: #c9cfff;
+  --action-ink: #13162b;
+  --accent-wash: #272d55;
+  --good: #5cc99a;
+  --good-wash: #15302a;
+  --critical: #f08a83;
+  --critical-wash: #3a1f25;
+  --warning: #f0c060;
+  --warning-wash: #352c17;
+  --info-wash: #232848;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 * {
@@ -130,118 +147,131 @@ a {
 
 /* ------------------------------------------------------------------ shell */
 
-.topbar {
+/* A rail down the left on a computer; on a phone, a slim bar at the top and
+   the main pages along the bottom, where a thumb reaches them. */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  align-items: start;
+  min-height: 100vh;
+  /* The rail's colour runs the full height of a long page. */
+  background: linear-gradient(to right, var(--rail) calc(var(--rail-width) - 1px), var(--rule) 0 var(--rail-width), transparent 0);
+}
+
+.rail {
   position: sticky;
   top: 0;
-  z-index: 10;
-  background: var(--surface);
-  border-bottom: 1px solid var(--rule);
-}
-
-.topbar-inner {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 0 24px;
+  height: 100vh;
   display: flex;
-  align-items: center;
-  gap: 20px;
-  min-height: 60px;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-5) var(--s-3) var(--s-4);
+  overflow-y: auto;
 }
 
 .wordmark {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 1.3rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   white-space: nowrap;
-}
-
-/* The menu has its own row under the wordmark and the header buttons, so
-   adding a page never pushes one out of sight. */
-.topbar-inner {
-  flex-wrap: wrap;
-}
-
-.wordmark {
-  flex: 1;
-}
-
-.nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 2px;
-  order: 3;
-  flex-basis: 100%;
-  margin: -8px 0 0 -9px;
-}
-
-.nav a {
-  display: block;
-  padding: 18px 9px 16px;
   text-decoration: none;
-  color: var(--ink-2);
-  font-weight: 500;
-  font-size: 0.95rem;
-  white-space: nowrap;
-  border-bottom: 3px solid transparent;
-}
-
-.nav a:hover {
-  color: var(--ink);
-}
-
-.nav a[aria-current="page"] {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
-}
-
-.bell-btn {
-  position: relative;
-  appearance: none;
-  background: none;
-  border: 0;
-  color: var(--ink-2);
-  font-size: 1.15rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 8px;
   display: inline-flex;
   align-items: center;
+  gap: 10px;
 }
 
-.bell-btn:hover {
+.wordmark-glyph {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  color: var(--mark);
+}
+
+.rail .wordmark {
+  padding: 0 var(--s-3) var(--s-5);
+}
+
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-spacer {
+  flex: 1;
+  min-height: var(--s-5);
+}
+
+.rail-link {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 9px var(--s-3);
+  border-radius: var(--radius-s);
+  color: var(--ink-2);
+  font-weight: 550;
+  font-size: 0.95rem;
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-link svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.rail-link:hover {
   color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
-.bell-btn[aria-current="page"] {
+.rail-link[aria-current="page"] {
   color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
-.bell-badge {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--critical);
-  color: #fff;
-  font-size: 0.65rem;
-  font-weight: 700;
-  line-height: 16px;
+.rail-link[aria-current="page"] svg {
+  color: var(--action);
+}
+
+.rail-count {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-wash);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 22px;
   text-align: center;
 }
 
-.signout {
-  background: none;
-  border: 0;
-  color: var(--ink-2);
-  font: inherit;
-  font-size: 0.9rem;
-  cursor: pointer;
-  padding: 8px;
-  white-space: nowrap;
+.rail-count.live {
+  background: var(--good-wash);
+  color: var(--good);
+}
+
+.rail-count.alert {
+  background: var(--critical);
+  color: #fff;
+}
+
+/* Phone chrome: hidden on a computer. */
+.phone-bar,
+.tabbar,
+.more-sheet {
+  display: none;
 }
 
 .killbanner {
@@ -257,22 +287,103 @@ a {
   color: #fff;
 }
 
+.content {
+  min-width: 0;
+}
+
 main {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 40px 24px 96px;
+  max-width: 1040px;
+  padding: var(--s-7) 56px 96px;
 }
 
 .narrow {
   max-width: 760px;
 }
 
+@media (max-width: 860px) {
+  .shell {
+    display: block;
+    background: none;
+  }
+
+  .rail {
+    display: none;
+  }
+
+  .phone-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: 10px var(--s-4);
+    background: var(--surface);
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .phone-bar .wordmark {
+    flex: 1;
+    font-size: 1.15rem;
+  }
+
+  .phone-bar .rail-link {
+    width: auto;
+    padding: 8px;
+  }
+
+  .tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    background: var(--surface);
+    border-top: 1px solid var(--rule);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+
+  .tabbar .rail-link {
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 2px;
+    font-size: 0.72rem;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .tabbar .rail-link[aria-current="page"] {
+    box-shadow: none;
+    background: var(--accent-wash);
+  }
+
+  .more-sheet {
+    display: block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background: var(--surface);
+    border-radius: var(--radius-m) var(--radius-m) 0 0;
+    padding: var(--s-4) var(--s-3) calc(var(--s-5) + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.2);
+    z-index: 60;
+  }
+
+  main {
+    padding: var(--s-5) var(--s-4) 120px;
+  }
+}
+
 .page-title {
-  font-family: var(--serif);
-  font-weight: 500;
-  font-size: clamp(2rem, 4vw, 2.6rem);
-  letter-spacing: -0.015em;
-  margin-bottom: 8px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(1.9rem, 3.6vw, 2.5rem);
+  letter-spacing: -0.025em;
+  margin-bottom: var(--s-2);
 }
 
 .page-lede {
@@ -283,13 +394,15 @@ main {
 }
 
 .section-title {
-  font-size: 1.15rem;
+  font-family: var(--display);
+  font-size: 1.2rem;
   font-weight: 650;
-  margin-bottom: 12px;
+  letter-spacing: -0.01em;
+  margin-bottom: var(--s-3);
 }
 
 .section {
-  margin-top: 48px;
+  margin-top: var(--s-7);
 }
 
 .muted {
@@ -301,8 +414,56 @@ main {
 }
 
 .stack > * + * {
-  margin-top: 12px;
+  margin-top: var(--s-3);
 }
+
+/* Spacing helpers: the only way a page adds space between two things, so the
+   gaps across the app come from one scale. */
+.mt-1 { margin-top: var(--s-1) !important; }
+.mt-2 { margin-top: var(--s-2) !important; }
+.mt-3 { margin-top: var(--s-3) !important; }
+.mt-4 { margin-top: var(--s-4) !important; }
+.mt-5 { margin-top: var(--s-5) !important; }
+.mt-6 { margin-top: var(--s-6) !important; }
+.mb-2 { margin-bottom: var(--s-2) !important; }
+.mb-3 { margin-bottom: var(--s-3) !important; }
+.mb-4 { margin-bottom: var(--s-4) !important; }
+.mb-5 { margin-bottom: var(--s-5) !important; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
+.row.tight { gap: var(--s-2); }
+.row.spread { justify-content: space-between; }
+.grow { flex: 1; }
+.full { width: 100%; justify-content: center; }
+.no-underline { text-decoration: none; }
+.mt-0 { margin-top: 0 !important; }
+.m-0 { margin: 0 !important; }
+.my-4 { margin-top: var(--s-4) !important; margin-bottom: var(--s-4) !important; }
+.ml-2 { margin-left: var(--s-2); }
+.mr-2 { margin-right: var(--s-2); }
+.ml-auto { margin-left: auto; }
+.row.end { justify-content: flex-end; }
+.nowrap { white-space: nowrap; }
+.emph { font-weight: 650; }
+.tall { max-height: none; }
+.minw-field { min-width: 220px; }
+.col-label { width: 140px; }
+.leg-list { margin: var(--s-1) 0 0; padding-left: var(--s-4); }
+.key.s1 { background: var(--series-1); }
+.key.s2 { background: var(--series-2); }
+.log.tall { max-height: none; }
+.row-button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+.row-button:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 
 /* ---------------------------------------------------------------- controls */
 
@@ -756,20 +917,31 @@ textarea:focus {
 /* ---------------------------------------------------------------- readback */
 
 .readback {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-left: 5px solid var(--mark);
-  border-radius: var(--radius-s);
-  padding: 22px 28px 24px;
-  font-family: var(--serif);
-  font-size: 1.2rem;
-  line-height: 1.55;
+  border-radius: var(--radius-m);
+  padding: 22px 28px 24px 32px;
+  font-family: var(--sans);
+  font-size: 1.08rem;
+  line-height: 1.6;
   box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* The highlighter stroke down the left edge: the one loud thing in the app. */
+.readback::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 6px;
+  background: var(--mark);
 }
 
 .readback-title {
-  font-size: 1.55rem;
-  font-weight: 550;
+  font-family: var(--display);
+  font-size: 1.45rem;
+  font-weight: 650;
   letter-spacing: -0.01em;
   margin-bottom: 4px;
 }
@@ -782,7 +954,7 @@ textarea:focus {
   font-family: var(--sans);
   font-size: 0.85rem;
   font-weight: 650;
-  color: var(--ink-2);
+  color: var(--ink-3);
   text-transform: lowercase;
   margin-bottom: 2px;
 }
@@ -809,8 +981,8 @@ textarea:focus {
 }
 
 .readback-label.said {
-  background: var(--good-wash);
-  color: var(--good);
+  background: var(--mark-wash);
+  color: var(--ink);
 }
 
 .readback-label.worked_out {
@@ -831,8 +1003,8 @@ textarea:focus {
 }
 
 .readback.compact {
-  font-size: 1.05rem;
-  padding: 16px 20px;
+  font-size: 1rem;
+  padding: 16px 20px 16px 26px;
   box-shadow: none;
 }
 
@@ -1232,6 +1404,20 @@ details[open] > summary::before {
   cursor: pointer;
 }
 
+.log li.clickable {
+  display: block;
+  padding: 0;
+}
+
+.log li.clickable .row-button {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 12px;
+  padding: 8px;
+  margin: 0 -8px;
+  width: calc(100% + 16px);
+}
+
 .log li.clickable:hover span:not(.drift) {
   text-decoration: underline;
   text-decoration-color: var(--rule-strong);
@@ -1246,7 +1432,7 @@ details[open] > summary::before {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(21, 32, 58, 0.45);
+  background: rgba(19, 22, 43, 0.5);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1465,22 +1651,12 @@ details[open] > summary::before {
 }
 
 @media (max-width: 640px) {
-  main {
-    padding: 28px 16px 72px;
-  }
-  .topbar-inner {
-    padding: 0 12px;
-    gap: 12px;
-  }
-  .wordmark {
-    font-size: 1.1rem;
-  }
   .step {
     padding-left: 46px;
   }
   .readback {
-    padding: 18px 18px 20px;
-    font-size: 1.1rem;
+    padding: 18px 18px 20px 24px;
+    font-size: 1.02rem;
   }
   .list-item-body {
     padding-left: 20px;
@@ -1499,23 +1675,6 @@ details[open] > summary::before {
 /* On a phone the pages get their own scrolling row under the name, so no
    page is ever hidden behind "Log out". */
 @media (max-width: 720px) {
-  .topbar-inner {
-    flex-wrap: wrap;
-    row-gap: 0;
-    padding-top: 8px;
-  }
-  .wordmark {
-    flex: 1;
-  }
-  .nav {
-    order: 3;
-    flex-basis: 100%;
-    margin: 0 -12px;
-    padding: 0 4px;
-  }
-  .nav a {
-    padding: 10px 10px 10px;
-  }
   .example {
     border-radius: var(--radius-m);
   }

@@ -481,13 +481,13 @@ export function Build({
                 }}
               />
             )}
-            <div className="btn-row" style={{ marginTop: 16 }}>
+            <div className="btn-row mt-4">
               <button className="btn" type="submit" disabled={checking || !state.text.trim()}>
                 Check my strategy
               </button>
               {checking && <Working>Reading your strategy...</Working>}
             </div>
-            <div style={{ marginTop: 12 }}>
+            <div className="mt-3">
               <ErrorLine error={error} />
             </div>
           </form>
@@ -541,7 +541,7 @@ export function Build({
                     </p>
                   )}
                   {!confirmed && (
-                    <div className="btn-row" style={{ marginTop: 20 }}>
+                    <div className="btn-row mt-5">
                       <button className="btn" onClick={confirm} disabled={adjusting || !!adjustError}>
                         Yes, that's right
                       </button>
@@ -555,7 +555,7 @@ export function Build({
 
               {!understood && visibleQuestions.length > 0 && (
                 <form className="panel" onSubmit={onAnswers}>
-                  <p style={{ fontWeight: 650, marginBottom: 16 }}>I need a little more detail first.</p>
+                  <p className="emph mb-4">I need a little more detail first.</p>
                   {visibleQuestions.map((q) => {
                     const draft = state.draftAnswers[q.field] ?? "";
                     const answer = (value: string) =>
@@ -580,7 +580,7 @@ export function Build({
                           </div>
                         )}
                         {q.answerable && (
-                          <label className="field" style={{ marginTop: q.choices.length ? 8 : 0 }}>
+                          <label className={`field ${q.choices.length ? "mt-2" : "mt-0"}`}>
                             {q.choices.length > 0 && <span className="hint">Or type your own</span>}
                             <input
                               type="text"
@@ -601,7 +601,7 @@ export function Build({
                     );
                   })}
                   {visibleQuestions.some((q) => q.answerable || q.choices.length > 0) && (
-                  <div className="btn-row" style={{ marginTop: 8 }}>
+                  <div className="btn-row mt-2">
                     <button
                       className="btn"
                       type="submit"
@@ -630,19 +630,19 @@ export function Build({
             <div className="panel reveal">
               <p>{understood.backtest_problem}</p>
               {savedDraft === null ? (
-                <div className="btn-row" style={{ marginTop: 16 }}>
+                <div className="btn-row mt-4">
                   <button className="btn" type="button" onClick={saveForPaper} disabled={savingDraft}>
                     Save for paper trading
                   </button>
                   {savingDraft && <Working>Saving...</Working>}
                 </div>
               ) : (
-                <div style={{ marginTop: 16 }}>
+                <div className="mt-4">
                   <p>
                     Saved “{savedDraft}”. It has not been tested on past prices. You can start it
                     from the Paper trading page.
                   </p>
-                  <div className="btn-row" style={{ marginTop: 12 }}>
+                  <div className="btn-row mt-3">
                     <button className="btn" type="button" onClick={onPaper}>
                       Go to Paper trading
                     </button>
@@ -650,7 +650,7 @@ export function Build({
                 </div>
               )}
               {runError && (
-                <div style={{ marginTop: 16 }}>
+                <div className="mt-4">
                   <ErrorLine error={runError} />
                 </div>
               )}
@@ -659,7 +659,7 @@ export function Build({
           {confirmed && options && !understood?.backtest_problem && (
             <form className="panel reveal" onSubmit={run}>
               <div className="grid-2">
-                <label className="field" style={{ marginTop: 0 }}>
+                <label className="field mt-0">
                   <span className="label">Starting money</span>
                   <span className="money">
                     <span aria-hidden="true">Rs</span>
@@ -675,7 +675,7 @@ export function Build({
                     {capitalProblem ?? "Pretend money. Nothing real is traded."}
                   </span>
                 </label>
-                <label className="field" style={{ marginTop: 0 }}>
+                <label className="field mt-0">
                   <span className="label">Trading costs to charge</span>
                   <select value={state.costModel} onChange={(e) => set({ costModel: e.target.value })}>
                     {options.cost_models.map((c) => (
@@ -685,38 +685,38 @@ export function Build({
                   <span className="hint">Shares, futures and options always use their own real charges.</span>
                 </label>
                 <SlippageInput value={state.slippage} onChange={(slippage) => set({ slippage })} />
-                <label className="field" style={{ marginTop: 0 }}>
+                <label className="field mt-0">
                   <span className="label">From</span>
                   <input type="date" value={state.start} onChange={(e) => set({ start: e.target.value })} />
                 </label>
-                <label className="field" style={{ marginTop: 0 }}>
+                <label className="field mt-0">
                   <span className="label">To</span>
                   <input type="date" value={state.end} onChange={(e) => set({ end: e.target.value })} />
                 </label>
               </div>
               {tr?.period && (
-                <p className="hint" style={{ marginTop: 12 }}>
+                <p className="hint mt-3">
                   Dates set from your words: “{tr.period.words}”. You can change them.
                   {tr.period.note && <> {tr.period.note}</>}
                 </p>
               )}
               {dateProblem && (
-                <div style={{ marginTop: 12 }}>
+                <div className="mt-3">
                   <ErrorLine error={dateProblem} />
                 </div>
               )}
-              <p className="hint" style={{ marginTop: 12 }}>
+              <p className="hint mt-3">
                 A longer stretch of history gives a more trustworthy answer. Past results are not a
                 promise.
               </p>
-              <div className="btn-row" style={{ marginTop: 20 }}>
+              <div className="btn-row mt-5">
                 <button className="btn" type="submit" disabled={running || !!capitalProblem || !!dateProblem || slippageProblem}>
                   Run backtest
                 </button>
                 {running && <Working>Testing on past prices. This can take a minute...</Working>}
               </div>
               {runError && (
-                <div style={{ marginTop: 16 }}>
+                <div className="mt-4">
                   <ErrorLine error={runError} />
                 </div>
               )}
