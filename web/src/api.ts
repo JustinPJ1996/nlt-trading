@@ -90,7 +90,11 @@ export type Understood = {
   allowed_timeframes?: string[] | null;
   // Why this can only be paper traded (a strike the user named); null otherwise.
   backtest_problem?: string | null;
+  // Boxes for the numbers inside the buy/sell rule: levels and lengths.
+  rule_boxes?: RuleBox[];
 };
+
+export type RuleBox = { key: string; group: string; label: string; value: number; hint: string };
 
 export type Choice = { label: string; value: string };
 

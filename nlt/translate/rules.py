@@ -725,18 +725,30 @@ def _build_trend_strong(m: re.Match, ind: _Indicators, notes: list[str]) -> Cond
     return Compare(op="gt", left=_adx_ref(ind, None), right=Const(value=25))
 
 
+# "Supertrend(7, 2)": the settings the user named are the settings tested --
+# never quietly the standard (10, 3). Without them, the standard.
+_SUPERTREND = r"supertrend\s*(?:\(\s*(?P<st_len>\d{1,3})\s*,\s*(?P<st_mult>\d+(?:\.\d+)?)\s*\)\s*)?"
+
+
+def _supertrend_ref(m: re.Match, ind: _Indicators) -> Ref:
+    length = int(m.group("st_len")) if m.group("st_len") else 10
+    mult = float(m.group("st_mult")) if m.group("st_mult") else 3.0
+    if (length, mult) == (10, 3.0):
+        ind_id = ind.declare("supertrend10", "supertrend", {})
+    else:
+        tag = f"{mult:g}".replace(".", "_")
+        ind_id = ind.declare(
+            f"supertrend{length}x{tag}", "supertrend", {"length": length, "mult": mult}
+        )
+    return Ref(name=ind_id, output="direction")
+
+
 def _build_supertrend_bullish(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
-    ind.declare("supertrend10", "supertrend", {})
-    return Compare(
-        op="crosses_above", left=Ref(name="supertrend10", output="direction"), right=Const(value=0)
-    )
+    return Compare(op="crosses_above", left=_supertrend_ref(m, ind), right=Const(value=0))
 
 
 def _build_supertrend_bearish(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
-    ind.declare("supertrend10", "supertrend", {})
-    return Compare(
-        op="crosses_below", left=Ref(name="supertrend10", output="direction"), right=Const(value=0)
-    )
+    return Compare(op="crosses_below", left=_supertrend_ref(m, ind), right=Const(value=0))
 
 
 def _bb_ref(ind: _Indicators, length: int | None, output: str) -> Ref:
@@ -751,6 +763,13 @@ def _build_touch_lower_band(m: re.Match, ind: _Indicators, notes: list[str]) -> 
 
 def _build_touch_upper_band(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
     return Compare(op="gte", left=Ref(name="close"), right=_bb_ref(ind, None, "upper"))
+
+
+def _build_band_cross(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+    """ "close crosses below the lower Bollinger band": the moment it goes
+    through, not every candle it stays beyond (that is "touches")."""
+    op = "crosses_above" if re.fullmatch(_CROSS_UP_WORDS, m.group("verb")) else "crosses_below"
+    return Compare(op=op, left=Ref(name="close"), right=_bb_ref(ind, None, m.group("band")))
 
 
 def _build_bb_squeeze(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
@@ -881,6 +900,12 @@ _CROSS_UP_WORDS = (
 # Users often name the subject before the verb ("price closes above ..."). Without
 # this the subject is left over and surfaces as a spurious "I did not understand".
 _OPT_PRICE = r"(?:(?:the\s*)?(?:price|close|nifty|banknifty|it)\s*)?"
+
+# The subject for the newer crossing rows: only words that can mean this
+# instrument's own price. Not index names -- "buy BANKNIFTY when NIFTY crosses
+# above its 200 SMA" uses NIFTY as a signal for another instrument, and reading
+# NIFTY there as "the price" would be a wrong parse, not a refusal.
+_OPT_OWN_PRICE = r"(?:(?:the\s*)?(?:price|close|it)\s*)?"
 
 _STATE_DOWN_WORDS = r"is below|is under|while below|as long as it'?s under|below|under|<"
 _STATE_UP_WORDS = r"is above|is over|while above|above|over|>"
@@ -1290,6 +1315,26 @@ CONDITION_PATTERNS: list[PatternRule] = [
         _build_ma_cross("gt"),
         "20 EMA above 200 EMA",
     ),
+    # Before price_above_ma: "close crosses above the 200 SMA" is the moment it
+    # goes through, not every candle it stays above.
+    PatternRule(
+        "price_crosses_above_ma",
+        re.compile(
+            rf"{_OPT_OWN_PRICE}(?:{_CROSS_UP_WORDS})\s*(?:the\s*)?"
+            r"(?P<len>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
+        ),
+        _build_price_vs_ma("crosses_above"),
+        "close crosses above the 200 SMA",
+    ),
+    PatternRule(
+        "price_crosses_below_ma",
+        re.compile(
+            rf"{_OPT_OWN_PRICE}(?:{_CROSS_DOWN_WORDS})\s*(?:the\s*)?"
+            r"(?P<len>\d{1,3})\s*(?:-?\s*day\s*)?(?P<t>ema|sma|wma|hma|dma|ma|moving average)"
+        ),
+        _build_price_vs_ma("crosses_below"),
+        "close crosses below the 50 EMA",
+    ),
     PatternRule(
         "price_above_ma",
         re.compile(
@@ -1358,15 +1403,30 @@ CONDITION_PATTERNS: list[PatternRule] = [
     ),
     PatternRule(
         "supertrend_bullish",
-        re.compile(r"supertrend\s*(?:turns\s*)?(?:green|bullish|positive)"),
+        re.compile(
+            _SUPERTREND
+            + r"(?:turns|flips)?\s*(?:to\s*)?(?:an?\s*)?(?:green|bullish|positive|uptrend|up\b)"
+        ),
         _build_supertrend_bullish,
         "supertrend turns green",
     ),
     PatternRule(
         "supertrend_bearish",
-        re.compile(r"supertrend\s*(?:turns\s*)?(?:red|bearish|negative)"),
+        re.compile(
+            _SUPERTREND
+            + r"(?:turns|flips)?\s*(?:to\s*)?(?:an?\s*)?(?:red|bearish|negative|downtrend|down\b)"
+        ),
         _build_supertrend_bearish,
         "supertrend turns red",
+    ),
+    PatternRule(
+        "bb_band_cross",
+        re.compile(
+            rf"{_OPT_OWN_PRICE}(?P<verb>{_CROSS_UP_WORDS}|{_CROSS_DOWN_WORDS})\s*(?:the\s*)?"
+            r"(?P<band>lower|upper)\s*(?:bollinger\s*)?band"
+        ),
+        _build_band_cross,
+        "close crosses below the lower bollinger band",
     ),
     PatternRule(
         "bb_touch_lower",

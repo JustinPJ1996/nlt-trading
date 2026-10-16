@@ -16,6 +16,7 @@ import {
   ApiError,
   type Options,
   type Result,
+  type RuleBox,
   type SettingsEdits,
   type Slippage,
   type StrategySettings,
@@ -123,6 +124,7 @@ function withEdits(base: StrategySettings, edits: Record<string, string>): Strat
 // hold, so it always says what will be tested.
 function AdjustBoxes({
   spec,
+  ruleBoxes,
   allowedTimeframes,
   settings,
   edits,
@@ -131,6 +133,7 @@ function AdjustBoxes({
   error,
 }: {
   spec: SpecShape;
+  ruleBoxes: RuleBox[];
   allowedTimeframes: string[] | null;
   settings: StrategySettings | null;
   edits: Record<string, string>;
@@ -148,14 +151,35 @@ function AdjustBoxes({
       ? sold[0].stop_pct
       : null;
   const candles = allowedTimeframes ? CANDLES.filter(([v]) => allowedTimeframes.includes(v)) : CANDLES;
+  // The numbers inside the rule itself, grouped by where they act. The server
+  // lists them and checks every value; the readback is redrawn from the result.
+  const ruleFields = (group: string) =>
+    ruleBoxes
+      .filter((b) => b.group === group)
+      .map((b) => (
+        <label className="field" key={b.key}>
+          <span className="label">{b.label}</span>
+          <input inputMode="decimal" value={value(b.key, b.value)} onChange={(e) => onEdit(b.key, e.target.value)} />
+          <span className="hint">{b.hint}</span>
+        </label>
+      ));
+  const buyFields = ruleFields("When to buy");
+  const settingFields = ruleFields("Indicator settings");
   return (
     <section className="adjust" aria-labelledby="adjust-title">
       <h3 className="adjust-title" id="adjust-title">
         Fine-tune the numbers
       </h3>
       <p className="hint mt-0 mb-3">Change a box and the description above is rewritten to match.</p>
+      {buyFields.length > 0 && (
+        <>
+          <p className="adjust-group">When to buy</p>
+          <div className="adjust-grid">{buyFields}</div>
+        </>
+      )}
       <p className="adjust-group">When to sell</p>
       <div className="adjust-grid">
+        {ruleFields("When to sell")}
         {isLegs && soldStop != null && (
           <label className="field">
             <span className="label">Stop loss on each sold option (%)</span>
@@ -213,6 +237,12 @@ function AdjustBoxes({
           </label>
         )}
       </div>
+      {settingFields.length > 0 && (
+        <>
+          <p className="adjust-group">Indicator settings</p>
+          <div className="adjust-grid">{settingFields}</div>
+        </>
+      )}
       <p className="adjust-group">Chart and timing</p>
       <div className="adjust-grid">
         <label className="field">
@@ -508,6 +538,7 @@ export function Build({
                   {original && (
                     <AdjustBoxes
                       spec={original.spec as SpecShape}
+                      ruleBoxes={original.rule_boxes ?? []}
                       allowedTimeframes={original.allowed_timeframes ?? null}
                       settings={understood.settings ?? original.settings ?? null}
                       edits={state.edits}

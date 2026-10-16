@@ -903,10 +903,32 @@ NIFTY 50 stocks RSI(2) dip -26.2%; RELIANCE/HDFCBANK/INFY/LT MACD -1.8% to -5.1%
 BANKNIFTY RSI(2) dip -1.1%; NIFTY stochastic oversold -2.6%; NIFTY golden cross
 3 trades). Justin chose: lead with the two, then the four earlier cards with
 the most trades, and say on the page that most of the 34 tried failed
-(`LIBRARY_TRIED`). **Not read, worth fixing:** "close crosses above 200 SMA",
-"Supertrend(10, 3) turns to an uptrend" (and "turns bullish"), "close crosses
-below the lower Bollinger band", "close crosses above 50 SMA" -- all refused
-(safe), all common phrasings.
+(`LIBRARY_TRIED`). The common phrasings it refused are now read (below).
+
+**Follow-ups (2026-10-16, branch `followups`).**
+- **Reader:** "close/price/it crosses above|below the N SMA/EMA" is a
+  crossing (`price_crosses_above_ma`, before `price_above_ma`); "crosses
+  below/above the lower/upper Bollinger band" (`bb_band_cross`); Supertrend
+  takes "turns to an uptrend / turns up / flips", and **settings in brackets
+  are the settings tested** -- Supertrend(7, 2) is 7 and 2, never quietly
+  (10, 3). **A wrong parse caught on the way:** the first version reused
+  `_OPT_PRICE`, which counts "nifty" as "the price", so "buy BANKNIFTY when
+  NIFTY crosses above 200 SMA" read NIFTY's signal as BANKNIFTY's own price.
+  The new rows use `_OPT_OWN_PRICE` (price/close/it only); tests pin both
+  that and "RSI/volume/MACD/VIX crosses above an SMA" as refused. Every row
+  was broken on purpose and a test failed each time.
+- **Boxes inside the rule** (`logic.rule_boxes`, `_apply_rule_edits`): an
+  oscillator's level (RSI, stochastic, MFI, ADX, Williams %R, CCI -- each
+  held to its scale) and each used indicator's length (2-500). Keys
+  `level:<path>.<side>` / `length:<id>`; a key the strategy does not have is
+  refused; two sides of a rule made identical ("20 SMA crosses 20 SMA") are
+  refused. The readback is regenerated; the edited part becomes "You said"
+  unless it shows a number the user never typed (then "We worked out", as
+  before). Five mutations each failed a test.
+- **Safety log in words** (`api._audit_words`): every event the store writes
+  has a title and sentence; the fingerprint hash is no longer shown.
+  `tests/test_safety_words.py` finds the events by reading `nlt/store/db.py`,
+  so a new event without wording fails the build.
 
 ### One-off conditional orders (ATO-style) — **BUILT (2026-10-08), paper only**
 

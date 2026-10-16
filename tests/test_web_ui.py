@@ -151,3 +151,19 @@ def test_changing_the_stop_box_shows_the_new_readback(page, site) -> None:
     ).json()
     expected = [line.strip() for line in edited["readback"].split("\n") if line.strip()]
     assert _screen_lines(page) == expected
+
+
+def test_changing_the_rsi_level_box_shows_the_new_rule(page, site) -> None:
+    """The boxes for numbers inside the buy rule (2026-10-16): the readback on
+    screen must become the engine's readback of the changed rule."""
+    page.locator("textarea").first.fill(RSI)
+    page.get_by_role("button", name="Check my strategy").click()
+    page.locator('[data-testid="readback"]').wait_for()
+    assert "crosses below 30" in page.locator('[data-testid="readback"]').inner_text()
+
+    page.get_by_label("RSI level").fill("25")
+    page.wait_for_function(
+        "() => document.querySelector('[data-testid=readback]').innerText.includes('crosses below 25')",
+        timeout=10_000,
+    )
+    assert "crosses below 30" not in page.locator('[data-testid="readback"]').inner_text()
