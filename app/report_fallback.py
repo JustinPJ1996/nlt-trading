@@ -128,7 +128,7 @@ def assess(result: BacktestResult, comparison: Comparison) -> Verdict:
                 headline="This strategy never traded",
                 detail=(
                     "Over the whole period tested, the entry condition never fired. "
-                    "There is nothing here to judge yet -- try a longer date range or "
+                    "There is nothing here to judge yet – try a longer date range or "
                     "a less restrictive entry rule."
                 ),
             )

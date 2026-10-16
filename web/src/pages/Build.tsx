@@ -24,7 +24,7 @@ import {
   ZERO_SLIPPAGE,
 } from "../api";
 import { Callout, ErrorLine, Working } from "../components/Callout";
-import { Library } from "../components/Library";
+import { Anatomy } from "../components/Anatomy";
 import { Readback } from "../components/Readback";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { SlippageInput } from "../components/SlippageInput";
@@ -46,6 +46,8 @@ export type BuildState = {
   // The form's boxes (A4), as typed, and the strategy the server made of them.
   edits: Record<string, string>;
   adjusted: Understood | null;
+  // Set by Home: read the sentence as soon as the page opens.
+  checkNow?: boolean;
 };
 
 export function emptyBuild(): BuildState {
@@ -65,35 +67,6 @@ export function emptyBuild(): BuildState {
     edits: {},
     adjusted: null,
   };
-}
-
-// What a complete strategy says, one part per line. Stop loss has its own line
-// and is marked required: a strategy without one comes back as a question.
-const GUIDE: { part: string; example: string; required?: boolean }[] = [
-  { part: "What to trade", example: "NIFTY, RELIANCE, crude oil futures" },
-  { part: "When to buy", example: "when RSI(14) crosses below 30" },
-  { part: "Stop loss", example: "stop loss 1%", required: true },
-  { part: "When to exit", example: "target 2%, or sell when RSI crosses above 70" },
-  { part: "Chart and test period", example: "on 15-minute candles, backtest the last 2 years" },
-];
-
-function PromptGuide() {
-  return (
-    <div className="guide" aria-label="What to include">
-      <p className="guide-title">What to include</p>
-      <dl>
-        {GUIDE.map((g) => (
-          <div className="guide-row" key={g.part}>
-            <dt>
-              {g.part}
-              {g.required && <span className="guide-required">required</span>}
-            </dt>
-            <dd>{g.example}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
 }
 
 type SpecShape = {
@@ -176,8 +149,12 @@ function AdjustBoxes({
       : null;
   const candles = allowedTimeframes ? CANDLES.filter(([v]) => allowedTimeframes.includes(v)) : CANDLES;
   return (
-    <details className="adjust" open={Object.keys(edits).length > 0}>
-      <summary>Change the numbers before testing</summary>
+    <section className="adjust" aria-labelledby="adjust-title">
+      <h3 className="adjust-title" id="adjust-title">
+        Fine-tune the numbers
+      </h3>
+      <p className="hint mt-0 mb-3">Change a box and the description above is rewritten to match.</p>
+      <p className="adjust-group">When to sell</p>
       <div className="adjust-grid">
         {isLegs && soldStop != null && (
           <label className="field">
@@ -235,6 +212,9 @@ function AdjustBoxes({
             <span className="hint">Leave empty for no target.</span>
           </label>
         )}
+      </div>
+      <p className="adjust-group">Chart and timing</p>
+      <div className="adjust-grid">
         <label className="field">
           <span className="label">Candles</span>
           <select value={value("timeframe", spec.instrument.timeframe)} onChange={(e) => onEdit("timeframe", e.target.value)}>
@@ -257,7 +237,7 @@ function AdjustBoxes({
       {busy && <Working>Updating what will be tested...</Working>}
       {error && <ErrorLine error={error} />}
       <p className="hint">The test period is set in the next step.</p>
-    </details>
+    </section>
   );
 }
 
@@ -297,6 +277,13 @@ export function Build({
       });
     }
   }, [options]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (state.checkNow) {
+      set({ checkNow: false });
+      check(state.text, {});
+    }
+  }, [state.checkNow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stale = state.checkedText !== null && state.text.trim() !== state.checkedText;
   const tr = stale ? null : state.translation;
@@ -472,14 +459,11 @@ export function Build({
               placeholder="e.g. buy nifty when rsi cracks 30, target 2%, stop loss 1%"
               rows={3}
             />
-            {!state.text && <PromptGuide />}
+            {!state.text && <Anatomy />}
             {!state.text && (
-              <Library
-                onPick={(sentence) => {
-                  set({ text: sentence });
-                  check(sentence, {});
-                }}
-              />
+              <p className="hint mt-4">
+                Or start from a <a href="#/home">ready-made strategy</a>.
+              </p>
             )}
             <div className="btn-row mt-4">
               <button className="btn" type="submit" disabled={checking || !state.text.trim()}>
@@ -541,21 +525,28 @@ export function Build({
                     </p>
                   )}
                   {!confirmed && (
-                    <div className="btn-row mt-5">
-                      <button className="btn" onClick={confirm} disabled={adjusting || !!adjustError}>
-                        Yes, that's right
-                      </button>
-                      <button className="btn secondary" onClick={rephrase}>
-                        No, change my description
-                      </button>
+                    <div className="confirm-bar">
+                      <p className="confirm-ask">Is this what you meant?</p>
+                      <div className="btn-row">
+                        <button className="btn" onClick={confirm} disabled={adjusting || !!adjustError}>
+                          Yes, that's right
+                        </button>
+                        <button className="btn secondary" onClick={rephrase}>
+                          No, change my description
+                        </button>
+                      </div>
                     </div>
                   )}
                 </>
               )}
 
               {!understood && visibleQuestions.length > 0 && (
-                <form className="panel" onSubmit={onAnswers}>
-                  <p className="emph mb-4">I need a little more detail first.</p>
+                <form className="panel questions-card" onSubmit={onAnswers}>
+                  <p className="questions-title">
+                    {visibleQuestions.length === 1
+                      ? "One thing to settle before testing"
+                      : `${visibleQuestions.length} things to settle before testing`}
+                  </p>
                   {visibleQuestions.map((q) => {
                     const draft = state.draftAnswers[q.field] ?? "";
                     const answer = (value: string) =>
@@ -607,7 +598,7 @@ export function Build({
                       type="submit"
                       disabled={checking || !visibleQuestions.some((q) => (state.draftAnswers[q.field] ?? "").trim())}
                     >
-                      Use these answers
+                      Continue
                     </button>
                     {checking && <Working>Reading again...</Working>}
                   </div>
@@ -658,7 +649,7 @@ export function Build({
           )}
           {confirmed && options && !understood?.backtest_problem && (
             <form className="panel reveal" onSubmit={run}>
-              <div className="grid-2">
+              <div className="test-grid">
                 <label className="field mt-0">
                   <span className="label">Starting money</span>
                   <span className="money">
@@ -684,7 +675,6 @@ export function Build({
                   </select>
                   <span className="hint">Shares, futures and options always use their own real charges.</span>
                 </label>
-                <SlippageInput value={state.slippage} onChange={(slippage) => set({ slippage })} />
                 <label className="field mt-0">
                   <span className="label">From</span>
                   <input type="date" value={state.start} onChange={(e) => set({ start: e.target.value })} />
@@ -693,6 +683,9 @@ export function Build({
                   <span className="label">To</span>
                   <input type="date" value={state.end} onChange={(e) => set({ end: e.target.value })} />
                 </label>
+                <div className="span-2">
+                  <SlippageInput value={state.slippage} onChange={(slippage) => set({ slippage })} />
+                </div>
               </div>
               {tr?.period && (
                 <p className="hint mt-3">

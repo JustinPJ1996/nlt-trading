@@ -114,7 +114,7 @@ def save_token(token: str) -> None:
     if token.lower().startswith("enctoken "):
         token = token[len("enctoken ") :].strip()
     if not token or any(c.isspace() for c in token):
-        raise ValueError("that doesn't look like a Kite token -- copy just the enctoken value")
+        raise ValueError("that doesn't look like a Kite token – copy just the enctoken value")
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(TOKEN_PATH.parent, 0o700)
     fd = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -190,7 +190,7 @@ def _send(path: str, params: dict | None, token: str, session) -> dict:
         raise KiteUnavailable(f"could not reach Kite: {exc.__class__.__name__}") from None
 
     if resp.status_code in (401, 403):
-        raise KiteTokenExpired("Kite rejected the token -- it has expired or was logged out")
+        raise KiteTokenExpired("Kite rejected the token – it has expired or was logged out")
     try:
         body = resp.json()
     except ValueError:
@@ -198,7 +198,7 @@ def _send(path: str, params: dict | None, token: str, session) -> dict:
             f"Kite answered {resp.status_code} with something unreadable"
         ) from None
     if body.get("error_type") == "TokenException":
-        raise KiteTokenExpired("Kite rejected the token -- it has expired or was logged out")
+        raise KiteTokenExpired("Kite rejected the token – it has expired or was logged out")
     if resp.status_code != 200 or body.get("status") != "success":
         raise KiteUnavailable(f"Kite answered {resp.status_code}: {body.get('message', '')[:200]}")
     return body.get("data") or {}

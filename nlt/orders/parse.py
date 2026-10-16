@@ -176,7 +176,7 @@ def _pull_percent(
         questions.append(
             _refusal(
                 f'Is the {what} "{m.group(0).strip()}" a percentage? If so, please add the '
-                f"% sign. A {what} in points or rupees can't be set yet -- only in percent.",
+                f"% sign. A {what} in points or rupees can't be set yet – only in percent.",
                 f"A {what} in points or rupees reads very differently from one in percent, "
                 "and guessing wrong would put it in the wrong place.",
                 field_name=f"trade.{what.replace(' ', '_')}",
@@ -260,7 +260,7 @@ def _traded(
                 return symbol
             if re.fullmatch(_SPOT, q):
                 return _refusal(
-                    f"The {symbol} index itself cannot be bought -- only its futures or "
+                    f"The {symbol} index itself cannot be bought – only its futures or "
                     f"options. Did you mean {symbol} futures?",
                     "An index is a number, not something you can own.",
                     field_name="trade.symbol",
@@ -726,7 +726,7 @@ def parse_order(text: str, answers: dict[str, str] | None = None) -> OrderReadin
             None,
             [
                 _refusal(
-                    "One-off orders for options aren't available yet -- only futures. You can "
+                    "One-off orders for options aren't available yet – only futures. You can "
                     "backtest buying a single call or put as a strategy on the Build page.",
                     "A one-off order needs the same strike and expiry choice backtested "
                     "strategies now have, and that wiring doesn't exist for one-off orders yet.",
@@ -794,7 +794,7 @@ def parse_order(text: str, answers: dict[str, str] | None = None) -> OrderReadin
             _refusal(
                 "A stop loss or target doesn't apply here: this order doesn't open a "
                 "position. Remove it, or put it on an order that buys or sells.",
-                "There is nothing it could protect -- nothing is bought or sold.",
+                "There is nothing it could protect – nothing is bought or sold.",
                 field_name="trade.stop_loss",
             )
         )

@@ -557,6 +557,7 @@ main {
 }
 
 input[type="text"],
+input:not([type]),
 input[type="password"],
 input[type="date"],
 input[type="number"],
@@ -1715,97 +1716,269 @@ details[open] > summary::before {
 /* ------------------------------------------------------ adjust before testing */
 
 .adjust {
-  margin-top: 14px;
-  padding: 12px 16px;
-  background: var(--sunk);
+  margin-top: var(--s-4);
+  padding: var(--s-5);
+  background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
 }
 
-.adjust summary {
-  cursor: pointer;
+.adjust-title {
+  font-family: var(--display);
+  font-size: 1.1rem;
   font-weight: 650;
-  color: var(--ink-2);
+  margin-bottom: var(--s-1);
+}
+
+.adjust-group {
+  margin-top: var(--s-4);
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--ink-3);
 }
 
 .adjust-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
-  margin: 12px 0 8px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--s-3) var(--s-4);
+  margin: var(--s-2) 0 var(--s-2);
+}
+
+.adjust-grid .field + .field {
+  margin-top: 0;
+}
+
+/* "Is this what you meant?" stays in reach while the readback is read. */
+.confirm-bar {
+  position: sticky;
+  bottom: var(--s-4);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+  margin-top: var(--s-5);
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-m);
+  box-shadow: 0 8px 28px rgba(30, 37, 80, 0.14);
+}
+
+.confirm-ask {
+  font-family: var(--display);
+  font-weight: 650;
+  font-size: 1.05rem;
+}
+
+@media (max-width: 860px) {
+  .confirm-bar {
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    padding: var(--s-2) var(--s-3);
+    gap: var(--s-2);
+  }
+  .confirm-ask {
+    font-size: 0.9rem;
+  }
+  .confirm-bar .btn-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s-2);
+    width: 100%;
+  }
+  .confirm-bar .btn {
+    justify-content: center;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+    text-align: center;
+  }
+}
+
+.questions-card {
+  border-left: 4px solid var(--mark);
+}
+
+.questions-title {
+  font-family: var(--display);
+  font-weight: 650;
+  font-size: 1.15rem;
+  margin-bottom: var(--s-4);
 }
 
 /* ------------------------------------------------------ ready-made strategies */
 
 .library {
-  margin-top: 18px;
+  margin-top: var(--s-7);
 }
 
-.library-title {
-  font-size: 0.95rem;
-  font-weight: 650;
+.library-intro {
+  max-width: 62ch;
   color: var(--ink-2);
-  margin-bottom: 8px;
+  margin-bottom: var(--s-4);
 }
 
 .library-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px;
-  margin-bottom: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-4);
 }
 
 .library-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--s-2);
   text-align: left;
   font: inherit;
-  padding: 12px 14px;
+  color: inherit;
+  padding: var(--s-4) var(--s-4) var(--s-3);
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-s);
+  border-radius: var(--radius-m);
   cursor: pointer;
 }
 
 .library-card:hover {
-  border-color: var(--ink-2);
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow);
 }
 
-.library-card:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+.library-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-1) var(--s-2);
 }
 
 .library-card-title {
+  font-family: var(--display);
+  font-size: 1.08rem;
   font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .library-warning {
-  align-self: flex-start;
-  padding: 0 7px;
-  border-radius: 999px;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
   background: var(--critical-wash);
   color: var(--critical);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.library-sentence {
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 64px;
+  margin: var(--s-1) 0;
+}
+
+.spark path {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.spark-s {
+  stroke: var(--series-1);
+}
+
+.spark-b {
+  stroke: var(--series-2);
+}
+
+.spark-zero {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
 }
 
 .library-numbers {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-4);
   font-size: 0.9rem;
 }
 
-.library-small {
+.library-figure {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.library-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--s-3);
   font-size: 0.8rem;
   color: var(--ink-2);
 }
 
-.library-sentence {
-  margin-top: 4px;
+.library-period {
   font-size: 0.8rem;
   color: var(--ink-3);
+}
+
+/* -------------------------------------------------------------------- home */
+
+.home-title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  max-width: 20ch;
+  margin-bottom: var(--s-3);
+}
+
+.home-ask textarea {
+  font-size: 1.15rem;
+  padding: var(--s-4);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow);
+}
+
+/* A sentence taken apart: each part highlighted the way the readback is, and
+   named underneath. */
+.anatomy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) 6px;
+  margin-top: var(--s-5);
+  font-size: 1.02rem;
+}
+
+.anatomy-part {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.anatomy-words {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--mark-wash);
+  box-shadow: inset 0 -2px 0 var(--mark);
+}
+
+.anatomy-name {
+  padding-left: 4px;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+}
+
+.anatomy-name b {
+  color: var(--warning);
+  font-weight: 600;
 }
 
 /* ------------------------------------------------------------ settings panel */
@@ -1815,6 +1988,34 @@ details[open] > summary::before {
   padding-top: 12px;
   border-top: 1px solid var(--rule);
   max-width: 420px;
+}
+
+/* Inside "Fine-tune the numbers" the panel is one more group, not a section. */
+.adjust .settings-panel {
+  margin-top: var(--s-3);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.adjust .settings-heading {
+  display: none;
+}
+
+.test-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4) var(--s-5);
+}
+
+.test-grid .span-2 {
+  grid-column: 1 / -1;
+  max-width: 360px;
+}
+
+@media (max-width: 640px) {
+  .test-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .check-row {

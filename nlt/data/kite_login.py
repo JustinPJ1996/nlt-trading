@@ -112,7 +112,7 @@ def save_credentials(user_id: str, password: str, authenticator_secret: str) -> 
     """
     user_id = user_id.strip().upper()
     if not user_id or any(c.isspace() for c in user_id):
-        raise ValueError("the Kite user ID looks wrong -- it is short, like AB1234")
+        raise ValueError("the Kite user ID looks wrong – it is short, like AB1234")
     if not password:
         raise ValueError("the password is empty")
     secret = _secret_from(authenticator_secret)
@@ -120,12 +120,12 @@ def save_credentials(user_id: str, password: str, authenticator_secret: str) -> 
         totp(secret)
     except (ValueError, TypeError):
         raise ValueError(
-            "that doesn't look like an authenticator secret -- it is a long run of "
+            "that doesn't look like an authenticator secret – it is a long run of "
             "letters A-Z and digits 2-7, not the 6-digit code"
         ) from None
     if len(secret) < 16:
         raise ValueError(
-            "that is too short for an authenticator secret -- it is not the 6-digit code"
+            "that is too short for an authenticator secret – it is not the 6-digit code"
         )
     _write_private(
         CREDENTIALS_PATH,

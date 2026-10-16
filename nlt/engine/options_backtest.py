@@ -192,7 +192,7 @@ def run_option_backtest(
     if capital < FNO_MINIMUM_CAPITAL:
         warnings.append(
             f"OPTIONS ON A SMALL ACCOUNT: this was tested with Rs {capital:,.0f}. Options are "
-            f"not really tradeable below about Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one lot is "
+            f"not really tradeable below about Rs {FNO_MINIMUM_CAPITAL:,.0f} – one lot is "
             f"{lot_size} units and indivisible, so a smaller account must either skip most "
             "trades or bet far too much of itself on a single contract. Treat these results "
             "as theoretical."
@@ -325,7 +325,7 @@ def run_option_backtest(
                         {
                             "why": why,
                             "message": f"{label} did not trade in the {ts:%d %b %Y %H:%M} "
-                            "candle, so this signal was skipped -- never another strike.",
+                            "candle, so this signal was skipped – never another strike.",
                         },
                     )
                 )

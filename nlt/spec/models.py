@@ -271,7 +271,7 @@ class ExitRules(Base):
             ]
         ):
             raise ValueError(
-                "the strategy has no exit rule -- it would hold forever. "
+                "the strategy has no exit rule – it would hold forever. "
                 "Add a target, a stop loss, an exit condition or a time limit."
             )
         if self.stop_atr_mult and not self.atr_id:
@@ -587,7 +587,7 @@ class Instrument(Base):
                 f"{self.symbol} options are not supported; supported: {', '.join(OPTION_UNDERLYINGS)}"
             )
         if len(set(self.legs)) != len(self.legs):
-            raise ValueError("two legs are identical -- write them as one leg with more lots")
+            raise ValueError("two legs are identical – write them as one leg with more lots")
         return self
 
     @property
@@ -738,7 +738,7 @@ class StrategySpec(Base):
             unstopped = [leg for leg in legs if leg.side == "sell" and leg.stop_pct is None]
             if unstopped and self.exit.combined_stop_pct is None:
                 raise ValueError(
-                    "a sold option without a bought one protecting it needs a stop loss -- "
+                    "a sold option without a bought one protecting it needs a stop loss – "
                     "on each sold leg, or on the combined premium"
                 )
         if self.exit.exits_on_legs and not (
@@ -828,7 +828,7 @@ def _check_ref(ref: Ref, by_id: dict[str, IndicatorSpec], where: str) -> None:
         if ref.output is None:
             raise ValueError(
                 f"{where}: {ref.name!r} is a {spec.type} with several outputs "
-                f"{list(d.outputs)} -- say which one"
+                f"{list(d.outputs)} – say which one"
             )
         if ref.output not in d.outputs:
             raise ValueError(

@@ -53,12 +53,12 @@ class Slippage:
             raise ValueError("Slippage cannot be negative.")
         if self.kind == "pct" and self.value > _MAX_PCT:
             raise ValueError(
-                f"Slippage of {self.value:g}% is too high -- the most this app will model is "
+                f"Slippage of {self.value:g}% is too high – the most this app will model is "
                 f"{_MAX_PCT:g}%. A real order almost never slips anywhere near that much."
             )
         if self.kind == "rs" and self.value > _MAX_RS:
             raise ValueError(
-                f"Slippage of Rs {self.value:g} per unit is too high -- the most this app will "
+                f"Slippage of Rs {self.value:g} per unit is too high – the most this app will "
                 f"model is Rs {_MAX_RS:g}. A real order almost never slips anywhere near that much."
             )
 

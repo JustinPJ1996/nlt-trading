@@ -428,7 +428,7 @@ def run_backtest(
         warnings.append(
             f"OPTIONS ON A SMALL ACCOUNT: this was tested with "
             f"Rs {capital:,.0f}. Options are not really tradeable below about "
-            f"Rs {FNO_MINIMUM_CAPITAL:,.0f} -- one NIFTY lot is "
+            f"Rs {FNO_MINIMUM_CAPITAL:,.0f} – one NIFTY lot is "
             f"{exchange_lot_size('NIFTY', 'option')} units and "
             "indivisible, so a smaller account must either skip most trades or "
             "bet far too much of itself on a single contract. Treat these "
@@ -878,7 +878,7 @@ def run_backtest(
         warnings.append(
             f"{boundary_entry_skipped_count} entry signal(s) skipped: they fired on the last "
             "bar of a trading session, and this intraday strategy would otherwise have filled "
-            "them at the next session's open -- a gap of 14+ hours the strategy never asked "
+            "them at the next session's open – a gap of 14+ hours the strategy never asked "
             "to hold through"
         )
 
@@ -979,7 +979,7 @@ def _assert_no_overnight_carry(
     if entry_date != exit_date:
         raise RuntimeError(
             f"intraday position opened {entry_time} (session {entry_date}) exited "
-            f"{exit_time} (session {exit_date}) -- an intraday strategy must never "
+            f"{exit_time} (session {exit_date}) – an intraday strategy must never "
             "carry a position across a session boundary; this indicates the "
             "square-off / last-bar-of-session forcing logic failed to fire"
         )

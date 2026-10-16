@@ -138,7 +138,7 @@ def _chain_for(
             ),
             "no_weekly": (
                 f"{underlying} had no weekly options listed around {day:%d %b %Y} "
-                "(it only lists monthly expiries now, or -- for 'next weekly' -- "
+                "(it only lists monthly expiries now, or – for 'next weekly' – "
                 "no second upcoming weekly expiry was listed), so no contract "
                 "could be chosen."
             ),
@@ -273,7 +273,7 @@ def resolve_points(
             f"{underlying} closed at {level} on the {candle_time} candle; {where}, but "
             f"the nearest listed {_OPTION_TYPE_WORDS[option_type]} strike for the "
             f"{expiry:%d %b %Y} expiry was {format_strike(strike)}, more than one strike "
-            "away, so no contract was chosen -- another strike is never used instead."
+            "away, so no contract was chosen – another strike is never used instead."
         )
         return Resolution(None, REASON_POINTS_OUT_OF_RANGE, why)
 
@@ -321,7 +321,7 @@ def resolve_fixed(
         why = (
             f"The {format_strike(strike)} {_OPTION_TYPE_WORDS[option_type]} was not listed "
             f"for the {expiry:%d %b %Y} expiry on {signal_time:%d %b %Y}, so no contract was "
-            "chosen -- another strike is never used instead."
+            "chosen – another strike is never used instead."
         )
         return Resolution(None, REASON_STRIKE_NOT_LISTED, why)
     row = chain[(chain["strike"] - strike).abs() < 1e-6].iloc[0]

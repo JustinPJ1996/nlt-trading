@@ -755,7 +755,7 @@ def _build_touch_upper_band(m: re.Match, ind: _Indicators, notes: list[str]) -> 
 
 def _build_bb_squeeze(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
     notes.append(
-        "'bollinger squeeze' was read as bandwidth below 0.1 -- an arbitrary but "
+        "'bollinger squeeze' was read as bandwidth below 0.1 – an arbitrary but "
         "conservative threshold; adjust it if this fires too often or too rarely."
     )
     return Compare(op="lt", left=_bb_ref(ind, None, "bandwidth"), right=Const(value=0.1))
@@ -909,7 +909,7 @@ def _build_at_rsi_level(
     verb = "dropping to" if direction == "long" else "rising to"
     notes.append(
         f"'at RSI {m.group('level')}' was read as RSI {verb} that level, based on "
-        f"the {direction} direction of the trade -- say 'crosses below'/'crosses "
+        f"the {direction} direction of the trade – say 'crosses below'/'crosses "
         "above' explicitly if that is not what you meant."
     )
     return Compare(op=op, left=ref, right=Const(value=float(m.group("level"))))
@@ -2205,7 +2205,7 @@ def _extract_backtest_window(text: str) -> tuple[str, str | None, BacktestPeriod
     return (
         text,
         (
-            "The description mentioned a backtest date range (" + "; ".join(found) + ") -- "
+            "The description mentioned a backtest date range (" + "; ".join(found) + ") – "
             "it was not clear enough to set the dates from, so set the test period "
             "yourself when you run it."
         ),
@@ -2518,7 +2518,7 @@ def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question |
     is_basket = trade_as == "stock" and _is_universe_symbol(symbol)
 
     vwap_explainer = (
-        "VWAP only means something on intraday candles -- on a daily bar, a whole "
+        "VWAP only means something on intraday candles – on a daily bar, a whole "
         "trading session is a single bar, so VWAP collapses to that bar's own "
         "typical price, not what 'above VWAP' usually means."
     )
@@ -2528,7 +2528,7 @@ def _vwap_refusal(indicators: list[dict], instrument_kwargs: dict) -> Question |
             text=(
                 f"{vwap_explainer} On top of that, {symbol} resolves to a basket of "
                 "stocks, and every stock in this platform only has daily price data "
-                "available today -- so a VWAP strategy on this basket cannot be "
+                "available today – so a VWAP strategy on this basket cannot be "
                 "backtested yet, on any timeframe."
             ),
             why=(
@@ -2852,7 +2852,7 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
                     text="What stop loss should this strategy use?",
                     why=(
                         "A strategy with no stop loss can lose far more than intended before "
-                        "anything closes the position -- we never assume one for you."
+                        "anything closes the position – we never assume one for you."
                     ),
                     suggestion="A common starting point is 1%.",
                     field="exit.stop_pct",

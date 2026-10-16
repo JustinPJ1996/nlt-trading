@@ -132,9 +132,17 @@ export type LibraryCard = {
   first?: string;
   last?: string;
   serious_warning?: boolean;
+  // % gained on the starting money, strategy (s) and simply holding (b), thinned.
+  curve?: { s: number[]; b: number[] };
 };
 
-export type Library = { tested_to: string; capital_text: string; cards: LibraryCard[] };
+export type Library = {
+  tested_to: string;
+  capital_text: string;
+  // How many simple strategies were tried to choose these (said on the page).
+  tried?: number;
+  cards: LibraryCard[];
+};
 
 export type Options = {
   examples: string[];

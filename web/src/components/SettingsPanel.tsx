@@ -57,7 +57,7 @@ export function SettingsPanel({
   const { limits } = settings;
   return (
     <div className="settings-panel">
-      <p className="label">Settings</p>
+      <p className="label settings-heading">Settings</p>
       <label className="field mt-0">
         <span className="label">Trading style</span>
         <select
