@@ -1237,13 +1237,132 @@ tbody th {
 }
 
 .save-bar {
-  margin-top: 48px;
-  padding: 20px 24px;
+  position: sticky;
+  bottom: var(--s-4);
+  z-index: 5;
+  margin-top: var(--s-7);
+  padding: var(--s-3) var(--s-4);
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: var(--s-3) var(--s-4);
   align-items: center;
   justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-m);
+  box-shadow: 0 8px 28px rgba(30, 37, 80, 0.14);
+}
+
+@media (max-width: 860px) {
+  .save-bar {
+    bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  .save-bar {
+    padding: var(--s-2) var(--s-3);
+    gap: var(--s-2);
+  }
+  .save-bar .save-note {
+    display: none;
+  }
+  .save-bar .btn {
+    flex: 1;
+    justify-content: center;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+  }
+  .save-bar .btn-row {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  tbody th[scope="row"] {
+    min-width: 132px;
+  }
+}
+
+/* A section kept folded: the heading is the button that opens it. */
+details.fold > summary {
+  flex-wrap: wrap;
+  padding: var(--s-2) 0;
+}
+
+details.fold > summary .section-title {
+  margin-bottom: 0;
+}
+
+.fold-hint {
+  flex-basis: 100%;
+  padding-left: 15px;
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+details.fold[open] > summary {
+  margin-bottom: var(--s-3);
+}
+
+/* On a phone each trade is a small card: when it opened and what it made on
+   the first line, the rest labelled underneath. */
+@media (max-width: 640px) {
+  .trades-wrap {
+    border: 0;
+    background: none;
+    overflow: visible;
+  }
+  .trades-table,
+  .trades-table tbody {
+    display: block;
+  }
+  .trades-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .trades-table tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    margin-bottom: var(--s-2);
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-m);
+  }
+  .trades-table td {
+    display: block;
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+  .trades-table td.trade-entered {
+    grid-column: 1;
+    grid-row: 1;
+    font-weight: 600;
+  }
+  .trades-table td.trade-result {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: right;
+    font-weight: 650;
+  }
+  .trades-table td[data-label]:not(.trade-result) {
+    grid-column: 1 / -1;
+    font-size: 0.875rem;
+  }
+  .trades-table td[data-label]:not(.trade-result)::before {
+    content: attr(data-label) ": ";
+    color: var(--ink-3);
+  }
+  .trades-table td.num div {
+    display: inline;
+  }
+  .trades-table td.num div::before {
+    content: " \2192  ";
+  }
 }
 
 details > summary {
@@ -2056,4 +2175,83 @@ details[open] > summary::before {
   font-size: 0.8rem;
   color: var(--ink-3, var(--ink-2));
   opacity: 0.85;
+}
+
+/* ------------------------------------------------------- remaining pages */
+
+/* Page-specific polish for Strategies, Paper, Orders, Activity, Alerts, Safety. */
+
+.empty h2 {
+  font-family: var(--display);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.empty {
+  padding: var(--s-6) var(--s-5);
+}
+
+/* Strategy rows: keep the summary content clear of the marker. */
+.list-item > summary .item-head {
+  min-width: 0;
+}
+.list-item > summary .item-name {
+  overflow-wrap: anywhere;
+}
+
+/* Tables that become stacked cards on phones. */
+@media (max-width: 640px) {
+  .table-wrap.cards {
+    border: 0;
+    background: transparent;
+    overflow: visible;
+  }
+  .table-wrap.cards table,
+  .table-wrap.cards tbody,
+  .table-wrap.cards tr,
+  .table-wrap.cards th,
+  .table-wrap.cards td {
+    display: block;
+    width: 100%;
+  }
+  .table-wrap.cards thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .table-wrap.cards tr {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-m);
+    padding: var(--s-2) var(--s-4);
+    margin-bottom: var(--s-2);
+  }
+  .table-wrap.cards td,
+  .table-wrap.cards th {
+    border: 0;
+    padding: var(--s-1) 0;
+    text-align: left;
+  }
+  .table-wrap.cards td[data-label] {
+    display: grid;
+    grid-template-columns: minmax(7rem, 40%) 1fr;
+    gap: var(--s-3);
+    align-items: baseline;
+  }
+  .table-wrap.cards td[data-label]::before {
+    content: attr(data-label);
+    color: var(--ink-3);
+    font-size: 0.85rem;
+  }
+  .table-wrap.cards td.num {
+    text-align: left;
+  }
+  .table-wrap.cards .btn-row {
+    margin-top: var(--s-2);
+  }
+}
+
+a.btn, a.btn:hover {
+  text-decoration: none;
 }

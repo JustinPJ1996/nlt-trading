@@ -214,7 +214,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
       )}
 
       {run.positions.length > 0 && (
-        <div className="table-wrap mb-4">
+        <div className="table-wrap cards mb-4">
           <table>
             <thead>
               <tr>
@@ -233,12 +233,12 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
             <tbody>
               {run.positions.map((p, i) => (
                 <tr key={i}>
-                  <td>
+                  <td data-label="Open position">
                     {p.direction} {p.what}
                   </td>
-                  <td className="num">{p.entry_price}</td>
-                  <td className="num">{p.last_price}</td>
-                  <td className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`}>{p.pnl_text}</td>
+                  <td className="num" data-label="Entered at">{p.entry_price}</td>
+                  <td className="num" data-label="Last price">{p.last_price}</td>
+                  <td className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`} data-label="If closed now, after costs">{p.pnl_text}</td>
                 </tr>
               ))}
             </tbody>
@@ -578,7 +578,7 @@ export function Paper({ onBuild }: { onBuild: () => void }) {
               Running now
             </h2>
             {state.runs.length === 0 ? (
-              <p className="muted">Nothing is being paper traded yet.</p>
+              <p className="muted">Nothing is being paper traded yet. Pick a saved strategy below and start it to see it here.</p>
             ) : (
               <div className="stack">
                 {state.runs.map((r) => (

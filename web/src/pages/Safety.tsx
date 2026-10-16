@@ -115,7 +115,7 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
             <h2 className="section-title" id="fresh">
               How fresh the price history is
             </h2>
-            <div className="table-wrap">
+            <div className="table-wrap cards">
               <table>
                 <tbody>
                   {state.freshness.map((f) => (
@@ -142,9 +142,9 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
               Recent activity
             </h2>
             {state.audit.length === 0 ? (
-              <p className="muted">Nothing has happened yet.</p>
+              <p className="muted">Nothing has happened yet. Turning a kill switch on or off will be recorded here.</p>
             ) : (
-              <div className="table-wrap">
+              <div className="table-wrap cards">
                 <table>
                   <thead>
                     <tr>
@@ -155,8 +155,8 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
                   <tbody>
                     {state.audit.map((a, i) => (
                       <tr key={i}>
-                        <td className="nowrap">{a.when}</td>
-                        <td>
+                        <td className="nowrap" data-label="When">{a.when}</td>
+                        <td data-label="What happened">
                           {a.event.charAt(0).toUpperCase() + a.event.slice(1)}
                           {a.detail && <div className="muted small">{a.detail}</div>}
                         </td>

@@ -323,10 +323,10 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
     }
   }
 
-  if (positions.length === 0) return <p className="muted">No open paper positions.</p>;
+  if (positions.length === 0) return <p className="muted">No open paper positions. When an order fires, the position it opens will appear here.</p>;
   return (
     <>
-      <div className="table-wrap">
+      <div className="table-wrap cards">
         <table>
           <thead>
             <tr>
@@ -351,21 +351,21 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
           <tbody>
             {positions.map((p) => (
               <tr key={p.id}>
-                <td>
+                <td data-label="Position">
                   {p.what}
                   <div className="muted small">
                     Since {p.entered}. Expires {p.expiry}.
                   </div>
                 </td>
-                <td className="num">{p.entry_price}</td>
-                <td className="num">
+                <td className="num" data-label="Entered at">{p.entry_price}</td>
+                <td className="num" data-label="Last price">
                   {p.last_price || "-"}
                   {p.last_at && <div className="muted small">{p.last_at}</div>}
                 </td>
-                <td className="num">
+                <td className="num" data-label="Stop / target">
                   {p.stop || "none"} / {p.target || "none"}
                 </td>
-                <td className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`}>
+                <td className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`} data-label="Profit or loss, before charges">
                   {p.pnl_text || "-"}
                 </td>
                 <td>
@@ -566,7 +566,7 @@ export function Orders() {
               </div>
             </div>
             {active.length === 0 ? (
-              <p className="muted">No orders waiting.</p>
+              <p className="muted">No orders waiting. Write one in the box below and it will wait here until its moment comes.</p>
             ) : (
               <div className="stack">
                 {active.map((o) => (

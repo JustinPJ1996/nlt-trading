@@ -857,7 +857,7 @@ suggests) was silently ignored and the question came back; only "1" worked.
 Resolved 2026-10-12: the default account is now Rs 25 lakh, and the five
 example strategies are each tested to take trades at it.
 
-### UI refresh — **batches A-B BUILT 2026-10-16** (C next)
+### UI refresh — **batches A-C BUILT 2026-10-16**
 
 Plan: `~/.claude/plans/one-thing-that-we-goofy-flame.md`. Justin asked for a slick
 UI, beginner-friendly, better than Tradl/Tradara/FinStocks. His choices: modern
@@ -886,6 +886,13 @@ asked for it to be used), charts with the `dataviz` skill.
   branch** -- the live server reads `web/dist` from disk and would publish it.
   Preview with `NLT_WEB_PORT=8503 python -m app.api` + `NLT_API_PORT=8503 pnpm
   exec vite` (paper trading runs from cron, so a second server is safe).
+
+- **C:** Results: the long detail sections (before/after charges, how it was
+  tested) fold away; trades become cards on a phone; the save bar stays at the
+  bottom of the screen. Other pages: empty states that say what to do next,
+  tables that become stacked cards on a phone (`.table-wrap.cards` +
+  `data-label`). Still raw on screen: the Safety audit log's details
+  ("name: ..., hash: ...").
 
 **Library re-chosen (Justin: "find better examples").** Rule fixed before any
 result: 40+ trades and no serious warning. Eighteen more textbook strategies
