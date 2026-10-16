@@ -1252,3 +1252,53 @@ def test_a_question_only_a_new_description_can_answer_says_so() -> None:
     q = parse("buy nifty, stop 1%").questions[0]
     assert q.field == "entry.condition"
     assert not q.answerable and q.choices == []
+
+
+# ------------------------------------------- "50-day" said with a hyphen
+#
+# 2026-10-16: "50-day SMA" was not read at all, though our own refusal (a daily
+# average on a daily chart) tells users to type "close above the 50-day SMA".
+# And on intraday candles "50 day SMA" was silently read as 50 *candles*.
+
+
+@pytest.mark.parametrize("words", ["50-day sma", "50 day sma", "50-day SMA", "50 sma"])
+def test_a_50_day_average_reads_on_daily_candles(words: str) -> None:
+    result = parse(f"buy nifty when close is above the {words}, stop 1%")
+    assert result.spec is not None, result.questions
+    assert result.spec.indicators[0].params == {"length": 50}
+
+
+def test_the_phrase_our_refusal_suggests_actually_reads() -> None:
+    """`_intraday_only_refusal` tells a user with a daily average on a daily
+    chart to say "close above the 50-day SMA" instead; that must then read."""
+    assert parse("buy nifty when close above the 50-day SMA, stop 1%").spec is not None
+
+
+def test_the_daily_close_above_a_50_day_average_on_daily_candles_is_that_average() -> None:
+    spec = parse("buy nifty when the daily close is above the 50-day sma, stop 1%").spec
+    assert spec is not None
+    assert spec.instrument.timeframe == "1d"
+    assert [(i.type, i.params) for i in spec.indicators] == [("sma", {"length": 50})]
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "close is above the 50-day sma",
+        "close is above the 50 day sma",
+        "close is above the 50 dma",
+        "20 ema crosses above 50 day ema",
+        "20-day ema crosses above 50 ema",
+    ],
+)
+def test_an_average_said_in_days_on_intraday_candles_is_asked_not_read_as_candles(
+    condition: str,
+) -> None:
+    result = parse(f"buy nifty on 15 minute candles when {condition}, stop 1%")
+    assert result.spec is None
+    assert "is not the same as" in result.questions[0].text
+
+
+def test_an_average_in_candles_on_intraday_candles_still_reads() -> None:
+    result = parse("buy nifty on 15 minute candles when close is above the 50 sma, stop 1%")
+    assert result.spec is not None

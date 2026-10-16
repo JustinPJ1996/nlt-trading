@@ -148,10 +148,16 @@ def _evaluate_compare(condition: Compare, features: pd.DataFrame) -> pd.Series:
     right = _resolve_operand(condition.right, features)
     op = condition.op
 
-    if op == "crosses_above":
-        return _crosses(left, right, features.index, above=True)
-    if op == "crosses_below":
-        return _crosses(left, right, features.index, above=False)
+    if op in ("crosses_above", "crosses_below"):
+        born = features.attrs.get(SESSION_LEVELS_ATTR, ())
+        return _crosses(
+            left,
+            right,
+            features.index,
+            above=op == "crosses_above",
+            left_born=_is_session_level(condition.left, born),
+            right_born=_is_session_level(condition.right, born),
+        )
 
     # Broadcast a bare scalar operand against the other side's index so the
     # comparison always yields a Series, not a single bool.
@@ -185,11 +191,36 @@ def _align(
     return left, right
 
 
+# Feature columns holding a level that only comes into being part-way through
+# each session -- the opening range, blank until its minutes end. Set by
+# `features.build_features`.
+SESSION_LEVELS_ATTR = "session_levels"
+
+
+def _is_session_level(operand: Operand, born) -> bool:
+    return isinstance(operand, Ref) and not operand.bars_ago and operand.key() in born
+
+
 def _crosses(
-    left: pd.Series | float, right: pd.Series | float, index: pd.Index, *, above: bool
+    left: pd.Series | float,
+    right: pd.Series | float,
+    index: pd.Index,
+    *,
+    above: bool,
+    left_born: bool = False,
+    right_born: bool = False,
 ) -> pd.Series:
     left, right = _align(left, right, index)
     left_prev, right_prev = left.shift(1), right.shift(1)
+    # A level that did not exist on the previous candle (the first candle after
+    # the opening range) is compared there at its first value: "closes above
+    # the 15-minute high" on the first candle that can see that high is a
+    # break. Without this, NaN <= x is False and the breakout everyone means
+    # could never fire on that candle (found 2026-10-16).
+    if right_born:
+        right_prev = right_prev.fillna(right)
+    if left_born:
+        left_prev = left_prev.fillna(left)
     if above:
         return (left > right) & (left_prev <= right_prev)
     return (left < right) & (left_prev >= right_prev)

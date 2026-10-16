@@ -724,3 +724,93 @@ def test_the_readback_never_promises_a_loss_limit_nothing_enforces() -> None:
     assert "Never risk more than" not in text
     assert format_inr(spec.risk.max_daily_loss) not in text
     assert format_inr(spec.risk.max_loss_per_trade) not in text
+
+
+# ------------------------------------------------- no code names on screen
+#
+# 2026-10-16: "MACD(12, 26, 9) macd crosses above MACD(12, 26, 9) signal line"
+# and "the price is above Previous Period Levels high" were what users read.
+
+
+@pytest.mark.parametrize(
+    ("sentence", "line"),
+    [
+        (
+            "buy nifty when macd crosses above signal, stop 1%",
+            "When MACD(12, 26, 9) line crosses above its signal line",
+        ),
+        (
+            "buy nifty when close above previous day high, stop 1%",
+            "When the price is above the previous day's high",
+        ),
+        (
+            "buy nifty when supertrend turns green, stop 1%",
+            "When Supertrend(10, 3.0) turns to an uptrend",
+        ),
+        (
+            "sell nifty when supertrend turns red, stop 1%",
+            "When Supertrend(10, 3.0) turns to a downtrend",
+        ),
+    ],
+)
+def test_indicator_outputs_are_read_out_in_words(sentence: str, line: str) -> None:
+    spec = parse(sentence).spec
+    assert spec is not None
+    assert f"  {line}" in describe(spec).splitlines()
+
+
+def test_no_multi_output_indicator_prints_a_raw_output_name() -> None:
+    """Every output of every multi-output indicator, worded on its own: none
+    may print the underscore names the code uses."""
+    from nlt.indicators.registry import REGISTRY
+    from nlt.translate.readback import _ref_desc
+
+    for type_, d in REGISTRY.items():
+        for output in d.outputs if len(d.outputs) > 1 else ():
+            words = _ref_desc(
+                Ref(name="x", output=output), {"x": IndicatorSpec(id="x", type=type_)}, "15m"
+            )
+            assert "_" not in words, (type_, output, words)
+            # Output names that are code, not English, must never be printed.
+            if output in (
+                "macd",
+                "sar",
+                "supertrend",
+                "tc",
+                "bc",
+                "r1",
+                "r2",
+                "r3",
+                "s1",
+                "s2",
+                "s3",
+            ):
+                assert not words.lower().endswith(f" {output}"), (type_, output, words)
+
+
+def test_its_is_only_used_for_two_outputs_of_one_indicator() -> None:
+    """Two different MACDs must each be named: "its" would hide which is which."""
+    inds = [
+        IndicatorSpec(id="m1", type="macd"),
+        IndicatorSpec(id="m2", type="macd", params={"fast": 5, "slow": 35, "signal": 5}),
+    ]
+    cond = Compare(
+        op="crosses_above",
+        left=Ref(name="m1", output="macd"),
+        right=Ref(name="m2", output="signal"),
+    )
+    from nlt.translate.readback import _describe_condition
+
+    text = _describe_condition(cond, {i.id: i for i in inds}, "1d")
+    assert "its" not in text
+    assert "MACD(5, 35, 5) signal line" in text
+
+
+def test_a_supertrend_compared_with_anything_but_zero_is_not_called_a_trend_turn() -> None:
+    from nlt.translate.readback import _describe_condition
+
+    inds = {"st": IndicatorSpec(id="st", type="supertrend")}
+    cond = Compare(
+        op="crosses_above", left=Ref(name="st", output="direction"), right=Const(value=0.5)
+    )
+    assert "uptrend" not in _describe_condition(cond, inds, "1d")

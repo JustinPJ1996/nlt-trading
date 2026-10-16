@@ -78,7 +78,8 @@ def test_no_trade_is_entered_before_the_range_is_known() -> None:
     bars = _session_bars(days=5, minutes=5)
     spec = rules.parse(
         "buy reliance on 5-minute candles when the close breaks above the high of the first "
-        "15 minutes, target 1%, stop 0.5%"
+        "15 minutes, target 1%, stop 0.5%",
+        answers={"schedule.daily_limit": "every"},
     ).spec
     result = run_backtest(spec, bars, capital=2_500_000, drop_partial_last_bar=False)
     assert result.trades
@@ -157,7 +158,7 @@ def test_a_daily_average_on_a_daily_chart_is_refused() -> None:
     [
         (
             "buy bhartiartl when %K crosses above %D, exit when %K goes above 80, stop 0.8%",
-            "When Stochastic(14, 1, 3) %K crosses above Stochastic(14, 1, 3) %D",
+            "When Stochastic(14, 1, 3) %K crosses above its %D",
         ),
         (
             "buy maruti when the close is above the highest high of the last 20 days, stop 2%",
@@ -182,6 +183,6 @@ def test_a_daily_average_on_a_daily_chart_is_refused() -> None:
     ],
 )
 def test_the_new_wordings_read_and_read_back(sentence, line) -> None:
-    result = rules.parse(sentence)
+    result = rules.parse(sentence, answers={"schedule.daily_limit": "every"})
     assert result.spec is not None, result.questions
     assert f"  {line}" in describe(result.spec).splitlines()

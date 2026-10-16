@@ -106,6 +106,10 @@ _CANDLE_LENGTH = {
 }
 
 
+def _plural_trades(n: int | None) -> str:
+    return "one trade" if n == 1 else f"{n} trades"
+
+
 def past_entry_cutoff(spec: StrategySpec, ts: pd.Timestamp, timeframe: str) -> bool:
     """Would a signal on the candle starting at `ts` fill after the entry cut-off?
 
@@ -535,6 +539,9 @@ def run_backtest(
     boundary_entry_skipped_count = 0
     expiry_entry_skipped_count = 0
     expiry_exit_count = 0
+    daily_limit = spec.schedule.max_entries_per_day
+    entries_by_day: dict = {}
+    daily_limit_skipped_count = 0
 
     for i in range(n):
         ts = bars.index[i]
@@ -545,7 +552,10 @@ def run_backtest(
             pending_entry = False
             signal_ts = pending_entry_ts
             pending_entry_ts = None
-            if len(open_positions) < max_concurrent:
+            if daily_limit is not None and entries_by_day.get(ts.date(), 0) >= daily_limit:
+                daily_limit_skipped_count += 1
+                decisions.append(Decision(signal_ts, symbol, "signal_skipped", "daily_limit", {}))
+            elif len(open_positions) < max_concurrent:
                 capital_total = capital + realized_pnl
                 # Capital already tied up in other open positions is not spare
                 # capital: without netting it out, two concurrent positions
@@ -567,6 +577,7 @@ def run_backtest(
                 )
                 if pos is not None:
                     open_positions.append(pos)
+                    entries_by_day[ts.date()] = entries_by_day.get(ts.date(), 0) + 1
                     if used_fallback:
                         risk_fallback_count += 1
                     if capped:
@@ -670,12 +681,14 @@ def run_backtest(
         paused = _in_blocked_window(ts, blocked_windows)
         no_entry_after_ok = not past_entry_cutoff(spec, ts, spec.instrument.timeframe)
         trade_from_ok = trade_from is None or ts >= trade_from
+        daily_ok = daily_limit is None or entries_by_day.get(ts.date(), 0) < daily_limit
         can_enter = (
             concurrency_ok
             and entry_true
             and weekday_ok
             and not paused
             and no_entry_after_ok
+            and daily_ok
             and trade_from_ok
         )
         # A decision is only meaningful once the signal could actually have
@@ -694,6 +707,9 @@ def run_backtest(
                 decisions.append(Decision(ts, symbol, "signal_skipped", "paused", {}))
             elif not no_entry_after_ok:
                 decisions.append(Decision(ts, symbol, "signal_skipped", "no_entry_after", {}))
+            elif not daily_ok:
+                daily_limit_skipped_count += 1
+                decisions.append(Decision(ts, symbol, "signal_skipped", "daily_limit", {}))
         # A signal on the last bar of a session has no valid intraday fill: the
         # only bar left to fill it on is tomorrow morning's open, 14+ hours away
         # across a gap the user never asked to hold through. Decision: SKIP the
@@ -835,6 +851,11 @@ def run_backtest(
             f"{expiry_entry_skipped_count} entry signal(s) skipped: they fired on the last candle "
             "of an expiring contract, so the trade would have been placed in the next contract "
             "at a different price, with its stop and target measured from the old one"
+        )
+    if daily_limit_skipped_count:
+        warnings.append(
+            f"{daily_limit_skipped_count} entry signal(s) skipped: this strategy opens at most "
+            f"{_plural_trades(daily_limit)} a day."
         )
     if boundary_entry_skipped_count:
         warnings.append(

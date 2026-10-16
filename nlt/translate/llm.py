@@ -62,7 +62,7 @@ from nlt.spec.models import (
     Sizing,
     StrategySpec,
 )
-from nlt.translate import options_words, rules
+from nlt.translate import options_words, readback, rules
 from nlt.translate import spelling as rules_spelling
 from nlt.translate.rules import Question, TranslationResult
 
@@ -94,7 +94,8 @@ AI_NOTE = (
 _NOT_UNDERSTOOD = {"unparsed", "entry.condition"}
 # Questions that are fine to repeat alongside those, because they follow from
 # not having understood the sentence rather than from a policy decision.
-_FOLLOW_ON = {"exit.stop_pct", "exit.rule"}
+# "Once a day or every time?" is asked again on the AI path (`rules.range_repeat`).
+_FOLLOW_ON = {"exit.stop_pct", "exit.rule", "schedule.daily_limit"}
 
 
 def should_ask_llm(result: TranslationResult) -> bool:
@@ -590,6 +591,18 @@ def _indicator_numbers(indicators: list[IndicatorSpec]) -> list[float]:
     return out
 
 
+def _length_said_in_days(indicator: IndicatorSpec, lowered: str) -> bool:
+    """A moving average whose length the user gave in days: "50-day", "50 day",
+    "50 DMA". Read from the sentence, not the model's reply."""
+    if indicator.type not in ("sma", "ema", "wma", "hma"):
+        return False
+    length = indicator.resolved_params().get("length")
+    if not isinstance(length, (int, float)):
+        return False
+    n = int(length)
+    return re.search(rf"(?<!\d){n}\s*-?\s*(?:days?\b|dma\b)", lowered) is not None
+
+
 def _drop_redundant_outputs(raw: dict) -> None:
     """`rsi14.rsi` -> `rsi14`, the shape the rules write, so the readback reads the same.
 
@@ -900,11 +913,25 @@ def parse_llm(
                 instrument_kwargs[key] = rules_kwargs[key]
 
     indicator_dicts = [
-        {"id": i.id, "type": i.type, "params": dict(i.params)} for i in draft.indicators
+        {
+            "id": i.id,
+            "type": i.type,
+            "params": dict(i.params),
+            # "50-day SMA" on 15-minute candles is not 50 candles; the rules'
+            # refusal below asks which was meant, on this path too.
+            **({"in_days": True} if _length_said_in_days(i, lowered) else {}),
+        }
+        for i in draft.indicators
     ]
     vwap_question = rules._vwap_refusal(indicator_dicts, instrument_kwargs)
     if vwap_question is not None:
         return TranslationResult(spec=None, questions=[vwap_question], notes=notes, source="llm")
+
+    entry, daily_limit, repeat_question, repeat_said = rules.range_repeat(
+        draft.entry, draft.indicators, answers
+    )
+    if repeat_question is not None:
+        return TranslationResult(spec=None, questions=[repeat_question], notes=notes, source="llm")
 
     exit_kwargs = ex.model_dump(exclude_none=True)
     exit_kwargs["stop_pct"] = stop_pct
@@ -912,6 +939,8 @@ def parse_llm(
     schedule_kwargs = rules._schedule_kwargs(
         instrument_kwargs, square_off, None, overnight=overnight
     )
+    if daily_limit is not None:
+        schedule_kwargs["max_entries_per_day"] = daily_limit
 
     try:
         spec = StrategySpec(
@@ -920,7 +949,7 @@ def parse_llm(
             instrument=Instrument(**instrument_kwargs),
             indicators=draft.indicators,
             direction=draft.direction,
-            entry=draft.entry,
+            entry=entry,
             exit=ExitRules(**exit_kwargs),
             sizing=sizing or rules._default_sizing(instrument_kwargs),
             risk=rules._default_risk(instrument_kwargs),
@@ -944,6 +973,8 @@ def parse_llm(
         schedule_said=square_off is not None or overnight,
         premium_said=options_words.premium_mentioned(lowered),
     )
+    if repeat_said:
+        sources["schedule.daily_limit"] = readback.SAID
     return TranslationResult(
         spec=spec, questions=[], notes=notes, source="llm", period=period, sources=sources
     )

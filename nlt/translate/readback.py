@@ -159,6 +159,41 @@ _OUTPUT_WORDS = {
     "high": "high",
     "low": "low",
     "close": "close",
+    # Raw output names that would otherwise be printed as code (2026-10-16:
+    # "MACD(12, 26, 9) macd crosses above ..." was on screen).
+    "macd": "line",
+    "supertrend": "line",
+    "sar": "level",
+    "conversion": "conversion line",
+    "base": "base line",
+    "span_a": "leading span A",
+    "span_b": "leading span B",
+    "lagging": "lagging span",
+}
+
+# Levels worked out from the previous period: "the previous day's R1".
+_PERIOD_WORDS = {"day": "day", "week": "week", "month": "month"}
+_PIVOT_WORDS = {
+    "pivot": "pivot point",
+    "r1": "R1 resistance",
+    "r2": "R2 resistance",
+    "r3": "R3 resistance",
+    "s1": "S1 support",
+    "s2": "S2 support",
+    "s3": "S3 support",
+}
+_CPR_WORDS = {
+    "pivot": "central pivot",
+    "tc": "CPR top",
+    "bc": "CPR bottom",
+    "width_pct": "CPR width (%)",
+}
+_FIB_WORDS = {
+    "level_236": "23.6%",
+    "level_382": "38.2%",
+    "level_500": "50%",
+    "level_618": "61.8%",
+    "level_786": "78.6%",
 }
 
 
@@ -178,6 +213,20 @@ def _special_ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> 
         return f"the {words} of the last {_plural(int(params['length']), _bar_word(timeframe))}"
     if spec.type == "opening_range" and ref.output in ("high", "low"):
         return f"the {ref.output} of the first {int(params['minutes'])} minutes"
+    period = _PERIOD_WORDS.get(str(params.get("period", "day")), "period")
+    if spec.type == "prior_period" and ref.output in ("high", "low", "close"):
+        return f"the previous {period}'s {ref.output}"
+    if spec.type == "pivots" and ref.output in _PIVOT_WORDS:
+        return f"the {_PIVOT_WORDS[ref.output]} from the previous {period}"
+    if spec.type == "cpr" and ref.output in _CPR_WORDS:
+        return f"the {_CPR_WORDS[ref.output]} from the previous {period}"
+    if spec.type == "fibonacci":
+        bars = _plural(int(params["length"]), _bar_word(timeframe))
+        if ref.output in _FIB_WORDS:
+            return f"the {_FIB_WORDS[ref.output]} Fibonacci retracement of the last {bars}"
+        if ref.output in ("swing_high", "swing_low"):
+            words = "highest high" if ref.output == "swing_high" else "lowest low"
+            return f"the {words} of the last {bars}"
     if spec.type == "daily_average":
         if ref.output == "close":
             return "the previous day's close"
@@ -215,10 +264,66 @@ def _operand_desc(op, indicators: dict[str, dict], timeframe: str) -> str:
     return _const_desc(op)
 
 
+def _same_indicator(left, right) -> bool:
+    """Both sides are outputs of one declared indicator, worded plainly
+    (`_special_ref_desc` phrases are whole sentences of their own)."""
+    return (
+        isinstance(left, Ref)
+        and isinstance(right, Ref)
+        and left.name == right.name
+        and left.output is not None
+        and right.output is not None
+        and left.name not in _PRICE_WORDS
+    )
+
+
+_TREND_WORDS = {
+    "crosses_above": "turns to an uptrend",
+    "crosses_below": "turns to a downtrend",
+    "gt": "is in an uptrend",
+    "gte": "is in an uptrend",
+    "lt": "is in a downtrend",
+    "lte": "is in a downtrend",
+}
+
+
+def _trend_turn_desc(cond: Compare, indicators: dict[str, dict], timeframe: str) -> str | None:
+    """Supertrend / Parabolic SAR "direction" is +1 up, -1 down (never 0), so
+    "direction crosses above 0" is "turns to an uptrend"."""
+    left, right = cond.left, cond.right
+    if not (
+        isinstance(left, Ref)
+        and left.output == "direction"
+        and not left.bars_ago
+        and isinstance(right, Const)
+        and right.value == 0
+        and cond.op in _TREND_WORDS
+    ):
+        return None
+    spec = indicators.get(left.name)
+    if spec is None or spec.type not in ("supertrend", "parabolic_sar"):
+        return None
+    label, _d = _indicator_desc(left.name, indicators, timeframe)
+    return f"{label} {_TREND_WORDS[cond.op]}"
+
+
 def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe: str) -> str:
     if isinstance(cond, Compare):
+        trend = _trend_turn_desc(cond, indicators, timeframe)
+        if trend is not None:
+            return trend
         left = _operand_desc(cond.left, indicators, timeframe)
         right = _operand_desc(cond.right, indicators, timeframe)
+        if (
+            _same_indicator(cond.left, cond.right)
+            and _special_ref_desc(cond.right, indicators, timeframe) is None
+        ):
+            # "MACD(12, 26, 9) line crosses above its signal line", not the
+            # indicator's name and settings said twice.
+            out_word = _OUTPUT_WORDS.get(cond.right.output, cond.right.output)
+            right = f"its {out_word}"
+            if cond.right.bars_ago:
+                right += f" {_plural(cond.right.bars_ago, _bar_word(timeframe))} ago"
         return f"{left} {_OP_WORDS[cond.op]} {right}"
 
     if isinstance(cond, IsTrue):
@@ -775,7 +880,7 @@ def _legs_sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]
         )
     trades.append((_timeframe_desc(spec), "timeframe"))
 
-    entry = [(_entry_line(spec, indicators, timeframe), "entry")]
+    entry = [(_entry_line(spec, indicators, timeframe), "entry"), *_repeat_lines(spec, timeframe)]
     parts = _conditions_in(spec.entry)
     at = next((c for c in parts if isinstance(c, AtTime)), None)
     if at is not None:
@@ -808,6 +913,40 @@ def _legs_sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]
     ]
 
 
+def _repeat_lines(spec: StrategySpec, timeframe: str) -> list[tuple[str, str]]:
+    """How often it may trade in a day. "Closes above the first-15-minute
+    high" can mean once, or every time; the engine does what the spec says, so
+    the readback says which (Justin, 2026-10-16)."""
+    limit = spec.schedule.max_entries_per_day
+    if limit is not None:
+        trades = "one trade" if limit == 1 else f"{limit} trades"
+        return [
+            (
+                f"At most {trades} a day: no new trade after that until the next day, "
+                "even after a stop loss",
+                "schedule.daily_limit",
+            )
+        ]
+    if timeframe == "1d" or not _crosses_a_session_level(spec):
+        return []
+    return [
+        (
+            "Can trade again the same day each time the price crosses that level again",
+            "schedule.daily_limit",
+        )
+    ]
+
+
+def _crosses_a_session_level(spec: StrategySpec) -> bool:
+    kinds = {i.id: i.type for i in spec.indicators}
+    for c in _conditions_in(spec.entry):
+        if isinstance(c, Compare) and c.op in ("crosses_above", "crosses_below"):
+            for side in (c.left, c.right):
+                if isinstance(side, Ref) and kinds.get(side.name) == "opening_range":
+                    return True
+    return False
+
+
 def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
     """(heading, [(line, part)]) -- the one place the readback's lines are made."""
     if spec.instrument.legs:
@@ -837,7 +976,10 @@ def _sections(spec: StrategySpec) -> list[tuple[str, list[tuple[str, str]]]]:
     trades.append((_timeframe_desc(spec), "timeframe"))
     return [
         ("WHAT IT TRADES", trades),
-        (f"WHEN IT {entry_verb}", [(_entry_line(spec, indicators, timeframe), "entry")]),
+        (
+            f"WHEN IT {entry_verb}",
+            [(_entry_line(spec, indicators, timeframe), "entry"), *_repeat_lines(spec, timeframe)],
+        ),
         (f"WHEN IT {exit_verb}", _exit_lines(spec, indicators, timeframe)),
         ("HOW MUCH", [(_sizing_desc(spec), "sizing")]),
         ("SAFETY LIMITS", [(line, "risk") for line in _risk_lines(spec)]),

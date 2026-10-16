@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from nlt.engine.conditions import SESSION_LEVELS_ATTR
 from nlt.indicators.registry import get as get_indicator
 from nlt.spec.models import PRICE_FIELDS, StrategySpec
 
@@ -26,6 +27,7 @@ def build_features(spec: StrategySpec, bars: pd.DataFrame) -> pd.DataFrame:
     for field in PRICE_FIELDS:
         features[field] = bars[field]
 
+    session_levels: list[str] = []
     for ind in spec.indicators:
         d = get_indicator(ind.type)
         result = d.fn(bars, **ind.resolved_params())
@@ -33,10 +35,13 @@ def build_features(spec: StrategySpec, bars: pd.DataFrame) -> pd.DataFrame:
         if d.is_multi:
             for output in d.outputs:
                 features[f"{ind.id}.{output}"] = result[output]
+                if ind.type == "opening_range":
+                    session_levels.append(f"{ind.id}.{output}")
         else:
             # Single-output indicators may return either a bare Series or a
             # one-column DataFrame (patterns do the latter); handle both.
             series = result[d.outputs[0]] if isinstance(result, pd.DataFrame) else result
             features[ind.id] = series
 
+    features.attrs[SESSION_LEVELS_ATTR] = tuple(session_levels)
     return features
