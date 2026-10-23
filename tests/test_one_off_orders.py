@@ -17,7 +17,15 @@ from nlt.costs.slippage import LEGACY as LEGACY_SLIPPAGE
 from nlt.costs.slippage import Slippage
 from nlt.orders import runner
 from nlt.orders.engine import SLIPPAGE_PCT, Contract, SavedOrder, book_from_record
-from nlt.orders.models import ConditionalOrder, ExitAction, NowTrigger
+from nlt.orders.models import (
+    ConditionalOrder,
+    ExitAction,
+    NowTrigger,
+    PnlTrigger,
+    PriceTrigger,
+    StreakTrigger,
+    TradeAction,
+)
 from nlt.orders.parse import parse_order
 from nlt.orders.readback import describe
 from nlt.store.db import Store
@@ -30,7 +38,7 @@ SELL = 1 - SLIPPAGE_PCT / 100
 
 
 def t(s: str) -> pd.Timestamp:
-    return pd.Timestamp(s, tz=IST)
+    return pd.Timestamp(s, tz=IST)  # ty: ignore[invalid-return-type]  # pandas stubs: Timestamp(str) is never NaT
 
 
 # ------------------------------------------------------------------ reading
@@ -39,6 +47,7 @@ def t(s: str) -> pd.Timestamp:
 def test_justins_first_sentence():
     r = parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures")
     assert r.questions == []
+    assert r.order is not None
     d = r.order.model_dump()
     assert d["trigger"] == {
         "kind": "price",
@@ -63,6 +72,7 @@ def test_justins_second_sentence_reads_the_brackets():
         "(4 consecutive red candles)"
     )
     assert r.questions == []
+    assert r.order is not None
     assert r.order.trigger.model_dump() == {
         "kind": "streak",
         "watch": {"symbol": "NIFTY", "kind": "index"},
@@ -70,6 +80,8 @@ def test_justins_second_sentence_reads_the_brackets():
         "count": 4,
         "rule": "red",
     }
+    assert r.order is not None
+    assert isinstance(r.order.action, TradeAction)
     assert r.order.action.symbol == "NIFTY" and r.order.action.lots == 1
 
 
@@ -81,11 +93,15 @@ def test_going_down_without_the_brackets_is_a_question():
         "Buy 1 lot Futures if Nifty has been going down for 4 consecutive weeks",
         {"streak.rule": "red candles"},
     )
+    assert red.order is not None
+    assert isinstance(red.order.trigger, StreakTrigger)
     assert red.order.trigger.rule == "red"
     lower = parse_order(
         "Buy 1 lot Futures if Nifty has been going down for 4 consecutive weeks",
         {"streak.rule": "lower than the week before"},
     )
+    assert lower.order is not None
+    assert isinstance(lower.order.trigger, StreakTrigger)
     assert lower.order.trigger.rule == "lower_close"
 
 
@@ -104,9 +120,13 @@ def test_justins_third_sentence_asks_loss_or_profit():
     assert r.order is None
     assert [q.field for q in r.questions] == ["pnl.sign"]
     loss = parse_order(s, {"pnl.sign": "a loss"})
+    assert loss.order is not None
+    assert isinstance(loss.order.trigger, PnlTrigger)
     assert loss.order.trigger.threshold == -50000
     assert loss.order.action == ExitAction()
     profit = parse_order(s, {"pnl.sign": "profit falling under it"})
+    assert profit.order is not None
+    assert isinstance(profit.order.trigger, PnlTrigger)
     assert profit.order.trigger.threshold == 50000
 
 
@@ -122,6 +142,8 @@ def test_justins_third_sentence_asks_loss_or_profit():
 def test_a_stated_loss_needs_no_question(sentence):
     r = parse_order(sentence)
     assert r.questions == [], [q.text for q in r.questions]
+    assert r.order is not None
+    assert isinstance(r.order.trigger, PnlTrigger)
     assert r.order.trigger.threshold == -50000
 
 
@@ -182,6 +204,9 @@ def test_none_of_the_70_user_sentences_becomes_an_order():
 
 def test_stop_and_target_are_read_and_mcx_contracts_are_kept_apart():
     r = parse_order("if crude oil goes above 6500 buy 1 lot crude oil mini, sl 1%, target 2%")
+    assert r.order is not None
+    assert isinstance(r.order.trigger, PriceTrigger)
+    assert isinstance(r.order.action, TradeAction)
     assert r.order.trigger.watch.symbol == "CRUDEOIL"
     assert r.order.action.symbol == "CRUDEOILM"
     assert (r.order.action.stop_pct, r.order.action.target_pct) == (1.0, 2.0)
@@ -192,6 +217,8 @@ def test_a_stop_can_be_added_by_answer():
     r = parse_order(
         "If Nifty goes below 22000, buy 1 lot Nifty Futures", {"trade.stop_loss": "1.5%"}
     )
+    assert r.order is not None
+    assert isinstance(r.order.action, TradeAction)
     assert r.order.action.stop_pct == 1.5
     assert r.warnings == []
 
@@ -201,6 +228,7 @@ def test_a_stop_can_be_added_by_answer():
 
 def test_readback_says_what_it_will_and_will_not_do():
     r = parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures")
+    assert r.order is not None
     lines = describe(r.order)
     assert lines[0] == "When the NIFTY 50 index (spot) trades below 22,000"
     assert lines[1] == "Buy 1 lot of NIFTY futures (65 units), at the market price"
@@ -211,6 +239,7 @@ def test_readback_says_what_it_will_and_will_not_do():
 
 def test_readback_for_a_short_with_stop_and_mcx_lot():
     r = parse_order("If gold goes above 75000, sell 2 lots gold futures, stop loss 1%, target 3%")
+    assert r.order is not None
     lines = describe(r.order)
     assert lines[1].startswith("Sell (go short) 2 lots of Gold futures (each lot = ")
     assert "Stop loss: 1% above the price it is sold at" in lines
@@ -219,13 +248,13 @@ def test_readback_for_a_short_with_stop_and_mcx_lot():
 
 def test_readback_for_streak_and_pnl():
     s = describe(
-        parse_order("Buy 1 lot Futures if Nifty has had 4 red weekly candles in a row").order
+        parse_order("Buy 1 lot Futures if Nifty has had 4 red weekly candles in a row").order  # ty: ignore[invalid-argument-type]  # parse_order(...).order is Optional; a None fails here
     )
     assert s[0] == (
         "When the NIFTY 50 index (spot) has 4 red weekly candles in a row "
         "(each week closed below where it opened)"
     )
-    p = describe(parse_order("If my loss exceeds 50000, exit positions").order, {})
+    p = describe(parse_order("If my loss exceeds 50000, exit positions").order, {})  # ty: ignore[invalid-argument-type]  # parse_order(...).order is Optional; a None fails here
     assert (
         p[0] == "When the combined P&L of the chosen positions falls to a loss of Rs 50,000 or more"
     )
@@ -484,7 +513,7 @@ def test_book_from_record_treats_a_fill_with_no_stored_slippage_as_legacy():
     """
     order = SavedOrder(
         1,
-        parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures").order,
+        parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures").order,  # ty: ignore[invalid-argument-type]  # parse_order(...).order is Optional; a None fails here
         t(f"{DAY} 09:00"),
     )
     book = book_from_record([order], [_fill_event(1)])
@@ -494,7 +523,7 @@ def test_book_from_record_treats_a_fill_with_no_stored_slippage_as_legacy():
 def test_book_from_record_uses_the_slippage_actually_stored_on_the_fill():
     order = SavedOrder(
         1,
-        parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures").order,
+        parse_order("If Nifty spot goes below 22000, buy 1 lot Nifty Futures").order,  # ty: ignore[invalid-argument-type]  # parse_order(...).order is Optional; a None fails here
         t(f"{DAY} 09:00"),
     )
     chosen = Slippage("rs", 3.0)
@@ -559,7 +588,15 @@ def weekly_daily(weeks: list[tuple[float, float]], first_monday: str) -> pd.Data
 
 def streak_feed() -> Feed:
     # Weeks of 7, 14, 21 Sep green; 28 Sep, 5 Oct, 12 Oct, 19 Oct red.
-    weeks = [(100, 110), (110, 120), (120, 130), (130, 120), (120, 110), (110, 100), (100, 90)]
+    weeks: list[tuple[float, float]] = [
+        (100, 110),
+        (110, 120),
+        (120, 130),
+        (130, 120),
+        (120, 110),
+        (110, 100),
+        (100, 90),
+    ]
     daily = weekly_daily(weeks, "2026-09-07")
     fut = pd.concat(
         [session(d, 22000 + i) for i, d in enumerate(pd.bdate_range("2026-10-05", "2026-10-30"))]
@@ -595,7 +632,7 @@ def test_a_run_already_complete_when_saved_waits_for_the_next_week(store):
 
 def test_lower_closes_are_not_red_candles(store):
     # Weeks closing lower than the week before, but each week green.
-    weeks = [(100, 110), (90, 105), (80, 100), (70, 95)]
+    weeks: list[tuple[float, float]] = [(100, 110), (90, 105), (80, 100), (70, 95)]
     feed = streak_feed()
     feed.daily_frames["NIFTY"] = weekly_daily(weeks, "2026-09-28")
     red = save(

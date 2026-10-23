@@ -53,12 +53,14 @@ LOT = 65
 
 
 def _ts(day: dt.date, hh: int, mm: int) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, dt.time(hh, mm)), tz=IST)
+    return pd.Timestamp(dt.datetime.combine(day, dt.time(hh, mm)), tz=IST)  # ty: ignore[invalid-return-type]  # pandas stubs: Timestamp(datetime) is never NaT
 
 
 def _slots(day: dt.date) -> list[pd.Timestamp]:
     start = _ts(day, 9, 15)
-    return [start + pd.Timedelta(minutes=5 * k) for k in range(75)]  # 09:15..15:25
+    return [
+        start + pd.Timedelta(minutes=5 * k) for k in range(75)
+    ]  # 09:15..15:25  # ty: ignore[invalid-return-type]  # pandas stubs: Timestamp + Timedelta is never NaT
 
 
 def sym(strike: int, kind: str, expiry: dt.date = WEEKLY) -> str:
@@ -458,12 +460,14 @@ def _listing():
 
 def test_points_from_spot_takes_the_nearest_listed_strike_and_says_why():
     r = resolve_points(_listing(), "NIFTY", _ts(D1, 9, 25), 21490.0, "PE", -200, "nearest_weekly")
+    assert r.contract is not None
     assert r.contract.strike == 21300
     assert "21,490.00" in r.why and "21,290.00" in r.why and "21,300" in r.why
 
 
 def test_points_from_spot_breaks_a_tie_to_the_lower_strike():
     r = resolve_points(_listing(), "NIFTY", _ts(D1, 9, 25), 21400.0, "CE", 50, "nearest_weekly")
+    assert r.contract is not None
     assert r.contract.strike == 21400
     assert "tie" in r.why
 
@@ -476,6 +480,7 @@ def test_points_beyond_the_listed_strikes_are_refused_never_clamped():
     assert "20,790.00" in r.why and "21,000" in r.why
     # One gap away is still accepted: -580 -> 20,910, 90 from 21,000.
     ok = resolve_points(_listing(), "NIFTY", _ts(D1, 9, 25), 21490.0, "PE", -580, "nearest_weekly")
+    assert ok.contract is not None
     assert ok.contract.strike == 21000
 
 
@@ -882,6 +887,7 @@ def test_known_answer_0920_short_straddle_on_2_jan_2025():
         margin_fn=FixedMargin(),
     )
     assert r.error is None
+    assert r.backtest is not None
     (t,) = r.backtest.trades
     ce = next(f for f in t.legs if f.symbol == "NIFTY2510223800CE")
     pe = next(f for f in t.legs if f.symbol == "NIFTY2510223800PE")
@@ -942,6 +948,7 @@ def test_known_answer_0920_bought_straddle_on_2_jan_2025():
     )
     assert r.error is None
     assert margin.calls == []  # nothing sold, no exchange margin
+    assert r.backtest is not None
     (t,) = r.backtest.trades
     ce = next(f for f in t.legs if f.symbol == "NIFTY2510223800CE")
     pe = next(f for f in t.legs if f.symbol == "NIFTY2510223800PE")
@@ -992,6 +999,7 @@ def test_known_answer_0920_bull_call_spread_on_2_jan_2025():
         margin_fn=FixedMargin(),
     )
     assert r.error is None
+    assert r.backtest is not None
     (t,) = r.backtest.trades
     bought = next(f for f in t.legs if f.symbol == "NIFTY2510223800CE")
     sold = next(f for f in t.legs if f.symbol == "NIFTY2510224000CE")
@@ -1022,6 +1030,7 @@ def test_charges_note_says_the_strategy_sells_options():
     from app.logic import charge_model_for_spec
 
     _model, note = charge_model_for_spec(_spec(), "Index futures")
+    assert note is not None
     assert "buys and sells index options" in note
 
 
@@ -1159,6 +1168,7 @@ def test_known_answer_straddle_with_the_real_exchange_margin():
         slippage=Slippage(),
     )
     assert r.error is None
+    assert r.backtest is not None
     (t,) = r.backtest.trades
     assert t.quantity == 65
     assert t.net_pnl == pytest.approx(5694.10)

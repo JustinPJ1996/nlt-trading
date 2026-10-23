@@ -56,6 +56,7 @@ def replayed(tmp_path_factory):
     would)."""
     store = Store(tmp_path_factory.mktemp("activity") / "paper.sqlite")
     bars = _daily_bars().iloc[:400]  # cut here: the known scenario leaves one trade open
+    assert DAILY_SPEC is not None
     sid = store.save_strategy(DAILY_SPEC, describe(DAILY_SPEC))
     started_at = bars.index[300] - pd.Timedelta(minutes=1)
     run_id = store.start_run(
@@ -63,6 +64,7 @@ def replayed(tmp_path_factory):
     )
     run = store.get_run(run_id)
     now = bars.index[-1] + runner.close_offset("1d") + pd.Timedelta(minutes=1)
+    assert run is not None
     runner.step(store, run, fetch=lambda *a: bars, charge_fn=_zero, now=now)
     return store, run_id, bars
 
@@ -236,6 +238,7 @@ def _seed_two_paper_runs(store: Store):
     """Two strategies, each with one recorded signal_skipped decision at a
     different, known time, so ordering and filtering can be checked without
     running the engine."""
+    assert DAILY_SPEC is not None
     sid_a = store.save_strategy(DAILY_SPEC, describe(DAILY_SPEC))
     other = DAILY_SPEC.model_copy(update={"name": "second"})
     sid_b = store.save_strategy(other, describe(other))
@@ -293,6 +296,7 @@ def test_activity_source_id_filter(authed) -> None:
 def test_paper_trade_endpoint_returns_the_same_steps_as_the_pure_function(authed) -> None:
     store = authed.app.state.store
     bars = _daily_bars()
+    assert DAILY_SPEC is not None
     sid = store.save_strategy(DAILY_SPEC, describe(DAILY_SPEC))
     started_at = bars.index[300] - pd.Timedelta(minutes=1)
     run_id = store.start_run(
@@ -310,6 +314,7 @@ def test_paper_trade_endpoint_returns_the_same_steps_as_the_pure_function(authed
 
 def test_paper_trade_unknown_key_is_a_clear_error(authed) -> None:
     store = authed.app.state.store
+    assert DAILY_SPEC is not None
     sid = store.save_strategy(DAILY_SPEC, describe(DAILY_SPEC))
     run_id = store.start_run(sid, "paper", {"capital": CAPITAL, "started_at": "2024-01-01"})
     r = authed.get(f"/api/paper/{run_id}/trade/NIFTY|2099-01-01T00:00:00")
