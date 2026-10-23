@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -434,11 +435,11 @@ def test_equity_never_goes_negative_long_only(synthetic_bars):
 
 def _trade(net_pnl: float, gross_pnl: float | None = None, bars_held: int = 1) -> Trade:
     gross_pnl = net_pnl if gross_pnl is None else gross_pnl
-    ts = pd.Timestamp("2024-01-01", tz="Asia/Kolkata")
+    ts = cast(pd.Timestamp, pd.Timestamp("2024-01-01", tz="Asia/Kolkata"))
     return Trade(
         entry_time=ts,
         entry_price=100.0,
-        exit_time=ts + pd.Timedelta(days=bars_held),
+        exit_time=cast(pd.Timestamp, ts + pd.Timedelta(days=bars_held)),
         exit_price=100.0 + net_pnl,
         direction="long",
         quantity=1,
@@ -910,7 +911,7 @@ def _mkintraday_bars(day_specs: list[tuple[dt.date, dt.time, list[float]]]) -> p
             f"got {len(closes)}"
         )
         for t, close in zip(times, closes):
-            ts = pd.Timestamp.combine(day, t).tz_localize("Asia/Kolkata")
+            ts = pd.Timestamp.combine(day, t).tz_localize("Asia/Kolkata")  # ty: ignore[unresolved-attribute]  # Timestamp.combine is typed as datetime in the stubs
             idx.append(ts)
             rows.append(
                 {
@@ -1238,8 +1239,8 @@ def test_overnight_carry_invariant_raises_on_a_boundary_crossing():
     from nlt.data.session import NSE_EQUITY
     from nlt.engine.backtest import _assert_no_overnight_carry
 
-    entry = pd.Timestamp("2026-09-21 14:45", tz="Asia/Kolkata")
-    exit_ = pd.Timestamp("2026-09-22 09:15", tz="Asia/Kolkata")
+    entry = cast(pd.Timestamp, pd.Timestamp("2026-09-21 14:45", tz="Asia/Kolkata"))
+    exit_ = cast(pd.Timestamp, pd.Timestamp("2026-09-22 09:15", tz="Asia/Kolkata"))
 
     with pytest.raises(RuntimeError, match="carry a position across a session boundary"):
         _assert_no_overnight_carry(entry, exit_, NSE_EQUITY)
@@ -1250,8 +1251,8 @@ def test_overnight_carry_invariant_permits_a_same_session_trade():
     from nlt.data.session import NSE_EQUITY
     from nlt.engine.backtest import _assert_no_overnight_carry
 
-    entry = pd.Timestamp("2026-09-21 09:30", tz="Asia/Kolkata")
-    exit_ = pd.Timestamp("2026-09-21 15:15", tz="Asia/Kolkata")
+    entry = cast(pd.Timestamp, pd.Timestamp("2026-09-21 09:30", tz="Asia/Kolkata"))
+    exit_ = cast(pd.Timestamp, pd.Timestamp("2026-09-21 15:15", tz="Asia/Kolkata"))
 
     _assert_no_overnight_carry(entry, exit_, NSE_EQUITY)  # must not raise
 

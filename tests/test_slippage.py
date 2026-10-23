@@ -43,7 +43,7 @@ def test_rupee_amount_over_100_is_refused():
 
 def test_unknown_kind_is_refused():
     with pytest.raises(ValueError, match="percentage or a rupee"):
-        Slippage("bps", 1)
+        Slippage("bps", 1)  # ty: ignore[invalid-argument-type]  # deliberately invalid: proves it is refused
 
 
 def test_pct_buy_costs_more_and_sell_receives_less():

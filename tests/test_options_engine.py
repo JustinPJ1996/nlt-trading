@@ -14,6 +14,7 @@ row has volume 0, in which case the bucket did not trade at all.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -42,12 +43,14 @@ CAPITAL = 2_500_000.0
 
 
 def _ts(day: dt.date, hh: int, mm: int) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, dt.time(hh, mm)), tz=IST)
+    return cast(pd.Timestamp, pd.Timestamp(dt.datetime.combine(day, dt.time(hh, mm)), tz=IST))
 
 
 def _slots(day: dt.date) -> list[pd.Timestamp]:
     start = _ts(day, 9, 15)
-    return [start + pd.Timedelta(minutes=15 * k) for k in range(25)]  # 09:15..15:15
+    return [
+        cast(pd.Timestamp, start + pd.Timedelta(minutes=15 * k)) for k in range(25)
+    ]  # 09:15..15:15
 
 
 def _symbol(strike: int, kind: str, expiry: dt.date = WEEKLY) -> str:
@@ -360,11 +363,13 @@ def test_period_counts_back_from_the_last_day_with_option_prices_and_says_so():
 
     period = BacktestPeriod(words="the last 1 year", last=1, unit="years")
     dates = period_dates(period, dt.date(2026, 10, 13), data_end=dt.date(2025, 12, 31))
+    assert dates is not None
     assert dates["end"] == "2025-12-31"
     assert dates["start"] == "2024-12-31"
     assert "only available up to 31 Dec 2025" in dates["note"]
     # Without a data end nothing moves (every non-option strategy).
     plain = period_dates(period, dt.date(2026, 10, 13))
+    assert plain is not None
     assert plain["end"] == "2026-10-13" and plain["note"] is None
 
 
@@ -411,11 +416,13 @@ def test_known_answer_first_banknifty_monthly_call_trade_of_2025():
     )
     # Worked out by hand for a 15:15 square-off, the default when this was
     # written; the default is now 15 minutes before the 15:40 F&O close (below).
+    assert tr.spec is not None
     spec = tr.spec.model_copy(
         update={"schedule": tr.spec.schedule.model_copy(update={"square_off": dt.time(15, 15)})}
     )
     r = backtest_spec(spec, capital=2_500_000, start=dt.date(2025, 1, 1), end=dt.date(2025, 1, 1))
     assert r.error is None
+    assert r.backtest is not None
     t = r.backtest.trades[0]
     assert t.symbol == "BANKNIFTY25JAN51100CE"
     assert t.signal_time == pd.Timestamp("2025-01-01 10:45", tz=IST)
@@ -443,10 +450,12 @@ def test_known_answer_a_1525_square_off_inside_the_1515_candle():
         "Buy BANKNIFTY monthly ATM call on 15 minute bars when RSI crosses above 60. "
         "Stop 30%, target 50% on the premium."
     )
+    assert tr.spec is not None
     assert tr.spec.schedule.square_off == dt.time(15, 25)
     r = backtest_spec(
         tr.spec, capital=2_500_000, start=dt.date(2025, 1, 1), end=dt.date(2025, 1, 1)
     )
+    assert r.backtest is not None
     t = r.backtest.trades[0]
     assert t.exit_reason == "square_off"
     assert t.exit_price == pytest.approx(1109.70)

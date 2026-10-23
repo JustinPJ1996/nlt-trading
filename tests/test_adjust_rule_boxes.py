@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from app import logic
+from nlt.spec.models import Compare, Const
 
 RSI = "buy nifty when rsi cracks 30, target 2%, stop loss 1%"
 TWO_SMA = "buy nifty when 20 sma crosses above 50 sma, stop loss 1%"
@@ -43,9 +44,12 @@ def test_changing_the_level_changes_what_is_tested_and_the_readback() -> None:
     # Start from a line the user did not word themselves: a changed box makes it theirs.
     before = {**t.sources, "entry": "worked_out"}
     spec, sources, typed = logic.adjust_spec(t.spec, {"level:entry.right": "25"}, before)
+    assert isinstance(spec.entry, Compare)
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 25
     assert "When RSI(14) crosses below 25" in logic.describe_spec(spec)
     assert "crosses below 30" not in logic.describe_spec(spec)
+    assert sources is not None
     assert sources["entry"] == "said"
     assert typed == {"form.level:entry.right": "25"}
 

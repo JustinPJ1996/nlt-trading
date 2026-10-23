@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from nlt.spec.models import StrategySpec
+from nlt.spec.models import Compare, Const, PercentChange, Ref, StrategySpec
 from nlt.translate.readback import describe
 from nlt.translate.rules import CONDITION_PATTERNS, _known_tickers, parse
 
@@ -73,6 +74,7 @@ def test_crossing_below_phrasings(phrase: str) -> None:
     spec = _spec_of(f"buy nifty when {phrase}, stop 1%, target 2%")
     assert spec.entry.kind == "compare"
     assert spec.entry.op == "crosses_below"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 30.0
 
 
@@ -81,20 +83,25 @@ def test_state_below_phrasings(phrase: str) -> None:
     spec = _spec_of(f"buy nifty when {phrase}, stop 1%, target 2%")
     assert spec.entry.kind == "compare"
     assert spec.entry.op == "lt"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 30.0
 
 
 @pytest.mark.parametrize("phrase", CROSSES_ABOVE_PHRASES)
 def test_crossing_above_phrasings(phrase: str) -> None:
     spec = _spec_of(f"buy nifty when {phrase}, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 70.0
 
 
 @pytest.mark.parametrize("phrase", STATE_ABOVE_PHRASES)
 def test_state_above_phrasings(phrase: str) -> None:
     spec = _spec_of(f"buy nifty when {phrase}, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "gt"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 70.0
 
 
@@ -257,6 +264,7 @@ def test_moving_average_crossover() -> None:
     spec = _spec_of("buy nifty when 20 MA crosses above 50 MA, stop 1%, target 2%")
     ids = {i.id for i in spec.indicators}
     assert {"sma20", "sma50"} <= ids
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
 
 
@@ -270,6 +278,7 @@ def test_ema_above() -> None:
     spec = _spec_of("buy nifty when 20 EMA above 200 EMA, stop 1%, target 2%")
     ids = {i.id for i in spec.indicators}
     assert {"ema20", "ema200"} <= ids
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "gt"
 
 
@@ -277,18 +286,22 @@ def test_golden_cross() -> None:
     spec = _spec_of("buy nifty on golden cross, stop 1%, target 2%")
     ids = {i.id for i in spec.indicators}
     assert {"sma50", "sma200"} <= ids
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
 
 
 def test_death_cross_forces_short() -> None:
     spec = _spec_of("nifty on death cross, stop 1%, target 2%")
     assert spec.direction == "short"
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_below"
 
 
 def test_price_above_moving_average() -> None:
     spec = _spec_of("buy nifty when price above the 200 day moving average, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "gt"
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.name == "close"
 
 
@@ -313,8 +326,11 @@ def test_price_crossing_a_moving_average_is_a_crossing(sentence, op, length, kin
     result = parse(sentence)
     assert result.spec is not None, result.questions
     spec = result.spec
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == op
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.name == "close"
+    assert isinstance(spec.entry.right, Ref)
     (ma,) = [i for i in spec.indicators if i.id == spec.entry.right.name]
     assert (ma.type, ma.params["length"]) == (kind, length)
 
@@ -353,8 +369,11 @@ def test_a_crossing_by_something_other_than_the_price_is_still_asked(sentence) -
 )
 def test_crossing_a_bollinger_band(sentence, op, band) -> None:
     spec = _spec_of(sentence)
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == op
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.name == "close"
+    assert isinstance(spec.entry.right, Ref)
     assert spec.entry.right.output == band
 
 
@@ -369,7 +388,9 @@ def test_crossing_a_bollinger_band(sentence, op, band) -> None:
 )
 def test_supertrend_trend_words(sentence, op) -> None:
     spec = _spec_of(sentence)
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == op
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.output == "direction"
 
 
@@ -388,33 +409,43 @@ def test_supertrend_settings_said_are_the_settings_tested(sentence, length, mult
     from nlt.indicators.registry import REGISTRY
 
     spec = _spec_of(sentence)
+    assert isinstance(spec.entry, Compare)
+    assert isinstance(spec.entry.left, Ref)
     (st,) = [i for i in spec.indicators if i.id == spec.entry.left.name]
     params = {**REGISTRY["supertrend"].params, **st.params}
-    assert (params["length"], float(params["mult"])) == (length, mult)
+    assert (params["length"], float(cast("float", params["mult"]))) == (length, mult)
     assert f"Supertrend({length}, {mult})" in describe(spec)
 
 
 def test_close_below_ema() -> None:
     spec = _spec_of("sell nifty when close below the 50 EMA, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "lt"
 
 
 def test_macd_crosses_above_signal() -> None:
     spec = _spec_of("buy nifty when MACD crosses above signal, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.output == "macd"
+    assert isinstance(spec.entry.right, Ref)
     assert spec.entry.right.output == "signal"
 
 
 def test_macd_turns_positive() -> None:
     spec = _spec_of("buy nifty when MACD turns positive, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 0
 
 
 def test_adx_above() -> None:
     spec = _spec_of("buy nifty when ADX above 25, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "gt"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == 25.0
 
 
@@ -426,17 +457,23 @@ def test_trend_is_strong_notes_assumption() -> None:
 
 def test_supertrend_bullish() -> None:
     spec = _spec_of("buy nifty when supertrend turns green, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.output == "direction"
 
 
 def test_bollinger_touch_lower_band() -> None:
     spec = _spec_of("buy nifty when price touches the lower bollinger band, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
+    assert isinstance(spec.entry.right, Ref)
     assert spec.entry.right.output == "lower"
 
 
 def test_bollinger_close_above_upper() -> None:
     spec = _spec_of("buy nifty when it closes above the upper band, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
+    assert isinstance(spec.entry.right, Ref)
     assert spec.entry.right.output == "upper"
 
 
@@ -448,22 +485,27 @@ def test_bollinger_squeeze_notes_assumption() -> None:
 
 def test_stochastic_level() -> None:
     spec = _spec_of("buy nifty when stochastic below 20, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "lt"
 
 
 def test_cci_level() -> None:
     spec = _spec_of("buy nifty when cci below -100, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "lt"
+    assert isinstance(spec.entry.right, Const)
     assert spec.entry.right.value == -100.0
 
 
 def test_williams_r_level() -> None:
     spec = _spec_of("buy nifty when williams %r below -80, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "lt"
 
 
 def test_prior_day_high_breakout() -> None:
     spec = _spec_of("buy nifty when it breaks yesterday's high, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_above"
     ind = spec.indicators[0]
     assert ind.type == "prior_period"
@@ -512,6 +554,7 @@ def test_percent_move_falls() -> None:
 
 def test_percent_move_drops_over_bars() -> None:
     spec = _spec_of("buy nifty when it drops 2% in 3 days, stop 1%, target 2%")
+    assert isinstance(spec.entry, PercentChange)
     assert spec.entry.lookback == 3
     assert spec.entry.value == -2.0
 
@@ -558,6 +601,7 @@ def test_exit_condition() -> None:
         "buy nifty when 20 MA crosses above 50 MA, exit when the 20 MA crosses below the 50 MA, stop 1%"
     )
     assert spec.exit.condition is not None
+    assert isinstance(spec.exit.condition, Compare)
     assert spec.exit.condition.op == "crosses_below"
 
 
@@ -620,6 +664,7 @@ def test_three_condition_and() -> None:
 
 def test_sloppy_lowercase_no_punctuation() -> None:
     spec = _spec_of("buy nifty when rsi cracks 30 exit at 2% sl 1%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_below"
     assert spec.exit.target_pct == 2.0
     assert spec.exit.stop_pct == 1.0
@@ -692,6 +737,8 @@ def test_deterministic_output() -> None:
     text = "Short BANKNIFTY when the 20 MA crosses below the 50 MA and ADX is above 25, stop loss 1.5 times ATR, take profit 3%"
     a = parse(text)
     b = parse(text)
+    assert a.spec is not None
+    assert b.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
 
 
@@ -740,6 +787,7 @@ def test_every_fixture_spec_passes_validation() -> None:
 def _entry_op(text: str):
     result = parse(f"buy nifty when {text}, target 2%, stop loss 1%")
     assert result.spec is not None, f"failed to parse: {text!r} ({result.unparsed})"
+    assert isinstance(result.spec.entry, Compare)
     return result.spec.entry.op
 
 
@@ -874,12 +922,14 @@ def test_use_5_minute_candles_on_a_stock_strategy() -> None:
 def test_crossing_still_holds_for_a_single_stock(text: str) -> None:
     spec = _spec_of(text)
     assert spec.instrument.symbol == "TCS"
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_below"
 
 
 def test_state_still_holds_for_a_stock_universe() -> None:
     spec = _spec_of("buy nifty 100 stocks when rsi is below 30, stop 1%, target 2%")
     assert spec.instrument.symbol == "NIFTY 100"
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "lt"
 
 
@@ -891,6 +941,7 @@ def test_deterministic_output_for_a_stock_strategy() -> None:
     a = parse(text)
     b = parse(text)
     assert a.spec is not None
+    assert b.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
 
 
@@ -899,6 +950,7 @@ def test_deterministic_output_for_a_universe_strategy() -> None:
     a = parse(text)
     b = parse(text)
     assert a.spec is not None
+    assert b.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
 
 
@@ -978,12 +1030,17 @@ def test_every_produced_spec_among_the_70_validates() -> None:
 )
 def test_anaphoric_it_resolves_to_the_entry_indicator(text: str) -> None:
     spec = _spec_of(text)
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "crosses_below"
     assert spec.exit.condition is not None
+    assert isinstance(spec.exit.condition, Compare)
     assert spec.exit.condition.op == "crosses_above"
+    assert isinstance(spec.exit.condition.right, Const)
     assert spec.exit.condition.right.value == 70.0
     # "it" must resolve to the *same* indicator id as the entry's RSI, not a
     # second, independently-declared one.
+    assert isinstance(spec.entry.left, Ref)
+    assert isinstance(spec.exit.condition.left, Ref)
     assert spec.exit.condition.left.name == spec.entry.left.name
     assert len([i for i in spec.indicators if i.type == "rsi"]) == 1
 
@@ -992,7 +1049,11 @@ def test_anaphoric_it_with_inline_period_carries_the_same_length() -> None:
     spec = _spec_of(
         "buy nifty when rsi14 drops below 30, sell when it crosses above 70, stop 1%, target 2%"
     )
+    assert isinstance(spec.entry, Compare)
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.name == "rsi14"
+    assert isinstance(spec.exit.condition, Compare)
+    assert isinstance(spec.exit.condition.left, Ref)
     assert spec.exit.condition.left.name == "rsi14"
 
 
@@ -1103,8 +1164,11 @@ def test_indicator_vs_indicator_crossing(phrase: str) -> None:
 )
 def test_indicator_vs_indicator_state(phrase: str, left_id: str, right_id: str) -> None:
     spec = _spec_of(f"buy tcs when {phrase}, stop 1%, target 2%, use 5-minute candles")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == "gt"
+    assert isinstance(spec.entry.left, Ref)
     assert spec.entry.left.name == left_id
+    assert isinstance(spec.entry.right, Ref)
     assert spec.entry.right.name == right_id
 
 
@@ -1121,20 +1185,25 @@ def test_spelled_out_percent_stop_and_target() -> None:
 
 def test_at_rsi_level_is_a_crossing_direction_dependent() -> None:
     long_spec = _spec_of("buy reliance at rsi 30 with 5 percent stop loss and 10 percent target")
+    assert isinstance(long_spec.entry, Compare)
     assert long_spec.entry.op == "crosses_below"
+    assert isinstance(long_spec.entry.right, Const)
     assert long_spec.entry.right.value == 30.0
 
     short_spec = _spec_of(
         "sell short reliance at rsi 70 with 5 percent stop loss and 10 percent target"
     )
+    assert isinstance(short_spec.entry, Compare)
     assert short_spec.entry.op == "crosses_above"
+    assert isinstance(short_spec.entry.right, Const)
     assert short_spec.entry.right.value == 70.0
 
 
 def test_rsi_between_becomes_an_all_of_two_bounds() -> None:
     spec = _spec_of("buy nifty when rsi is between 40-60, stop 1%, target 2%")
     assert spec.entry.kind == "all"
-    ops = sorted((c.op, c.right.value) for c in spec.entry.conditions)
+    assert all(isinstance(c, Compare) and isinstance(c.right, Const) for c in spec.entry.conditions)
+    ops = sorted((c.op, c.right.value) for c in spec.entry.conditions)  # ty: ignore[unresolved-attribute]  # each is a Compare against a Const, asserted just above
     assert ops == [("gte", 40.0), ("lte", 60.0)]
 
 
@@ -1180,6 +1249,7 @@ def test_vwap_on_a_stock_universe_refuses_regardless_of_timeframe() -> None:
 )
 def test_inline_period_still_honours_crossing_vs_state(text: str, expected_op: str) -> None:
     spec = _spec_of(f"buy tcs when {text}, stop 1%, target 2%")
+    assert isinstance(spec.entry, Compare)
     assert spec.entry.op == expected_op
 
 
@@ -1202,9 +1272,11 @@ def test_a_test_period_is_read_and_kept_off_the_spec(phrase, last, unit, year) -
     result = parse(f"buy itc when rsi cracks 30, stop 1%, target 2%. {phrase}.")
     assert result.spec is not None, result.questions
     assert result.unparsed == []
+    assert result.period is not None
     assert (result.period.last, result.period.unit, result.period.year) == (last, unit, year)
     without = parse("buy itc when rsi cracks 30, stop 1%, target 2%.").spec
     keep = {"name", "description"}
+    assert without is not None
     assert result.spec.model_dump(exclude=keep) == without.model_dump(exclude=keep)
 
 
@@ -1260,6 +1332,7 @@ def test_hold_overnight_turns_off_the_square_off_and_says_so() -> None:
 
 def test_without_hold_overnight_minute_bars_still_square_off() -> None:
     result = parse(_BASE.format("15 minute candles"))
+    assert result.spec is not None
     assert result.spec.schedule.intraday is True
     assert "Square off at 15:15" in describe(result.spec)
 
@@ -1278,6 +1351,7 @@ def test_deterministic_output_for_indicator_vs_indicator() -> None:
     a = parse(text)
     b = parse(text)
     assert a.spec is not None
+    assert b.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
 
 
@@ -1286,6 +1360,7 @@ def test_deterministic_output_for_anaphoric_exit() -> None:
     a = parse(text)
     b = parse(text)
     assert a.spec is not None
+    assert b.spec is not None
     assert a.spec.model_dump_json() == b.spec.model_dump_json()
 
 
@@ -1306,6 +1381,7 @@ def test_the_stop_question_offers_buttons_and_takes_typing() -> None:
 @pytest.mark.parametrize("value", ["0.5", "1", "2"])
 def test_every_stop_button_is_understood(value) -> None:
     result = parse(_NO_STOP, answers={"exit.stop_pct": value})
+    assert result.spec is not None
     assert result.spec.exit.stop_pct == float(value)
 
 
@@ -1314,6 +1390,7 @@ def test_a_target_can_be_picked_alongside_the_stop() -> None:
     target = next(q for q in questions if q.field == "exit.rule")
     assert [c.value for c in target.choices] == ["2", "3", "5"]
     result = parse("buy nifty when rsi cracks 30", answers={"exit.stop_pct": "1", "exit.rule": "3"})
+    assert result.spec is not None
     assert (result.spec.exit.stop_pct, result.spec.exit.target_pct) == (1.0, 3.0)
 
 
@@ -1328,8 +1405,10 @@ def test_overnight_or_square_off_is_answered_by_a_button() -> None:
     assert [c.value for c in q.choices] == ["overnight", "square_off"]
     assert not q.answerable
     held = parse(_BOTH, answers={"schedule.intraday": "overnight"}).spec
+    assert held is not None
     assert held.schedule.intraday is False
     closed = parse(_BOTH, answers={"schedule.intraday": "square_off"}).spec
+    assert closed is not None
     assert closed.schedule.intraday is True
     assert "Square off at 15:15" in describe(closed)
 
@@ -1345,6 +1424,9 @@ def test_which_indicator_it_means_is_a_button_per_indicator() -> None:
     assert q.field == "exit.condition"
     assert [(c.label, c.value) for c in q.choices] == [("RSI", "rsi"), ("ADX", "adx")]
     picked = parse(_IT, answers={"exit.condition": "adx"}).spec
+    assert picked is not None
+    assert isinstance(picked.exit.condition, Compare)
+    assert isinstance(picked.exit.condition.left, Ref)
     assert picked.exit.condition.left.name.startswith("adx")
     # CCI is a family we could read, but the sentence never named it.
     assert parse(_IT, answers={"exit.condition": "cci"}).spec is None
