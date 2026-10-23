@@ -66,9 +66,9 @@ Two traps this repo has already hit:
 ## The checks
 
 ```
-make check      # ruff + oxlint/oxfmt (web) lint and format check + the full test suite. Run before committing.
+make check      # ruff, ty, oxlint/oxfmt (web) + the full test suite. Run before committing.
 make fix        # ruff, oxlint and oxfmt autofix + format write. Run this before reading errors.
-make types      # ty type check (report only; ~700 findings still to work through)
+make types      # ty type check alone (zero findings; keep it there)
 make mutation   # mutation testing (slow, deliberate — not part of `make check`)
 make secrets    # gitleaks over the whole history
 make hooks      # install the git hooks; needed once per clone
