@@ -466,7 +466,8 @@ def _start_section(store) -> None:
         st.error(err)
         return
     running = {r["strategy_id"] for r in store.active_paper_runs()}
-    choices = [s for s in strategies if s["id"] not in running]
+    # `err` was empty, so `safe_call` succeeded and `strategies` is the list, not None.
+    choices = [s for s in strategies if s["id"] not in running]  # ty: ignore[not-iterable]
     if not choices:
         st.info("Save a strategy from its backtest results first, then start it here.")
         return

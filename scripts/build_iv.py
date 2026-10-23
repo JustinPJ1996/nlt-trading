@@ -45,7 +45,7 @@ def build(underlying: str) -> None:
     for date, row in frame[missing | (frame["legs"] != iv.LEGS_BOTH)].iterrows():
         print(f"    {date.date()} {row['legs']}: {row['reason']}")
     first = iv.iv_percentile(frame["iv"], 252).first_valid_index()
-    print(f"  first 252-day percentile: {first.date() if first is not None else 'none'}")
+    print(f"  first 252-day percentile: {first.date() if first is not None else 'none'}")  # ty: ignore[unresolved-attribute]
 
 
 def check_vix() -> None:
