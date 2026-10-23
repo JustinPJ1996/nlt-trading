@@ -310,7 +310,11 @@ def test_replayed_straddle_paper_trades_match_the_backtest(straddle):
 def test_an_option_position_is_held_through_the_day_not_squared_off_each_pass(bought):
     """The bug the stock engine once had: mid-session, the newest candle was
     taken for the day's last, and every position squared off on each pass."""
-    for e in bought.store.paper_events(bought.run["id"]):
+    events = bought.store.paper_events(bought.run["id"])
+    # Without a position there is nothing to square off, and the loop below
+    # would pass having checked nothing.
+    assert any(e["kind"] == "entry" for e in events)
+    for e in events:
         if e["kind"] == "exit" and eval_reason(e) == "square_off":
             assert pd.Timestamp(e["bar_time"]).time() >= dt.time(15, 15)  # ty: ignore[unresolved-attribute]  # pandas stubs: Timestamp(str) is never NaT
 
