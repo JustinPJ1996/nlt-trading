@@ -18,7 +18,11 @@ export function formatDate(iso: string, withTime: boolean): string {
 }
 
 export function monthLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", { month: "short", year: "2-digit", timeZone: IST });
+  return new Date(iso).toLocaleDateString("en-GB", {
+    month: "short",
+    year: "2-digit",
+    timeZone: IST,
+  });
 }
 
 /** Rs 1,00,000 -- Indian digit grouping, no paise. */
@@ -31,7 +35,12 @@ export function rupeesFull(v: number): string {
 export function rupeesCompact(v: number): string {
   const a = Math.abs(v);
   const sign = v < 0 ? "-" : "";
-  const trim = (x: number) => (x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1).replace(/\.0$/, "") : x.toFixed(2).replace(/\.?0+$/, ""));
+  const trim = (x: number) =>
+    x >= 100
+      ? x.toFixed(0)
+      : x >= 10
+        ? x.toFixed(1).replace(/\.0$/, "")
+        : x.toFixed(2).replace(/\.?0+$/, "");
   if (a >= 1e7) return `${sign}Rs ${trim(a / 1e7)} Cr`;
   if (a >= 1e5) return `${sign}Rs ${trim(a / 1e5)} L`;
   if (a >= 1e3) return `${sign}Rs ${trim(a / 1e3)}K`;

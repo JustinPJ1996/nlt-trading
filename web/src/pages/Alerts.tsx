@@ -52,8 +52,8 @@ export function Alerts({ onChanged }: { onChanged?: () => void }) {
     <div className="narrow">
       <h1 className="page-title">Alerts</h1>
       <p className="page-lede">
-        Every one-off alert that has fired, and every signal or exit from a strategy run as alerts only.
-        Nothing here is a trade.
+        Every one-off alert that has fired, and every signal or exit from a strategy run as alerts
+        only. Nothing here is a trade.
       </p>
       <ErrorLine error={error} />
 
@@ -63,7 +63,11 @@ export function Alerts({ onChanged }: { onChanged?: () => void }) {
         <>
           {state.items.length > 0 && (
             <div className="row end mb-4">
-              <button className="btn secondary small" onClick={markAllRead} disabled={state.unread_count === 0}>
+              <button
+                className="btn secondary small"
+                onClick={markAllRead}
+                disabled={state.unread_count === 0}
+              >
                 Mark all as read
               </button>
             </div>
@@ -72,8 +76,8 @@ export function Alerts({ onChanged }: { onChanged?: () => void }) {
             <div className="panel empty">
               <h2>No alerts yet</h2>
               <p className="muted mb-5">
-                When a one-off alert fires, or a strategy running as alerts only spots a signal, it lands
-                here. Nothing is traded.
+                When a one-off alert fires, or a strategy running as alerts only spots a signal, it
+                lands here. Nothing is traded.
               </p>
               <a className="btn secondary no-underline" href="#/orders">
                 Set up a one-off alert

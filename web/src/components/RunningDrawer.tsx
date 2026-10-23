@@ -80,7 +80,8 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
         <div>
           <div className="item-name">{item.name}</div>
           <div className="muted small">
-            {item.kind === "strategy" && (item.alert_only ? "Strategy, alerts only" : "Paper strategy")}
+            {item.kind === "strategy" &&
+              (item.alert_only ? "Strategy, alerts only" : "Paper strategy")}
             {item.kind === "one_off_order" && (
               <>
                 One-off order &middot; <a href="#/orders">see on Orders</a>
@@ -101,20 +102,22 @@ function RunningRow({ item, onChanged }: { item: RunningItem; onChanged: () => v
       {item.alert_only ? (
         <p className="muted small">Tells you when it would buy or sell. No paper money.</p>
       ) : (
-      <div className="running-money">
-        <div>
-          <div className="muted small">Closed today</div>
-          <div className={moneyClass(item.closed_today_value)}>{item.closed_today}</div>
+        <div className="running-money">
+          <div>
+            <div className="muted small">Closed today</div>
+            <div className={moneyClass(item.closed_today_value)}>{item.closed_today}</div>
+          </div>
+          <div>
+            <div className="muted small">
+              Open now{item.open_now_as_of ? ` (as of ${item.open_now_as_of})` : ""}
+            </div>
+            <div className={moneyClass(item.open_now_value)}>{item.open_now}</div>
+          </div>
+          <div>
+            <div className="muted small">Total</div>
+            <div className={moneyClass(item.total_value)}>{item.total}</div>
+          </div>
         </div>
-        <div>
-          <div className="muted small">Open now{item.open_now_as_of ? ` (as of ${item.open_now_as_of})` : ""}</div>
-          <div className={moneyClass(item.open_now_value)}>{item.open_now}</div>
-        </div>
-        <div>
-          <div className="muted small">Total</div>
-          <div className={moneyClass(item.total_value)}>{item.total}</div>
-        </div>
-      </div>
       )}
       {item.kind === "strategy" && <StrategyActions item={item} onChanged={onChanged} />}
     </li>

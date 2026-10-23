@@ -38,8 +38,8 @@ export function Strategies({
     <div>
       <h1 className="page-title">My strategies</h1>
       <p className="page-lede">
-        A strategy is <strong>proven</strong> once it has a finished backtest and a finished paper-trading
-        run. Only proven strategies will ever be allowed to trade for real.
+        A strategy is <strong>proven</strong> once it has a finished backtest and a finished
+        paper-trading run. Only proven strategies will ever be allowed to trade for real.
       </p>
       <ErrorLine error={error} />
       {list === null && !error && <Working>Loading...</Working>}
@@ -47,7 +47,8 @@ export function Strategies({
         <div className="panel empty">
           <h2>No saved strategies yet</h2>
           <p className="muted mb-5">
-            Describe a strategy in plain words, test it on past prices, then press "Save this strategy" on its results. It will show up here.
+            Describe a strategy in plain words, test it on past prices, then press "Save this
+            strategy" on its results. It will show up here.
           </p>
           <button className="btn" onClick={onBuild}>
             Build a strategy
@@ -70,9 +71,7 @@ export function Strategies({
                   ) : (
                     <span className="tag">Not proven yet</span>
                   )}
-                  <span className="item-meta ml-auto">
-                    Saved {s.created}
-                  </span>
+                  <span className="item-meta ml-auto">Saved {s.created}</span>
                 </span>
               </summary>
               <div className="list-item-body stack">
@@ -103,8 +102,12 @@ export function Strategies({
                               {friendly(r.status)}
                               {r.error && <div className="small neg">{r.error}</div>}
                             </td>
-                            <td className="num" data-label="Money">{r.capital_text}</td>
-                            <td className="num" data-label="Return">{r.return_text}</td>
+                            <td className="num" data-label="Money">
+                              {r.capital_text}
+                            </td>
+                            <td className="num" data-label="Return">
+                              {r.return_text}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -112,7 +115,11 @@ export function Strategies({
                   </div>
                 )}
                 <div className="btn-row mt-4">
-                  <button className="btn secondary" onClick={() => testAgain(s.id)} disabled={opening !== null}>
+                  <button
+                    className="btn secondary"
+                    onClick={() => testAgain(s.id)}
+                    disabled={opening !== null}
+                  >
                     Test again
                   </button>
                   <a className="btn secondary no-underline" href="#/paper">

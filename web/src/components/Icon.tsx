@@ -23,7 +23,15 @@ export type IconName = keyof typeof PATHS;
 
 export function Icon({ name }: { name: IconName }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={name === "more" ? 3 : 1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={name === "more" ? 3 : 1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d={PATHS[name]} />
     </svg>
   );
@@ -36,7 +44,16 @@ export function Glyph() {
       <rect x="1" y="1" width="24" height="24" rx="7" fill="currentColor" />
       <path d="M9 6v14M16.5 5v15" stroke="#1e2550" strokeWidth="1.6" strokeLinecap="round" />
       <rect x="6.5" y="9" width="5" height="7" rx="1.2" fill="#1e2550" />
-      <rect x="14" y="7.5" width="5" height="8" rx="1.2" fill="#fff" stroke="#1e2550" strokeWidth="1.6" />
+      <rect
+        x="14"
+        y="7.5"
+        width="5"
+        height="8"
+        rx="1.2"
+        fill="#fff"
+        stroke="#1e2550"
+        strokeWidth="1.6"
+      />
     </svg>
   );
 }
