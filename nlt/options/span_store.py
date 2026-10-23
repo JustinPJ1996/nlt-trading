@@ -105,7 +105,7 @@ def _risk_array(elem) -> tuple[list[float], float]:
 
 def parse_span_xml(source: str | Path | IO[bytes], exchange: str, source_name: str) -> SpanDay:
     """Stream an exchange SPAN XML file and keep only our three indices."""
-    from lxml import etree
+    from lxml import etree  # ty: ignore[unresolved-import]
 
     codes = EXCHANGE_CODES[exchange]
     wanted_cc = set(codes.values())

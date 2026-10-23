@@ -108,9 +108,9 @@ class YahooSource:
 
         df = apply_floor(df, floor)
         if start is not None:
-            df = df[df.index.date >= start]
+            df = df[df.index.date >= start]  # ty: ignore[unresolved-attribute]
         if end is not None:
-            df = df[df.index.date <= end]
+            df = df[df.index.date <= end]  # ty: ignore[unresolved-attribute]
         return df
 
     def _download(self, symbol: str, interval: str) -> pd.DataFrame:

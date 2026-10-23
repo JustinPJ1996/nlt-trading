@@ -32,7 +32,9 @@ that symbol contributes nothing, not a day it silently repeats its last price.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -102,7 +104,7 @@ def run_basket_backtest(
     charge_fn=None,
     slippage: Slippage = ZERO,
     trade_from: pd.Timestamp | None = None,
-    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    blocked_windows: Iterable[tuple[dt.datetime, dt.datetime]] = (),
 ) -> BasketResult:
     """Run `spec` across every symbol in `bars_by_symbol`, sharing one account.
 
@@ -233,7 +235,7 @@ def run_basket_backtest(
         for s in candidates:
             track = tracks[s]
             track.pending_entry = False
-            signal_ts = track.pending_entry_ts
+            signal_ts = cast("pd.Timestamp", track.pending_entry_ts)  # set with pending_entry
             track.pending_entry_ts = None
             if total_open >= max_concurrent:
                 dropped_for_slots += 1
@@ -301,7 +303,7 @@ def run_basket_backtest(
                     # single-symbol basket must produce byte-identical trades.
                     pos.bars_held += 1
                     outcome = ("end_of_data", bar.close, False)
-                reason, raw_price, ambiguous = outcome
+                reason, raw_price, ambiguous = outcome  # ty: ignore[not-iterable]
                 trade = _close_position(
                     pos,
                     s,

@@ -40,7 +40,7 @@ def apply_floor(df: pd.DataFrame, floor: dt.date | None = DATA_FLOOR) -> pd.Data
     """Drop bars before `floor`. Passing None keeps everything."""
     if floor is None or df.empty:
         return df
-    return df[df.index.date >= floor]
+    return df[df.index.date >= floor]  # ty: ignore[unresolved-attribute]
 
 
 class BarSource(Protocol):

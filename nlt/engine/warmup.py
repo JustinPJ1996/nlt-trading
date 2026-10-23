@@ -81,7 +81,7 @@ def padded_start(spec: StrategySpec, start: dt.date) -> dt.date:
 
 
 def first_bar_on_or_after(index: pd.DatetimeIndex, start: dt.date) -> pd.Timestamp | None:
-    on_or_after = index[index.normalize().date >= start] if len(index) else index
+    on_or_after = index[index.normalize().date >= start] if len(index) else index  # ty: ignore[unresolved-attribute]
     return on_or_after[0] if len(on_or_after) else None
 
 

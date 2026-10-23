@@ -125,7 +125,7 @@ def traded_mask(df: pd.DataFrame) -> pd.Series:
     quote at that instant.
     """
     bad_ohlc = df["bad_ohlc"] if "bad_ohlc" in df.columns else False
-    return (df["volume"] > 0) & ~bad_ohlc
+    return (df["volume"] > 0) & ~bad_ohlc  # ty: ignore[deprecated]
 
 
 def _read_filtered(
@@ -253,10 +253,10 @@ def underlying_bars(underlying: str, timeframe: str, start: dt.date, end: dt.dat
         # late settlement print) -- normalise to the date, matching every
         # other daily bar frame in this project (see `data/bars/*.parquet`,
         # all indexed at 00:00 IST).
-        df.index = df.index.normalize()
+        df.index = df.index.normalize()  # ty: ignore[unresolved-attribute]
 
     df = normalise(df)
-    mask = (df.index.date >= start) & (df.index.date <= end)
+    mask = (df.index.date >= start) & (df.index.date <= end)  # ty: ignore[unresolved-attribute]
     return df[mask]
 
 
@@ -301,7 +301,7 @@ def listing(underlying: str, day: dt.date) -> pd.DataFrame:
 
 
 def _day_start(day: dt.date) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, dt.time(0, 0)), tz=IST)
+    return pd.Timestamp(dt.datetime.combine(day, dt.time(0, 0)), tz=IST)  # ty: ignore[invalid-return-type]
 
 
 def _months_filter(start: dt.date, end: dt.date) -> ds.Expression:
@@ -510,7 +510,7 @@ class FrameSource:
         if timeframe == "1d":
             sub.index = sub.index.normalize()
         sub = normalise(sub)
-        mask = (sub.index.date >= start) & (sub.index.date <= end)
+        mask = (sub.index.date >= start) & (sub.index.date <= end)  # ty: ignore[unresolved-attribute]
         return sub[mask]
 
     def listing(self, underlying: str, day: dt.date) -> pd.DataFrame:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import ValidationError
 
@@ -308,7 +309,7 @@ _ALERT = re.compile(
 )
 
 
-def _side(raw: str) -> str:
+def _side(raw: str) -> Literal["buy", "sell"]:
     return "buy" if raw.startswith(("buy", "go long")) else "sell"
 
 
@@ -608,7 +609,13 @@ def _streak(
     else:
         questions.append(_not_understood(clause))
         return None
-    return StreakTrigger(watch=watched, candle=candle, count=run.count, rule=rule)
+    # candle and rule only ever hold the literal words assigned above.
+    return StreakTrigger(
+        watch=watched,
+        candle=candle,  # ty: ignore[invalid-argument-type]
+        count=run.count,
+        rule=rule,  # ty: ignore[invalid-argument-type]
+    )
 
 
 _PNL_WORD = (

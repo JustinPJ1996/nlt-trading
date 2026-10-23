@@ -113,12 +113,17 @@ def _entry_rule_text(spec: StrategySpec) -> str:
     from nlt.translate.readback import _describe_condition
 
     indicators = {i.id: i for i in spec.indicators}
-    return _describe_condition(spec.entry, indicators, spec.instrument.timeframe)
+    # readback types `indicators` as dict[str, dict] but is handed IndicatorSpec objects
+    return _describe_condition(
+        spec.entry,
+        indicators,  # ty: ignore[invalid-argument-type]
+        spec.instrument.timeframe,
+    )
 
 
 def _candle_words(ts: pd.Timestamp, timeframe: str) -> str:
     """A daily candle is a day, not midnight: "the 03 Jul candle"."""
-    ts = pd.Timestamp(ts).tz_convert("Asia/Kolkata")
+    ts = pd.Timestamp(ts).tz_convert("Asia/Kolkata")  # ty: ignore[invalid-assignment]
     return f"{ts:%d %b}" if timeframe == "1d" else f"{ts:%d %b %H:%M}"
 
 
@@ -136,14 +141,14 @@ def _session_of(spec: StrategySpec) -> Session:
 
 
 def _close_time(session: Session) -> pd.Timedelta:
-    return pd.Timedelta(hours=session.close_time.hour, minutes=session.close_time.minute)
+    return pd.Timedelta(hours=session.close_time.hour, minutes=session.close_time.minute)  # ty: ignore[invalid-return-type]
 
 
 def close_offset(timeframe: str, session: Session = NSE_EQUITY) -> pd.Timedelta:
     if timeframe == "1d":
         return _close_time(session)
     try:
-        return _CLOSE_OFFSET[timeframe]
+        return _CLOSE_OFFSET[timeframe]  # ty: ignore[invalid-return-type]
     except KeyError:
         raise ValueError(f"paper trading has no candle length for {timeframe!r}") from None
 
@@ -161,7 +166,7 @@ def trade_from_for(
     started_at: pd.Timestamp, timeframe: str, session: Session = NSE_EQUITY
 ) -> pd.Timestamp:
     """The first candle allowed to signal: the first one that finishes after Start."""
-    return started_at - close_offset(timeframe, session) + pd.Timedelta(microseconds=1)
+    return started_at - close_offset(timeframe, session) + pd.Timedelta(microseconds=1)  # ty: ignore[invalid-return-type]
 
 
 def _now() -> pd.Timestamp:
@@ -214,7 +219,7 @@ def _current_contract_from(
 
     session = contract(spec.instrument.symbol).session
     today = session_date(bars.index[-1], session)
-    past = [d for d in expiry_sessions(spec.instrument.symbol, bars.index, listed) if d < today]
+    past = [d for d in expiry_sessions(spec.instrument.symbol, bars.index, listed) if d < today]  # ty: ignore[invalid-argument-type]
     if not past:
         return None
     after = [ts for ts in bars.index if session_date(ts, session) > max(past)]
@@ -316,7 +321,7 @@ def _run_option_engine(
             execution,
             feed.margin_fn,
             iv_fn=feed.iv_fn(now) if feed.iv_fn is not None else None,
-            **common,
+            **common,  # ty: ignore[invalid-argument-type]
         )
     execution = OptionExecution(
         source,
@@ -327,12 +332,12 @@ def _run_option_engine(
         instrument.expiry,
         strike=instrument.strike,
     )
-    return run_option_backtest(spec, bars, execution, **common)
+    return run_option_backtest(spec, bars, execution, **common)  # ty: ignore[invalid-argument-type]
 
 
 def _to_ist(value) -> pd.Timestamp:
     ts = pd.Timestamp(value)
-    return ts.tz_localize(IST) if ts.tzinfo is None else ts.tz_convert(IST)
+    return ts.tz_localize(IST) if ts.tzinfo is None else ts.tz_convert(IST)  # ty: ignore[invalid-return-type]
 
 
 def _parse_blocked_windows(params: dict) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
@@ -494,7 +499,7 @@ def step(
     timeframe = spec.instrument.timeframe
     session = _session_of(spec)
     started_at = pd.Timestamp(params["started_at"]).tz_convert(IST)
-    trade_from = trade_from_for(started_at, timeframe, session)
+    trade_from = trade_from_for(started_at, timeframe, session)  # ty: ignore[invalid-argument-type]
     listed: list[dt.date] = []
     if spec.instrument.is_future and listed_expiries is not None:
         try:
@@ -514,7 +519,7 @@ def step(
         else:
             source_key = symbol
         try:
-            raw = fetch(source_key, timeframe, fetch_start, now.date())
+            raw = fetch(source_key, timeframe, fetch_start, now.date())  # ty: ignore[invalid-argument-type]
         except kite.KiteTokenExpired:
             msg = "Kite token has expired. Paste today's token to resume."
             _set_status("token_expired", msg)
@@ -555,7 +560,7 @@ def step(
     ):
         key = source_key  # the one symbol fetched above (its data key for a future)
         try:
-            raw_minutes = fetch(key, "1m", started_at.date(), now.date())
+            raw_minutes = fetch(key, "1m", started_at.date(), now.date())  # ty: ignore[invalid-argument-type]
             minute_bars = closed_bars(raw_minutes, "1m", now, session)
         except kite.KiteError:
             minute_bars = None
@@ -574,7 +579,7 @@ def step(
     if contract_from is not None:
         trade_from = max(trade_from, contract_from)
 
-    wall_clock_windows = pause_windows_for_run(store, run_id, params, started_at, now)
+    wall_clock_windows = pause_windows_for_run(store, run_id, params, started_at, now)  # ty: ignore[invalid-argument-type]
     blocked_windows = blocked_windows_for_engine(wall_clock_windows, timeframe, session)
     # A run saved before 2026-10-13 has no "slippage" key at all -- it is still
     # filled at the old hidden 0.02%, never silently switched to the new zero
@@ -950,7 +955,7 @@ def is_due(run: dict, status: dict | None, spec: StrategySpec, now: pd.Timestamp
             return False  # today's candle is still forming
         finished = today if now.weekday() < 5 and now >= close else _previous_weekday(today)
         last = status.get("last_bar_time") if status else None
-        if last and pd.Timestamp(last).tz_convert(IST).normalize() >= finished:
+        if last and pd.Timestamp(last).tz_convert(IST).normalize() >= finished:  # ty: ignore[unresolved-attribute]
             return False
         # Re-check at most every 15 minutes until the candle appears.
         if status and status.get("updated_at"):
@@ -967,7 +972,7 @@ def is_due(run: dict, status: dict | None, spec: StrategySpec, now: pd.Timestamp
 
 
 def _previous_weekday(day: pd.Timestamp) -> pd.Timestamp:
-    day -= pd.Timedelta(days=1)
+    day -= pd.Timedelta(days=1)  # ty: ignore[invalid-assignment]
     while day.weekday() >= 5:
-        day -= pd.Timedelta(days=1)
+        day -= pd.Timedelta(days=1)  # ty: ignore[invalid-assignment]
     return day

@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -147,7 +148,7 @@ def run_option_backtest(
     slippage: Slippage = ZERO,
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
-    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    blocked_windows: Iterable[tuple[dt.datetime, dt.datetime]] = (),
     final_session_in_progress: bool = False,
     fno_close: dt.time | None = None,
 ) -> BacktestResult:
@@ -224,7 +225,7 @@ def run_option_backtest(
         _warn_on_cross_session_lookback(spec, session_bar_count, warnings)
 
     if is_intraday_tf and len(bars) > 0:
-        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()  # ty: ignore[invalid-argument-type]
         if final_session_in_progress:
             # Paper trading mid-day: today is not over, so none of today's
             # candles is its last (see `run_backtest`, which has the same rule).
@@ -387,7 +388,7 @@ def run_option_backtest(
                 square_off,
                 last_day,
                 fno_close,
-                _CANDLE_LENGTH.get(timeframe),
+                _CANDLE_LENGTH.get(timeframe),  # ty: ignore[invalid-argument-type]
             )
             if outcome is None:
                 pos.bars_held += 1
@@ -536,7 +537,7 @@ def last_day_fn(bars: pd.DataFrame):
     (`nlt.options.iv._last_trading_day`); one past the last session in `bars`
     is taken as listed.
     """
-    sessions = sorted(set(bars.index.date))
+    sessions = sorted(set(bars.index.date))  # ty: ignore[unresolved-attribute]
     cache: dict[dt.date, dt.date] = {}
 
     def last_day(expiry: dt.date) -> dt.date:
@@ -573,7 +574,7 @@ def _open(
     contract: Contract,
     why: str,
     ts: pd.Timestamp,
-    option_bar: pd.Series,
+    option_bar: pd.Series | dict,
     basis: float,
     signal_ts: pd.Timestamp,
     slippage: Slippage,
@@ -709,14 +710,14 @@ def expiry_close_price(
     Untraded is True when the last trade was on an earlier day; None when the
     contract never traded at all."""
     boundary = pd.Timestamp(dt.datetime.combine(day, close), tz="Asia/Kolkata")
-    last = execution.last_trade(contract, boundary.to_pydatetime())
+    last = execution.last_trade(contract, boundary.to_pydatetime())  # ty: ignore[invalid-argument-type]
     if last is None:
         return None, True
     price, at = last
     return price, pd.Timestamp(at).date() != day
 
 
-def _price_exit(pos: _OptionPosition, bar: pd.Series) -> tuple[str, float, bool] | None:
+def _price_exit(pos: _OptionPosition, bar: pd.Series | dict) -> tuple[str, float, bool] | None:
     """(reason, raw price, stop-and-target-both-hit) on one traded option
     candle: stop first, then trailing stop, target, and an exit rule decided
     on the previous candle -- `_check_exit`'s order."""
@@ -764,15 +765,15 @@ def _after_close(
         price, untraded = expiry_close_price(execution, pos.contract, day, fno_close)
         last = execution.last_trade(
             pos.contract,
-            pd.Timestamp(dt.datetime.combine(day, fno_close), tz="Asia/Kolkata").to_pydatetime(),
+            pd.Timestamp(dt.datetime.combine(day, fno_close), tz="Asia/Kolkata").to_pydatetime(),  # ty: ignore[invalid-argument-type]
         )
         at = pd.Timestamp(last[1]) if last and not untraded else ts
-        return "expiry", at, (pos.last_price if price is None else price), False, untraded
+        return "expiry", at, (pos.last_price if price is None else price), False, untraded  # ty: ignore[invalid-return-type]
     return None
 
 
 def _day_end(day: dt.date) -> dt.datetime:
-    return pd.Timestamp(
+    return pd.Timestamp(  # ty: ignore[invalid-return-type]
         dt.datetime.combine(day, dt.time(23, 59)), tz="Asia/Kolkata"
     ).to_pydatetime()
 
@@ -832,7 +833,7 @@ def square_off_price(
     if minutes is None or len(minutes) == 0:
         return None
     traded = minutes[minutes["traded"]] if "traded" in minutes else minutes
-    upto = traded[(traded.index.date == day) & (traded.index < at + pd.Timedelta(minutes=1))]
+    upto = traded[(traded.index.date == day) & (traded.index < at + pd.Timedelta(minutes=1))]  # ty: ignore[unresolved-attribute]
     if upto.empty:
         return None
     return float(upto["close"].iloc[-1]), upto.index[-1] != at
@@ -848,7 +849,7 @@ def _price_at_clock(
     if minutes is None or len(minutes) == 0:
         return None
     traded = minutes[minutes["traded"]] if "traded" in minutes else minutes
-    at_or_after = traded[traded.index.time >= clock]
+    at_or_after = traded[traded.index.time >= clock]  # ty: ignore[unresolved-attribute]
     at_or_after = at_or_after[at_or_after.index.date == day]
     if at_or_after.empty:
         return None

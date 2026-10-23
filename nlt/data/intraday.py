@@ -88,9 +88,9 @@ class IntradaySource:
         self.last_notes = notes
 
         if start is not None:
-            df = df[df.index.date >= start]
+            df = df[df.index.date >= start]  # ty: ignore[unresolved-attribute]
         if end is not None:
-            df = df[df.index.date <= end]
+            df = df[df.index.date <= end]  # ty: ignore[unresolved-attribute]
         return df
 
     def coverage(self, symbol: str, interval: str) -> dict:
@@ -216,7 +216,7 @@ class IntradaySource:
         while True:
             cur = cur - pd.Timedelta(days=1)
             if cur.weekday() in self.session.weekdays:
-                return cur.date()
+                return cur.date()  # ty: ignore[invalid-return-type]
 
     def _merge(self, cached: pd.DataFrame, fresh: pd.DataFrame) -> pd.DataFrame:
         """Union of cached and fresh bars: unique index, sorted, newest wins."""
