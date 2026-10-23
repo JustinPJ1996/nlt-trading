@@ -50,6 +50,9 @@ def build(underlying: str) -> None:
 
 def check_vix() -> None:
     span = option_data.coverage("NIFTY", "1m")
+    if span is None:
+        print("NIFTY: no option prices on disk, so there is nothing to compare to India VIX")
+        return
     frame = iv.daily_atm_iv("NIFTY", span[0], span[1])
     first, last = frame.index[0].date(), frame.index[-1].date()
     vix = option_data.underlying_bars("INDIAVIX", "1d", first, last)["close"]

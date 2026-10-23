@@ -209,6 +209,10 @@ def _render_backtest_panel(spec) -> None:
         )
 
     if st.button("Run backtest", type="primary"):
+        # While a range is half-picked the box holds only the start date.
+        if isinstance(date_range, tuple) and len(date_range) != 2:
+            st.error("Pick both a start date and an end date, then run it again.")
+            return
         start, end = date_range if isinstance(date_range, tuple) else (None, None)
         # No pre-flight load here. `run_pipeline` resolves the symbol itself --
         # an index, a ticker or a whole universe -- and reports failures as

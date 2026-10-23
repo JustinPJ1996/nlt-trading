@@ -157,6 +157,14 @@ def _error(message: str, status: int = 400) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=status)
 
 
+def _refuse_json_constant(name: str) -> float:
+    """Python's JSON reader accepts `Infinity`, `-Infinity` and `NaN`, which
+    real JSON does not. Let one through and it becomes a starting capital of
+    infinity (a server error) or a slippage of NaN, which passes every range
+    check because NaN compares false to everything. Refuse them at the door."""
+    raise ValueError(f"{name} is not a number")
+
+
 async def _json_body(request: Request) -> dict:
     """The request body as a dict; anything that is not a JSON object is refused.
 
@@ -167,7 +175,7 @@ async def _json_body(request: Request) -> dict:
     if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
         raise _BadRequest("Requests must be sent as JSON.")
     try:
-        body = await request.json()
+        body = json.loads(await request.body(), parse_constant=_refuse_json_constant)
     except (ValueError, UnicodeDecodeError):
         raise _BadRequest("That request was not valid JSON.") from None
     if not isinstance(body, dict):

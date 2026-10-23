@@ -124,8 +124,10 @@ def traded_mask(df: pd.DataFrame) -> pd.Series:
     priced and would throw away trades that happened without a two-sided
     quote at that instant.
     """
-    bad_ohlc = df["bad_ohlc"] if "bad_ohlc" in df.columns else False
-    return (df["volume"] > 0) & ~bad_ohlc  # ty: ignore[deprecated]
+    traded = df["volume"] > 0
+    if "bad_ohlc" not in df.columns:
+        return traded
+    return traded & ~df["bad_ohlc"]
 
 
 def _read_filtered(

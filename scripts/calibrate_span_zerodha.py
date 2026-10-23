@@ -62,6 +62,8 @@ def zerodha(page, exchange: str, legs: list[list]) -> dict:
         last = info.value.json()
         if "total" not in last:
             raise SystemExit(f"Zerodha rejected {scrip} {strike} {ot}: {last}")
+    if last is None:
+        raise SystemExit("A position with no legs has no margin to check")
     page.wait_for_timeout(300)
     screen = page.inner_text("#tally")
     return {
