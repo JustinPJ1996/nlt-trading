@@ -20,7 +20,12 @@ import { TradeTimeline, type TimelineTarget } from "../components/TradeTimeline"
 import { parseRupees } from "../format";
 import { healthTagClass, message } from "../util";
 
-const KITE_TONE: Record<string, Tone> = { connected: "good", expired: "critical", not_connected: "warning", unreachable: "warning" };
+const KITE_TONE: Record<string, Tone> = {
+  connected: "good",
+  expired: "critical",
+  not_connected: "warning",
+  unreachable: "warning",
+};
 
 function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () => void }) {
   const [userId, setUserId] = useState("");
@@ -66,29 +71,54 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
         <summary>{kite.has_login ? "Change your Kite login" : "Save your Kite login"}</summary>
         <form className="mt-4" onSubmit={onLogin}>
           <p className="hint mb-4">
-            Saved on this computer only, readable only by you, and never shown again. The app uses it to
-            log in to Kite by itself each morning. If Kite says the password is wrong, it stops trying, so
-            that Zerodha does not lock your account.
+            Saved on this computer only, readable only by you, and never shown again. The app uses
+            it to log in to Kite by itself each morning. If Kite says the password is wrong, it
+            stops trying, so that Zerodha does not lock your account.
           </p>
           <label className="field">
             <span className="label">Kite user ID</span>
-            <input type="text" autoComplete="off" value={userId} onChange={(e) => setUserId(e.target.value)} required />
+            <input
+              type="text"
+              autoComplete="off"
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              required
+            />
           </label>
           <label className="field">
             <span className="label">Kite password</span>
-            <input type="password" autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <input
+              type="password"
+              autoComplete="off"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
           </label>
           <label className="field">
             <span className="label">Authenticator secret</span>
-            <input type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} required />
-            <span className="hint">The long key you set up the authenticator with, not the 6-digit code.</span>
+            <input
+              type="password"
+              autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+              required
+            />
+            <span className="hint">
+              The long key you set up the authenticator with, not the 6-digit code.
+            </span>
           </label>
           <div className="btn-row mt-4">
             <button className="btn" type="submit" disabled={busy}>
               Save login
             </button>
             {kite.has_login && (
-              <button type="button" className="btn quiet" disabled={busy} onClick={() => act(() => api.kiteForget(), "Could not forget the login.")}>
+              <button
+                type="button"
+                className="btn quiet"
+                disabled={busy}
+                onClick={() => act(() => api.kiteForget(), "Could not forget the login.")}
+              >
                 Forget my Kite login
               </button>
             )}
@@ -99,10 +129,15 @@ function KiteSection({ kite, reload }: { kite: PaperState["kite"]; reload: () =>
           <form className="mt-3" onSubmit={onToken}>
             <label className="field">
               <span className="label">Kite token</span>
-              <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} />
+              <input
+                type="password"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
               <span className="hint">
-                The token stops working each morning, so this is a daily step. It is only ever used to read
-                prices.
+                The token stops working each morning, so this is a daily step. It is only ever used
+                to read prices.
               </span>
             </label>
             <button className="btn secondary mt-3" type="submit" disabled={busy || !token}>
@@ -178,20 +213,19 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
           </h3>
           <p className="muted small">
             Started {run.started}
-            {run.alert_only ? "" : ` with ${run.capital_text}`}. Last checked {run.checked || "not yet"}.
+            {run.alert_only ? "" : ` with ${run.capital_text}`}. Last checked{" "}
+            {run.checked || "not yet"}.
           </p>
         </div>
         <div className="row tight">
           {run.alert_only && <span className="tag">Alerts only</span>}
-          <span className={`tag ${healthTagClass(run.health)}`}>
-            {run.health_label}
-          </span>
+          <span className={`tag ${healthTagClass(run.health)}`}>{run.health_label}</span>
         </div>
       </div>
       {run.paused && (
         <p className="muted small mt-1">
-          Paused by hand: new signals are being skipped, not queued for later. Stops, targets and other
-          exits are still watched.
+          Paused by hand: new signals are being skipped, not queued for later. Stops, targets and
+          other exits are still watched.
         </p>
       )}
       {run.message && <p className="mt-2">{run.message}</p>}
@@ -236,9 +270,18 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
                   <td data-label="Open position">
                     {p.direction} {p.what}
                   </td>
-                  <td className="num" data-label="Entered at">{p.entry_price}</td>
-                  <td className="num" data-label="Last price">{p.last_price}</td>
-                  <td className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`} data-label="If closed now, after costs">{p.pnl_text}</td>
+                  <td className="num" data-label="Entered at">
+                    {p.entry_price}
+                  </td>
+                  <td className="num" data-label="Last price">
+                    {p.last_price}
+                  </td>
+                  <td
+                    className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`}
+                    data-label="If closed now, after costs"
+                  >
+                    {p.pnl_text}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -255,9 +298,7 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
       <details className="mt-3" open={run.events.length > 0}>
         <summary>Activity ({run.events.length})</summary>
         {run.events.length === 0 ? (
-          <p className="muted mt-2">
-            Nothing has happened yet.
-          </p>
+          <p className="muted mt-2">Nothing has happened yet.</p>
         ) : (
           <ul className="log mt-2">
             {run.events.map((e, i) => (
@@ -266,7 +307,9 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
                   <button
                     type="button"
                     className="row-button"
-                    onClick={() => setOpen({ kind: "trade", runId: run.run_id, tradeKey: e.trade_key! })}
+                    onClick={() =>
+                      setOpen({ kind: "trade", runId: run.run_id, tradeKey: e.trade_key! })
+                    }
                   >
                     <time>{e.when}</time>
                     <span className={e.drift ? "drift" : undefined}>{e.text}</span>
@@ -307,7 +350,9 @@ function RunCard({ run, reload }: { run: PaperRun; reload: () => void }) {
         </div>
       </div>
       {run.daily && (
-        <p className="hint">Daily strategy: it updates once a day, shortly after the 3:30 PM close.</p>
+        <p className="hint">
+          Daily strategy: it updates once a day, shortly after the 3:30 PM close.
+        </p>
       )}
       {error && (
         <div className="mt-3">
@@ -333,8 +378,11 @@ function StartForm({
   justSaved: SettingsSaved | null;
   onSaved: (saved: SettingsSaved) => void;
 }) {
-  const savedListed = justSaved && state.startable.some((s) => s.id === justSaved.id) ? justSaved : null;
-  const [pick, setPick] = useState<number | null>(savedListed?.id ?? state.startable[0]?.id ?? null);
+  const savedListed =
+    justSaved && state.startable.some((s) => s.id === justSaved.id) ? justSaved : null;
+  const [pick, setPick] = useState<number | null>(
+    savedListed?.id ?? state.startable[0]?.id ?? null,
+  );
   const [capital, setCapital] = useState(String(state.default_capital));
   const [cost, setCost] = useState(state.cost_models[0]);
   const [slippage, setSlippage] = useState<Slippage>(ZERO_SLIPPAGE);
@@ -366,7 +414,15 @@ function StartForm({
   const listed = state.startable.find((s) => s.id === pick) ?? state.startable[0];
   const fromSaved = saved && saved.from === listed.id ? saved : null;
   const chosen = fromSaved
-    ? { ...listed, id: fromSaved.id, version: fromSaved.version, readback: fromSaved.readback, notes: fromSaved.notes, problem: fromSaved.problem, settings: fromSaved.settings }
+    ? {
+        ...listed,
+        id: fromSaved.id,
+        version: fromSaved.version,
+        readback: fromSaved.readback,
+        notes: fromSaved.notes,
+        problem: fromSaved.problem,
+        settings: fromSaved.settings,
+      }
     : listed;
   const shownSettings = chosen.settings ? { ...chosen.settings, ...settingsEdits } : null;
   const dirty = Object.keys(settingsEdits).length > 0;
@@ -406,7 +462,9 @@ function StartForm({
       await api.paperStart(chosen.id, money, cost, alertOnly, slippage);
       reload();
     } catch (err) {
-      setError(message(err, alertOnly ? "Could not start alerts only." : "Could not start paper trading."));
+      setError(
+        message(err, alertOnly ? "Could not start alerts only." : "Could not start paper trading."),
+      );
     } finally {
       setBusy(false);
     }
@@ -442,10 +500,20 @@ function StartForm({
           />
           {dirty && (
             <div className="btn-row mt-2 mb-3">
-              <button className="btn secondary" type="button" onClick={saveSettings} disabled={saving}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={saveSettings}
+                disabled={saving}
+              >
                 Save settings
               </button>
-              <button className="btn secondary" type="button" onClick={() => setSettingsEdits({})} disabled={saving}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setSettingsEdits({})}
+                disabled={saving}
+              >
                 Undo changes
               </button>
               {saving && <Working>Saving...</Working>}
@@ -459,8 +527,8 @@ function StartForm({
           {fromSaved?.new_version && !dirty && (
             <div className="mb-3">
               <Callout tone="info">
-                Saved as version {fromSaved.version}. This version has not been backtested yet, so it won't
-                count as proven until you backtest it.
+                Saved as version {fromSaved.version}. This version has not been backtested yet, so
+                it won't count as proven until you backtest it.
               </Callout>
             </div>
           )}
@@ -494,12 +562,12 @@ function StartForm({
             <SlippageInput value={slippage} onChange={setSlippage} idPrefix="paper-slippage" />
           </div>
           <p className="hint mt-3">
-            No real orders are placed. From the moment you press Start, the app follows live Kite prices
-            and records every decision as it happens.
+            No real orders are placed. From the moment you press Start, the app follows live Kite
+            prices and records every decision as it happens.
           </p>
           <p className="hint mt-2">
-            Alerts only: the strategy runs exactly the same, but only tells you what it would have bought
-            or sold. No paper money is tracked, and it never counts as a proving run.
+            Alerts only: the strategy runs exactly the same, but only tells you what it would have
+            bought or sold. No paper money is tracked, and it never counts as a proving run.
           </p>
           {chosen.notes.map((note) => (
             <div className="mt-3" key={note}>
@@ -552,7 +620,8 @@ export function Paper({ onBuild }: { onBuild: () => void }) {
     <div className="narrow">
       <h1 className="page-title">Paper trading</h1>
       <p className="page-lede">
-        Run a saved strategy forward on live prices with pretend money. Nothing here places a real order.
+        Run a saved strategy forward on live prices with pretend money. Nothing here places a real
+        order.
       </p>
       <ErrorLine error={error} />
       {!state && !error && <Working>Checking Kite and loading your runs...</Working>}
@@ -561,7 +630,8 @@ export function Paper({ onBuild }: { onBuild: () => void }) {
           <div className="stack">
             {state.kill_switch && (
               <Callout tone="critical" title="The paper kill switch is on">
-                Every paper strategy is paused. Turn it off on the <a href="#/safety">Safety</a> page.
+                Every paper strategy is paused. Turn it off on the <a href="#/safety">Safety</a>{" "}
+                page.
               </Callout>
             )}
             {!state.job_installed && (
@@ -578,7 +648,10 @@ export function Paper({ onBuild }: { onBuild: () => void }) {
               Running now
             </h2>
             {state.runs.length === 0 ? (
-              <p className="muted">Nothing is being paper traded yet. Pick a saved strategy below and start it to see it here.</p>
+              <p className="muted">
+                Nothing is being paper traded yet. Pick a saved strategy below and start it to see
+                it here.
+              </p>
             ) : (
               <div className="stack">
                 {state.runs.map((r) => (

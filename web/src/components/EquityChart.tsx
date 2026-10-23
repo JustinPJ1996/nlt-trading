@@ -172,8 +172,28 @@ export function EquityChart({
             ))}
           </g>
 
-          <path d={path(points.map((p) => p.b), x, yEq)} fill="none" stroke="var(--series-2)" strokeWidth={2} strokeLinejoin="round" />
-          <path d={path(points.map((p) => p.s), x, yEq)} fill="none" stroke="var(--series-1)" strokeWidth={2} strokeLinejoin="round" />
+          <path
+            d={path(
+              points.map((p) => p.b),
+              x,
+              yEq,
+            )}
+            fill="none"
+            stroke="var(--series-2)"
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
+          <path
+            d={path(
+              points.map((p) => p.s),
+              x,
+              yEq,
+            )}
+            fill="none"
+            stroke="var(--series-1)"
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
 
           <g className="chart-axis chart-label" style={{ fontWeight: 600 }}>
             <text x={width - PAD_R} y={ys} textAnchor="end" style={{ fill: "var(--ink)" }}>
@@ -189,7 +209,14 @@ export function EquityChart({
           </text>
           <g className="chart-grid">
             {geo.ddTicks.map((t) => (
-              <line key={t} x1={PAD_L} x2={width - PAD_R} y1={yDd(t)} y2={yDd(t)} className={t === 0 ? "chart-zero" : undefined} />
+              <line
+                key={t}
+                x1={PAD_L}
+                x2={width - PAD_R}
+                y1={yDd(t)}
+                y2={yDd(t)}
+                className={t === 0 ? "chart-zero" : undefined}
+              />
             ))}
           </g>
           <g className="chart-axis">
@@ -199,8 +226,28 @@ export function EquityChart({
               </text>
             ))}
           </g>
-          <path d={path(points.map((p) => p.bd), x, yDd)} fill="none" stroke="var(--series-2)" strokeWidth={2} strokeLinejoin="round" />
-          <path d={path(points.map((p) => p.sd), x, yDd)} fill="none" stroke="var(--series-1)" strokeWidth={2} strokeLinejoin="round" />
+          <path
+            d={path(
+              points.map((p) => p.bd),
+              x,
+              yDd,
+            )}
+            fill="none"
+            stroke="var(--series-2)"
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
+          <path
+            d={path(
+              points.map((p) => p.sd),
+              x,
+              yDd,
+            )}
+            fill="none"
+            stroke="var(--series-1)"
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
 
           <g className="chart-axis">
             {geo.xTicks.idx.map((i) => (
@@ -212,14 +259,29 @@ export function EquityChart({
 
           {h && hover !== null && (
             <g pointerEvents="none">
-              <line x1={x(hover)} x2={x(hover)} y1={PAD_T} y2={ddTop + DD_H} stroke="var(--ink-3)" strokeWidth={1} />
+              <line
+                x1={x(hover)}
+                x2={x(hover)}
+                y1={PAD_T}
+                y2={ddTop + DD_H}
+                stroke="var(--ink-3)"
+                strokeWidth={1}
+              />
               {[
                 [yEq(h.b), "var(--series-2)"],
                 [yEq(h.s), "var(--series-1)"],
                 [yDd(h.bd), "var(--series-2)"],
                 [yDd(h.sd), "var(--series-1)"],
               ].map(([cy, color], k) => (
-                <circle key={k} cx={x(hover)} cy={cy as number} r={4.5} fill={color as string} stroke="var(--surface)" strokeWidth={2} />
+                <circle
+                  key={k}
+                  cx={x(hover)}
+                  cy={cy as number}
+                  r={4.5}
+                  fill={color as string}
+                  stroke="var(--surface)"
+                  strokeWidth={2}
+                />
               ))}
             </g>
           )}

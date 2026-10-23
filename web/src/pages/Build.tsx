@@ -10,7 +10,14 @@
 // answer the user did not type is an answer they did not give -- the same
 // reason the engine never invents a stop loss.
 
-import { useEffect, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type FormEvent,
+  type SetStateAction,
+} from "react";
 import {
   api,
   ApiError,
@@ -110,7 +117,8 @@ function wireEdits(edits: Record<string, string>): Record<string, string | numbe
 
 function withEdits(base: StrategySettings, edits: Record<string, string>): StrategySettings {
   const s = { ...base };
-  if (edits.algo_type === "intraday" || edits.algo_type === "multi_day") s.algo_type = edits.algo_type;
+  if (edits.algo_type === "intraday" || edits.algo_type === "multi_day")
+    s.algo_type = edits.algo_type;
   if ("entry_cutoff" in edits) s.entry_cutoff = edits.entry_cutoff === "true";
   for (const k of ["entry_cutoff_minutes", "square_off_minutes"] as const) {
     const n = parseInt(edits[k] ?? "", 10);
@@ -147,10 +155,14 @@ function AdjustBoxes({
   const isLegs = legs.length > 0;
   const sold = legs.filter((l) => l.side === "sell");
   const soldStop =
-    sold.length > 0 && sold[0].stop_pct != null && sold.every((l) => l.stop_pct === sold[0].stop_pct)
+    sold.length > 0 &&
+    sold[0].stop_pct != null &&
+    sold.every((l) => l.stop_pct === sold[0].stop_pct)
       ? sold[0].stop_pct
       : null;
-  const candles = allowedTimeframes ? CANDLES.filter(([v]) => allowedTimeframes.includes(v)) : CANDLES;
+  const candles = allowedTimeframes
+    ? CANDLES.filter(([v]) => allowedTimeframes.includes(v))
+    : CANDLES;
   // The numbers inside the rule itself, grouped by where they act. The server
   // lists them and checks every value; the readback is redrawn from the result.
   const ruleFields = (group: string) =>
@@ -159,7 +171,11 @@ function AdjustBoxes({
       .map((b) => (
         <label className="field" key={b.key}>
           <span className="label">{b.label}</span>
-          <input inputMode="decimal" value={value(b.key, b.value)} onChange={(e) => onEdit(b.key, e.target.value)} />
+          <input
+            inputMode="decimal"
+            value={value(b.key, b.value)}
+            onChange={(e) => onEdit(b.key, e.target.value)}
+          />
           <span className="hint">{b.hint}</span>
         </label>
       ));
@@ -170,7 +186,9 @@ function AdjustBoxes({
       <h3 className="adjust-title" id="adjust-title">
         Fine-tune the numbers
       </h3>
-      <p className="hint mt-0 mb-3">Change a box and the description above is rewritten to match.</p>
+      <p className="hint mt-0 mb-3">
+        Change a box and the description above is rewritten to match.
+      </p>
       {buyFields.length > 0 && (
         <>
           <p className="adjust-group">When to buy</p>
@@ -183,7 +201,11 @@ function AdjustBoxes({
         {isLegs && soldStop != null && (
           <label className="field">
             <span className="label">Stop loss on each sold option (%)</span>
-            <input inputMode="decimal" value={value("leg_stop_pct", soldStop)} onChange={(e) => onEdit("leg_stop_pct", e.target.value)} />
+            <input
+              inputMode="decimal"
+              value={value("leg_stop_pct", soldStop)}
+              onChange={(e) => onEdit("leg_stop_pct", e.target.value)}
+            />
           </label>
         )}
         {isLegs && sold.length > 0 && (
@@ -211,7 +233,11 @@ function AdjustBoxes({
         {!isLegs && spec.exit.stop_pct != null && (
           <label className="field">
             <span className="label">Stop loss (%)</span>
-            <input inputMode="decimal" value={value("stop_pct", spec.exit.stop_pct)} onChange={(e) => onEdit("stop_pct", e.target.value)} />
+            <input
+              inputMode="decimal"
+              value={value("stop_pct", spec.exit.stop_pct)}
+              onChange={(e) => onEdit("stop_pct", e.target.value)}
+            />
           </label>
         )}
         {!isLegs && spec.exit.trailing_stop_pct != null && (
@@ -247,7 +273,10 @@ function AdjustBoxes({
       <div className="adjust-grid">
         <label className="field">
           <span className="label">Candles</span>
-          <select value={value("timeframe", spec.instrument.timeframe)} onChange={(e) => onEdit("timeframe", e.target.value)}>
+          <select
+            value={value("timeframe", spec.instrument.timeframe)}
+            onChange={(e) => onEdit("timeframe", e.target.value)}
+          >
             {candles.map(([v, label]) => (
               <option key={v} value={v}>
                 {label}
@@ -347,7 +376,8 @@ export function Build({
           setAdjustError(null);
         }
       } catch (err) {
-        if (!cancelled) setAdjustError(err instanceof ApiError ? err.message : "Could not apply that.");
+        if (!cancelled)
+          setAdjustError(err instanceof ApiError ? err.message : "Could not apply that.");
       } finally {
         if (!cancelled) setAdjusting(false);
       }
@@ -382,7 +412,9 @@ export function Build({
         edits: {},
         adjusted: null,
       }));
-      requestAnimationFrame(() => step2Ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      requestAnimationFrame(() =>
+        step2Ref.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }),
+      );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not check that.");
     } finally {
@@ -404,7 +436,9 @@ export function Build({
 
   function confirm() {
     set({ confirmed: true });
-    requestAnimationFrame(() => step3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    requestAnimationFrame(() =>
+      step3Ref.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
   }
 
   function rephrase() {
@@ -416,7 +450,10 @@ export function Build({
   const capital = parseRupees(state.capital);
   const capitalProblem =
     capital === null ? "Enter an amount." : capital < 1000 ? "Use at least Rs 1,000." : null;
-  const dateProblem = state.start && state.end && state.start >= state.end ? "The start date must be before the end date." : null;
+  const dateProblem =
+    state.start && state.end && state.start >= state.end
+      ? "The start date must be before the end date."
+      : null;
   const slippageProblem =
     state.slippage.value < 0 ||
     (state.slippage.kind === "pct" && state.slippage.value > 5) ||
@@ -510,7 +547,9 @@ export function Build({
         <li className={`step ${step2Class}`} ref={step2Ref}>
           <h2 className="step-title">Check what I understood</h2>
           {stale && (
-            <p className="muted">You changed your description. Check it again to see what I understand now.</p>
+            <p className="muted">
+              You changed your description. Check it again to see what I understand now.
+            </p>
           )}
           {tr && (
             <div className="stack reveal">
@@ -530,9 +569,14 @@ export function Build({
               {understood && (
                 <>
                   {state.fromSaved ? (
-                    <p className="muted">This is the saved strategy. Read it again before testing.</p>
+                    <p className="muted">
+                      This is the saved strategy. Read it again before testing.
+                    </p>
                   ) : (
-                    <p className="muted">Read this carefully. If anything is not what you meant, change your description.</p>
+                    <p className="muted">
+                      Read this carefully. If anything is not what you meant, change your
+                      description.
+                    </p>
                   )}
                   <Readback text={understood.readback} labels={understood.readback_labels} />
                   {original && (
@@ -559,7 +603,11 @@ export function Build({
                     <div className="confirm-bar">
                       <p className="confirm-ask">Is this what you meant?</p>
                       <div className="btn-row">
-                        <button className="btn" onClick={confirm} disabled={adjusting || !!adjustError}>
+                        <button
+                          className="btn"
+                          onClick={confirm}
+                          disabled={adjusting || !!adjustError}
+                        >
                           Yes, that's right
                         </button>
                         <button className="btn secondary" onClick={rephrase}>
@@ -623,16 +671,19 @@ export function Build({
                     );
                   })}
                   {visibleQuestions.some((q) => q.answerable || q.choices.length > 0) && (
-                  <div className="btn-row mt-2">
-                    <button
-                      className="btn"
-                      type="submit"
-                      disabled={checking || !visibleQuestions.some((q) => (state.draftAnswers[q.field] ?? "").trim())}
-                    >
-                      Continue
-                    </button>
-                    {checking && <Working>Reading again...</Working>}
-                  </div>
+                    <div className="btn-row mt-2">
+                      <button
+                        className="btn"
+                        type="submit"
+                        disabled={
+                          checking ||
+                          !visibleQuestions.some((q) => (state.draftAnswers[q.field] ?? "").trim())
+                        }
+                      >
+                        Continue
+                      </button>
+                      {checking && <Working>Reading again...</Working>}
+                    </div>
                   )}
                 </form>
               )}
@@ -653,7 +704,12 @@ export function Build({
               <p>{understood.backtest_problem}</p>
               {savedDraft === null ? (
                 <div className="btn-row mt-4">
-                  <button className="btn" type="button" onClick={saveForPaper} disabled={savingDraft}>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={saveForPaper}
+                    disabled={savingDraft}
+                  >
                     Save for paper trading
                   </button>
                   {savingDraft && <Working>Saving...</Working>}
@@ -688,7 +744,11 @@ export function Build({
                     <input
                       type="text"
                       inputMode="numeric"
-                      value={state.capital ? Number(parseRupees(state.capital) ?? 0).toLocaleString("en-IN") : ""}
+                      value={
+                        state.capital
+                          ? Number(parseRupees(state.capital) ?? 0).toLocaleString("en-IN")
+                          : ""
+                      }
                       onChange={(e) => set({ capital: e.target.value.replace(/[^0-9]/g, "") })}
                       aria-describedby="capital-hint"
                     />
@@ -699,23 +759,39 @@ export function Build({
                 </label>
                 <label className="field mt-0">
                   <span className="label">Trading costs to charge</span>
-                  <select value={state.costModel} onChange={(e) => set({ costModel: e.target.value })}>
+                  <select
+                    value={state.costModel}
+                    onChange={(e) => set({ costModel: e.target.value })}
+                  >
                     {options.cost_models.map((c) => (
                       <option key={c}>{c}</option>
                     ))}
                   </select>
-                  <span className="hint">Shares, futures and options always use their own real charges.</span>
+                  <span className="hint">
+                    Shares, futures and options always use their own real charges.
+                  </span>
                 </label>
                 <label className="field mt-0">
                   <span className="label">From</span>
-                  <input type="date" value={state.start} onChange={(e) => set({ start: e.target.value })} />
+                  <input
+                    type="date"
+                    value={state.start}
+                    onChange={(e) => set({ start: e.target.value })}
+                  />
                 </label>
                 <label className="field mt-0">
                   <span className="label">To</span>
-                  <input type="date" value={state.end} onChange={(e) => set({ end: e.target.value })} />
+                  <input
+                    type="date"
+                    value={state.end}
+                    onChange={(e) => set({ end: e.target.value })}
+                  />
                 </label>
                 <div className="span-2">
-                  <SlippageInput value={state.slippage} onChange={(slippage) => set({ slippage })} />
+                  <SlippageInput
+                    value={state.slippage}
+                    onChange={(slippage) => set({ slippage })}
+                  />
                 </div>
               </div>
               {tr?.period && (
@@ -734,7 +810,11 @@ export function Build({
                 promise.
               </p>
               <div className="btn-row mt-5">
-                <button className="btn" type="submit" disabled={running || !!capitalProblem || !!dateProblem || slippageProblem}>
+                <button
+                  className="btn"
+                  type="submit"
+                  disabled={running || !!capitalProblem || !!dateProblem || slippageProblem}
+                >
                   Run backtest
                 </button>
                 {running && <Working>Testing on past prices. This can take a minute...</Working>}

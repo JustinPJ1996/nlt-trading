@@ -27,16 +27,27 @@ export function Login({ onDone }: { onDone: (user: string) => void }) {
     <div className="login-page">
       <form className="login-card panel" onSubmit={submit}>
         <h1 className="wordmark">Strategy Desk</h1>
-        <p className="muted mb-5">
-          Log in to build and test your strategies.
-        </p>
+        <p className="muted mb-5">Log in to build and test your strategies.</p>
         <label className="field">
           <span className="label">Login ID</span>
-          <input type="text" autoComplete="username" value={id} onChange={(e) => setId(e.target.value)} required autoFocus />
+          <input
+            type="text"
+            autoComplete="username"
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            required
+            autoFocus
+          />
         </label>
         <label className="field">
           <span className="label">Password</span>
-          <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
         </label>
         <div className="stack mt-5">
           <ErrorLine error={error} />

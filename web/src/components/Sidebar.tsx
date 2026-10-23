@@ -22,7 +22,9 @@ export function Sidebar({
   onRunning: () => void;
   onLogout: () => void;
 }) {
-  const [theme, setTheme] = useState<Theme>(() => (document.documentElement.dataset.theme as Theme) ?? "light");
+  const [theme, setTheme] = useState<Theme>(
+    () => (document.documentElement.dataset.theme as Theme) ?? "light",
+  );
   const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => setMoreOpen(false), [current]);
@@ -40,7 +42,12 @@ export function Sidebar({
   };
 
   const link = (p: NavPage, label = p.label) => (
-    <a key={p.id} className="rail-link" href={`#/${p.id}`} aria-current={current === p.id ? "page" : undefined}>
+    <a
+      key={p.id}
+      className="rail-link"
+      href={`#/${p.id}`}
+      aria-current={current === p.id ? "page" : undefined}
+    >
       <Icon name={p.icon} />
       <span>{label}</span>
     </a>
@@ -56,10 +63,17 @@ export function Sidebar({
 
   const alertLabel = unreadCount > 0 ? `Alerts, ${unreadCount} unread` : "Alerts";
   const alerts = (
-    <a className="rail-link" href="#/alerts" aria-label={alertLabel} aria-current={current === "alerts" ? "page" : undefined}>
+    <a
+      className="rail-link"
+      href="#/alerts"
+      aria-label={alertLabel}
+      aria-current={current === "alerts" ? "page" : undefined}
+    >
       <Icon name="bell" />
       <span>Alerts</span>
-      {unreadCount > 0 && <span className="rail-count alert">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+      {unreadCount > 0 && (
+        <span className="rail-count alert">{unreadCount > 99 ? "99+" : unreadCount}</span>
+      )}
     </a>
   );
 
@@ -102,13 +116,20 @@ export function Sidebar({
           <Glyph />
           Strategy Desk
         </a>
-        <button type="button" className="rail-link" onClick={onRunning} aria-label={`Running now: ${runningCount}`}>
+        <button
+          type="button"
+          className="rail-link"
+          onClick={onRunning}
+          aria-label={`Running now: ${runningCount}`}
+        >
           <Icon name="running" />
           <span className={`rail-count${runningCount > 0 ? " live" : ""}`}>{runningCount}</span>
         </button>
         <a className="rail-link" href="#/alerts" aria-label={alertLabel}>
           <Icon name="bell" />
-          {unreadCount > 0 && <span className="rail-count alert">{unreadCount > 99 ? "99+" : unreadCount}</span>}
+          {unreadCount > 0 && (
+            <span className="rail-count alert">{unreadCount > 99 ? "99+" : unreadCount}</span>
+          )}
         </a>
       </header>
 
@@ -118,7 +139,9 @@ export function Sidebar({
           type="button"
           className="rail-link"
           aria-expanded={moreOpen}
-          aria-current={extra.some((p) => p.id === current) || current === "safety" ? "page" : undefined}
+          aria-current={
+            extra.some((p) => p.id === current) || current === "safety" ? "page" : undefined
+          }
           onClick={() => setMoreOpen(true)}
         >
           <Icon name="more" />

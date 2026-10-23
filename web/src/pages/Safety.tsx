@@ -85,9 +85,11 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.safety().then(setState, (err) =>
-      setError(err instanceof ApiError ? err.message : "Could not load the safety page."),
-    );
+    api
+      .safety()
+      .then(setState, (err) =>
+        setError(err instanceof ApiError ? err.message : "Could not load the safety page."),
+      );
   }, []);
 
   const update = (s: SafetyState) => {
@@ -99,8 +101,8 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
     <div className="narrow">
       <h1 className="page-title">Safety</h1>
       <p className="page-lede">
-        Two independent switches. Each stops one kind of trading at once, and stays on until you turn
-        it off here.
+        Two independent switches. Each stops one kind of trading at once, and stays on until you
+        turn it off here.
       </p>
       <ErrorLine error={error} />
       {!state && !error && <Working>Loading...</Working>}
@@ -125,7 +127,9 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
                       </th>
                       <td>
                         <span className={`tag ${f.level}`}>
-                          <span aria-hidden="true">{f.level === "good" ? "✓" : f.level === "critical" ? "!" : "i"}</span>
+                          <span aria-hidden="true">
+                            {f.level === "good" ? "✓" : f.level === "critical" ? "!" : "i"}
+                          </span>
                           {f.level === "good" ? "Fresh" : f.level === "critical" ? "Old" : "None"}
                         </span>{" "}
                         <span className="muted">{f.text}</span>
@@ -142,7 +146,9 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
               Recent activity
             </h2>
             {state.audit.length === 0 ? (
-              <p className="muted">Nothing has happened yet. Turning a kill switch on or off will be recorded here.</p>
+              <p className="muted">
+                Nothing has happened yet. Turning a kill switch on or off will be recorded here.
+              </p>
             ) : (
               <div className="table-wrap cards">
                 <table>
@@ -155,7 +161,9 @@ export function Safety({ onChange }: { onChange: (s: SafetyState) => void }) {
                   <tbody>
                     {state.audit.map((a, i) => (
                       <tr key={i}>
-                        <td className="nowrap" data-label="When">{a.when}</td>
+                        <td className="nowrap" data-label="When">
+                          {a.when}
+                        </td>
                         <td data-label="What happened">
                           {a.event.charAt(0).toUpperCase() + a.event.slice(1)}
                           {a.detail && <div className="muted small">{a.detail}</div>}

@@ -156,7 +156,12 @@ a {
   align-items: start;
   min-height: 100vh;
   /* The rail's colour runs the full height of a long page. */
-  background: linear-gradient(to right, var(--rail) calc(var(--rail-width) - 1px), var(--rule) 0 var(--rail-width), transparent 0);
+  background: linear-gradient(
+    to right,
+    var(--rail) calc(var(--rail-width) - 1px),
+    var(--rule) 0 var(--rail-width),
+    transparent 0
+  );
 }
 
 .rail {
@@ -419,38 +424,108 @@ main {
 
 /* Spacing helpers: the only way a page adds space between two things, so the
    gaps across the app come from one scale. */
-.mt-1 { margin-top: var(--s-1) !important; }
-.mt-2 { margin-top: var(--s-2) !important; }
-.mt-3 { margin-top: var(--s-3) !important; }
-.mt-4 { margin-top: var(--s-4) !important; }
-.mt-5 { margin-top: var(--s-5) !important; }
-.mt-6 { margin-top: var(--s-6) !important; }
-.mb-2 { margin-bottom: var(--s-2) !important; }
-.mb-3 { margin-bottom: var(--s-3) !important; }
-.mb-4 { margin-bottom: var(--s-4) !important; }
-.mb-5 { margin-bottom: var(--s-5) !important; }
-.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3); }
-.row.tight { gap: var(--s-2); }
-.row.spread { justify-content: space-between; }
-.grow { flex: 1; }
-.full { width: 100%; justify-content: center; }
-.no-underline { text-decoration: none; }
-.mt-0 { margin-top: 0 !important; }
-.m-0 { margin: 0 !important; }
-.my-4 { margin-top: var(--s-4) !important; margin-bottom: var(--s-4) !important; }
-.ml-2 { margin-left: var(--s-2); }
-.mr-2 { margin-right: var(--s-2); }
-.ml-auto { margin-left: auto; }
-.row.end { justify-content: flex-end; }
-.nowrap { white-space: nowrap; }
-.emph { font-weight: 650; }
-.tall { max-height: none; }
-.minw-field { min-width: 220px; }
-.col-label { width: 140px; }
-.leg-list { margin: var(--s-1) 0 0; padding-left: var(--s-4); }
-.key.s1 { background: var(--series-1); }
-.key.s2 { background: var(--series-2); }
-.log.tall { max-height: none; }
+.mt-1 {
+  margin-top: var(--s-1) !important;
+}
+.mt-2 {
+  margin-top: var(--s-2) !important;
+}
+.mt-3 {
+  margin-top: var(--s-3) !important;
+}
+.mt-4 {
+  margin-top: var(--s-4) !important;
+}
+.mt-5 {
+  margin-top: var(--s-5) !important;
+}
+.mt-6 {
+  margin-top: var(--s-6) !important;
+}
+.mb-2 {
+  margin-bottom: var(--s-2) !important;
+}
+.mb-3 {
+  margin-bottom: var(--s-3) !important;
+}
+.mb-4 {
+  margin-bottom: var(--s-4) !important;
+}
+.mb-5 {
+  margin-bottom: var(--s-5) !important;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.row.tight {
+  gap: var(--s-2);
+}
+.row.spread {
+  justify-content: space-between;
+}
+.grow {
+  flex: 1;
+}
+.full {
+  width: 100%;
+  justify-content: center;
+}
+.no-underline {
+  text-decoration: none;
+}
+.mt-0 {
+  margin-top: 0 !important;
+}
+.m-0 {
+  margin: 0 !important;
+}
+.my-4 {
+  margin-top: var(--s-4) !important;
+  margin-bottom: var(--s-4) !important;
+}
+.ml-2 {
+  margin-left: var(--s-2);
+}
+.mr-2 {
+  margin-right: var(--s-2);
+}
+.ml-auto {
+  margin-left: auto;
+}
+.row.end {
+  justify-content: flex-end;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.emph {
+  font-weight: 650;
+}
+.tall {
+  max-height: none;
+}
+.minw-field {
+  min-width: 220px;
+}
+.col-label {
+  width: 140px;
+}
+.leg-list {
+  margin: var(--s-1) 0 0;
+  padding-left: var(--s-4);
+}
+.key.s1 {
+  background: var(--series-1);
+}
+.key.s2 {
+  background: var(--series-2);
+}
+.log.tall {
+  max-height: none;
+}
 .row-button {
   display: block;
   width: 100%;
@@ -463,7 +538,9 @@ main {
   cursor: pointer;
   border-radius: var(--radius-s);
 }
-.row-button:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.row-button:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
 
 /* ---------------------------------------------------------------- controls */
 
@@ -2252,6 +2329,7 @@ details[open] > summary::before {
   }
 }
 
-a.btn, a.btn:hover {
+a.btn,
+a.btn:hover {
   text-decoration: none;
 }

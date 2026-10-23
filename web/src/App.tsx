@@ -65,7 +65,9 @@ export function App() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [page, setPage] = useState<PageId>(pageFromHash);
   const [options, setOptions] = useState<Options | null>(null);
-  const [build, setBuild] = useState<BuildState>(() => remembered<BuildState>(SAVED_BUILD) ?? emptyBuild());
+  const [build, setBuild] = useState<BuildState>(
+    () => remembered<BuildState>(SAVED_BUILD) ?? emptyBuild(),
+  );
   const [result, setResult] = useState<Result | null>(() => remembered<Result>(SAVED_RESULT));
   const [killed, setKilled] = useState(false);
   const [runningCount, setRunningCount] = useState(0);
@@ -74,22 +76,34 @@ export function App() {
 
   useEffect(() => {
     whenLoggedOut(() => setUser(null));
-    api.me().then((r) => setUser(r.user), () => setUser(null));
+    api.me().then(
+      (r) => setUser(r.user),
+      () => setUser(null),
+    );
     const onHash = () => setPage(pageFromHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
   const refreshKill = useCallback(() => {
-    api.safety().then((s) => setKilled(s.paper || s.live), () => {});
+    api.safety().then(
+      (s) => setKilled(s.paper || s.live),
+      () => {},
+    );
   }, []);
 
   const refreshRunningCount = useCallback(() => {
-    api.running().then((s) => setRunningCount(s.items.length), () => {});
+    api.running().then(
+      (s) => setRunningCount(s.items.length),
+      () => {},
+    );
   }, []);
 
   const refreshUnreadCount = useCallback(() => {
-    api.notifications().then((s) => setUnreadCount(s.unread_count), () => {});
+    api.notifications().then(
+      (s) => setUnreadCount(s.unread_count),
+      () => {},
+    );
   }, []);
 
   useEffect(() => {
@@ -144,78 +158,92 @@ export function App() {
         }}
       />
       <div className="content">
-      {killed && (
-        <div className="killbanner" role="alert">
-          A kill switch is on. <a href="#/safety">See Safety</a>
-        </div>
-      )}
-      {drawerOpen && (
-        <RunningDrawer
-          onClose={() => {
-            setDrawerOpen(false);
-            refreshRunningCount();
-          }}
-        />
-      )}
-      <main>
-        {page === "home" && (
-          <Home
-            onStart={(text) => {
-              setBuild({
-                ...emptyBuild(),
-                ...(options ? { capital: String(options.default_capital), costModel: options.cost_models[0], start: options.default_start, end: options.default_end } : {}),
-                text,
-                checkNow: true,
-              });
-              go("build");
+        {killed && (
+          <div className="killbanner" role="alert">
+            A kill switch is on. <a href="#/safety">See Safety</a>
+          </div>
+        )}
+        {drawerOpen && (
+          <RunningDrawer
+            onClose={() => {
+              setDrawerOpen(false);
+              refreshRunningCount();
             }}
           />
         )}
-        {page === "build" && (
-          <Build
-            options={options}
-            state={build}
-            setState={setBuild}
-            onResult={(r) => {
-              setResult(r);
-              go("results");
-            }}
-            onPaper={() => go("paper")}
-          />
-        )}
-        {page === "results" && (
-          <Results result={result} onEdit={() => go("build")} onSaved={() => {}} />
-        )}
-        {page === "strategies" && (
-          <Strategies
-            onTestAgain={(description, understood) => {
-              setBuild({
-                ...emptyBuild(),
-                ...(options ? { capital: String(options.default_capital), costModel: options.cost_models[0], start: options.default_start, end: options.default_end } : {}),
-                text: description,
-                checkedText: description,
-                translation: {
-                  understood,
-                  questions: [],
-                  unparsed: [],
-                  notes: [],
-                  read_by_ai: false,
-                  answers: {},
-                  period: null,
-                },
-                fromSaved: true,
-              });
-              go("build");
-            }}
-            onBuild={() => go("build")}
-          />
-        )}
-        {page === "paper" && <Paper onBuild={() => go("strategies")} />}
-        {page === "orders" && <Orders />}
-        {page === "activity" && <Activity />}
-        {page === "safety" && <Safety onChange={(s) => setKilled(s.live || s.paper)} />}
-        {page === "alerts" && <Alerts onChanged={refreshUnreadCount} />}
-      </main>
+        <main>
+          {page === "home" && (
+            <Home
+              onStart={(text) => {
+                setBuild({
+                  ...emptyBuild(),
+                  ...(options
+                    ? {
+                        capital: String(options.default_capital),
+                        costModel: options.cost_models[0],
+                        start: options.default_start,
+                        end: options.default_end,
+                      }
+                    : {}),
+                  text,
+                  checkNow: true,
+                });
+                go("build");
+              }}
+            />
+          )}
+          {page === "build" && (
+            <Build
+              options={options}
+              state={build}
+              setState={setBuild}
+              onResult={(r) => {
+                setResult(r);
+                go("results");
+              }}
+              onPaper={() => go("paper")}
+            />
+          )}
+          {page === "results" && (
+            <Results result={result} onEdit={() => go("build")} onSaved={() => {}} />
+          )}
+          {page === "strategies" && (
+            <Strategies
+              onTestAgain={(description, understood) => {
+                setBuild({
+                  ...emptyBuild(),
+                  ...(options
+                    ? {
+                        capital: String(options.default_capital),
+                        costModel: options.cost_models[0],
+                        start: options.default_start,
+                        end: options.default_end,
+                      }
+                    : {}),
+                  text: description,
+                  checkedText: description,
+                  translation: {
+                    understood,
+                    questions: [],
+                    unparsed: [],
+                    notes: [],
+                    read_by_ai: false,
+                    answers: {},
+                    period: null,
+                  },
+                  fromSaved: true,
+                });
+                go("build");
+              }}
+              onBuild={() => go("build")}
+            />
+          )}
+          {page === "paper" && <Paper onBuild={() => go("strategies")} />}
+          {page === "orders" && <Orders />}
+          {page === "activity" && <Activity />}
+          {page === "safety" && <Safety onChange={(s) => setKilled(s.live || s.paper)} />}
+          {page === "alerts" && <Alerts onChanged={refreshUnreadCount} />}
+        </main>
       </div>
     </div>
   );

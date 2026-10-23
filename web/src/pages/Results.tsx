@@ -37,7 +37,8 @@ export function Results({
         <div className="panel empty">
           <h2>Nothing tested yet</h2>
           <p className="muted mb-5">
-            Describe a strategy, check what was understood, then run a backtest. The result appears here.
+            Describe a strategy, check what was understood, then run a backtest. The result appears
+            here.
           </p>
           <button className="btn" onClick={onEdit}>
             Build a strategy
@@ -154,7 +155,9 @@ export function Results({
                   <tr key={m.label}>
                     <th scope="row">{m.label}</th>
                     <td className="num">{m.strategy}</td>
-                    <td className="num">{m.benchmark || <span className="muted">Not applicable</span>}</td>
+                    <td className="num">
+                      {m.benchmark || <span className="muted">Not applicable</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -300,10 +303,12 @@ export function Results({
                             {t.legs.map((l, j) => (
                               <li key={j}>
                                 {l.side} {l.quantity} {l.label}
-                                {l.reentry > 0 ? ` (re-entry ${l.reentry})` : ""} at {l.entry_price}, closed{" "}
-                                {l.exited} at {l.exit_price} – {l.reason}
+                                {l.reentry > 0 ? ` (re-entry ${l.reentry})` : ""} at {l.entry_price}
+                                , closed {l.exited} at {l.exit_price} – {l.reason}
                                 {l.stop ? ` (stop ${l.stop})` : ""}:{" "}
-                                <span className={l.pnl > 0 ? "pos" : l.pnl < 0 ? "neg" : ""}>{l.pnl_text}</span>
+                                <span className={l.pnl > 0 ? "pos" : l.pnl < 0 ? "neg" : ""}>
+                                  {l.pnl_text}
+                                </span>
                                 <div>{l.why}</div>
                               </li>
                             ))}
@@ -316,7 +321,10 @@ export function Results({
                         <div className="muted small">{t.exit_price}</div>
                       </td>
                       <td data-label="Why it closed">{t.reason}</td>
-                      <td className={`num trade-result ${t.pnl > 0 ? "pos" : t.pnl < 0 ? "neg" : ""}`} data-label="Result after costs">
+                      <td
+                        className={`num trade-result ${t.pnl > 0 ? "pos" : t.pnl < 0 ? "neg" : ""}`}
+                        data-label="Result after costs"
+                      >
                         {t.pnl_text}
                       </td>
                     </tr>
@@ -337,11 +345,13 @@ export function Results({
         <div>
           {savedName ? (
             <p>
-              <strong>Saved.</strong> Find "{savedName}" in <a href="#/strategies">My strategies</a>, where
-              you can also start paper trading it.
+              <strong>Saved.</strong> Find "{savedName}" in <a href="#/strategies">My strategies</a>
+              , where you can also start paper trading it.
             </p>
           ) : (
-            <p className="muted save-note">Save this strategy to paper trade it on live prices later.</p>
+            <p className="muted save-note">
+              Save this strategy to paper trade it on live prices later.
+            </p>
           )}
           <ErrorLine error={saveError} />
         </div>
