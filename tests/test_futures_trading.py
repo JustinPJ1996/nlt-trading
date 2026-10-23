@@ -77,8 +77,8 @@ OCT, NOV = dt.date(2026, 10, 19), dt.date(2026, 11, 19)
 def _contango(idx: pd.DatetimeIndex) -> np.ndarray:
     """Flat within each contract; each new contract 50% above the last."""
     level = np.ones(len(idx)) * 100.0
-    level[idx.date > OCT] = 150.0
-    level[idx.date > NOV] = 225.0
+    level[idx.date > OCT] = 150.0  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
+    level[idx.date > NOV] = 225.0  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
     return level
 
 
@@ -113,7 +113,7 @@ def test_the_jump_between_two_contracts_is_never_booked():
 def test_a_signal_on_an_expiry_day_does_not_open_a_trade_in_the_next_contract():
     bars = _daily("2026-10-12", "2026-10-30", 100.0)
     signal_only_on_expiry = Compare(op="gt", left=Ref(name="volume"), right=Const(value=1500))
-    bars.loc[bars.index.date == OCT, "volume"] = 2000.0
+    bars.loc[bars.index.date == OCT, "volume"] = 2000.0  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
     result = run_backtest(
         _spec(entry=signal_only_on_expiry), bars, capital=10_000_000, charge_fn=_zero
     )
@@ -225,7 +225,7 @@ def test_a_position_that_outlived_its_contract_stops_the_backtest(monkeypatch):
 
 def test_holding_futures_never_counts_the_jump_between_contracts():
     bars = _daily("2026-10-01", "2026-12-10", _contango)
-    expiry = np.isin(bars.index.date, [OCT, NOV])
+    expiry = np.isin(bars.index.date, [OCT, NOV])  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
     bench = hold_futures(
         bars, 10_000_000, multiplier=100, expiry_close=expiry, name="holding", charge_fn=None
     )
@@ -234,7 +234,7 @@ def test_holding_futures_never_counts_the_jump_between_contracts():
 
 def test_holding_futures_is_charged_at_every_expiry():
     bars = _daily("2026-10-01", "2026-12-10", 100.0)
-    expiry = np.isin(bars.index.date, [OCT, NOV])
+    expiry = np.isin(bars.index.date, [OCT, NOV])  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
     charged = hold_futures(
         bars, 10_000_000, multiplier=100, expiry_close=expiry, name="h", charge_fn=lambda *a: 10.0
     )
@@ -265,7 +265,7 @@ def test_no_costs_stays_no_costs_for_futures():
 
 
 def _at(s: str) -> pd.Timestamp:
-    return pd.Timestamp(s, tz=IST)
+    return pd.Timestamp(s, tz=IST)  # ty: ignore[invalid-return-type]  # pandas stubs: Timestamp(str) is never NaT
 
 
 @pytest.mark.parametrize(
@@ -354,6 +354,7 @@ def test_after_an_expiry_paper_trading_does_not_rejudge_the_old_contract(tmp_pat
     old_contract = _intraday(days_old, 5000.0)
     new_contract = _intraday([*days_old, "2026-10-20"], 5100.0)  # a different contract's prices
 
+    assert run is not None
     runner.step(
         store, run, fetch=lambda *a: old_contract, charge_fn=_zero, now=_at("2026-10-19 23:59")
     )
@@ -382,7 +383,11 @@ def test_paper_trading_asks_for_the_futures_series_not_the_index(tmp_path):
     sid = store.save_strategy(spec, describe(spec))
     run_id = store.start_run(sid, "paper", {"started_at": "2026-10-14T09:00:00+05:30"})
     runner.step(
-        store, store.get_run(run_id), fetch=fetch, charge_fn=_zero, now=_at("2026-10-15 16:00")
+        store,
+        store.get_run(run_id),  # ty: ignore[invalid-argument-type]  # just started
+        fetch=fetch,
+        charge_fn=_zero,
+        now=_at("2026-10-15 16:00"),
     )
     assert asked == ["NIFTY FUT"]
 
@@ -391,7 +396,7 @@ def test_paper_trading_asks_for_the_futures_series_not_the_index(tmp_path):
 
 
 def test_the_readback_says_what_one_lot_is_and_that_expiry_closes_it():
-    text = describe(parse("buy gold mini when rsi cracks 30, target 2%, stop loss 1%").spec)
+    text = describe(parse("buy gold mini when rsi cracks 30, target 2%, stop loss 1%").spec)  # ty: ignore[invalid-argument-type]  # parse(...).spec is Optional; a None fails here
     assert "Gold Mini futures (MCX)" in text
     assert "1 lot = 100 grams, price quoted per 10 grams" in text
     assert "Close at the end of the contract's expiry day if still open" in text
@@ -399,7 +404,7 @@ def test_the_readback_says_what_one_lot_is_and_that_expiry_closes_it():
 
 def test_the_readback_names_the_exchange_as_people_know_it():
     # Kite's code for NSE's derivatives segment is "NFO"; nobody else calls it that.
-    text = describe(parse("short nifty futures on death cross, target 2%, stop 1%").spec)
+    text = describe(parse("short nifty futures on death cross, target 2%, stop 1%").spec)  # ty: ignore[invalid-argument-type]  # parse(...).spec is Optional; a None fails here
     assert "NIFTY futures (NSE)" in text
 
 
@@ -447,6 +452,7 @@ def test_contract_names_are_read_to_the_right_contract(words, symbol):
 
 def test_bare_nifty_is_still_the_index():
     spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    assert spec is not None
     assert spec.instrument.trade_as == "index"
 
 
@@ -463,12 +469,14 @@ def test_an_mcx_intraday_strategy_squares_off_in_the_evening_not_at_nse_hours():
     spec = parse(
         "buy crude oil on 15 minute candles when rsi crosses below 30, target 1%, stop 0.5%"
     ).spec
+    assert spec is not None
     assert spec.schedule.square_off == dt.time(23, 15)
     assert spec.schedule.no_entry_after == dt.time(23, 0)
 
 
 def test_futures_get_the_share_position_limit():
     spec = parse("buy crude oil when rsi cracks 30, target 2%, stop loss 1%").spec
+    assert spec is not None
     assert spec.risk.max_position_pct == 20.0
 
 
@@ -506,6 +514,7 @@ def test_the_ai_reader_keeps_a_futures_contract_a_future():
     }
     assert parse(sentence).spec is None  # the rules alone cannot read it
     result = llm.parse_llm(sentence, transport=lambda system, user: json.dumps(reply))
+    assert result is not None
     assert result.spec is not None, result.questions
     assert (result.spec.instrument.symbol, result.spec.instrument.trade_as) == ("GOLDM", "future")
     assert result.spec.schedule.square_off == dt.time(23, 15)

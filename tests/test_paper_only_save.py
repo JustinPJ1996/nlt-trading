@@ -90,6 +90,7 @@ def test_a_named_strike_is_saved_without_a_backtest_and_can_start_for_paper(auth
 
 def test_an_ordinary_strategy_must_still_be_backtested_first(authed) -> None:
     spec = logic.translate_text(ORDINARY).spec
+    assert spec is not None
     r = authed.post("/api/strategies/untested", json={"spec": spec.model_dump(mode="json")})
     assert r.status_code == 400
     assert "backtest" in r.json()["error"].lower()

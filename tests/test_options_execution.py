@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -58,10 +59,12 @@ def _reference(df: pd.DataFrame, bucket_minutes: int | None) -> pd.DataFrame:
         return df.reindex(columns=BAR_COLUMNS)
     work = df.copy()
     if bucket_minutes is None:
-        work["_bucket"] = pd.DatetimeIndex(work.index).normalize()
+        work["_bucket"] = pd.DatetimeIndex(work.index).normalize()  # ty: ignore[unresolved-attribute]  # stub lacks DatetimeIndex.normalize
     else:
-        work["_bucket"] = _bucket_start(work.index, bucket_minutes)
-    rows = [_aggregate_bucket(b, g) for b, g in work.groupby("_bucket", sort=True)]
+        work["_bucket"] = _bucket_start(cast(pd.DatetimeIndex, work.index), bucket_minutes)
+    rows = [
+        _aggregate_bucket(cast(pd.Timestamp, b), g) for b, g in work.groupby("_bucket", sort=True)
+    ]
     out = pd.DataFrame(rows).set_index("timestamp").sort_index()
     out.index.name = "timestamp"
     return out[BAR_COLUMNS]

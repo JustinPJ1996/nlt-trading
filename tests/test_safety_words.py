@@ -53,6 +53,7 @@ def test_the_safety_page_shows_words_not_raw_details(monkeypatch, tmp_path) -> N
     from app import logic
 
     spec = logic.translate_text("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    assert spec is not None
     store.save_strategy(spec, logic.describe_spec(spec))
     store.engage_paper_kill_switch("checking the page")
     client = TestClient(api.create_app(store, secret="s"), base_url="https://testserver")

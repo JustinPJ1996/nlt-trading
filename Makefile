@@ -10,9 +10,9 @@ PY := .venv/bin/python
 .PHONY: check fix lint format web-lint web-format types test mutation secrets hooks clean-cache help web serve
 
 help:
-	@echo "make check     lint + format check (Python and web) + the full test suite (the gate)"
+	@echo "make check     lint + format + type check (Python and web) + the full test suite (the gate)"
 	@echo "make fix       autofix lint and rewrite formatting -- run before reading errors"
-	@echo "make types     type check with ty (report only -- not part of the gate yet)"
+	@echo "make types     type check the Python with ty (part of check)"
 	@echo "make test      the test suite alone"
 	@echo "make mutation  mutation testing: do the tests FAIL when the code breaks? (slow)"
 	@echo "make secrets   scan the whole git history for leaked credentials"
@@ -20,7 +20,7 @@ help:
 	@echo "make web       build the TypeScript front end (web/ -> web/dist)"
 	@echo "make serve     run the web app on http://127.0.0.1:8502"
 
-check: lint format web-lint web-format test
+check: lint format types web-lint web-format test
 
 lint:
 	@$(PY) -m ruff check .
@@ -47,10 +47,10 @@ fix:
 	@$(PY) -m ruff format .
 	@test ! -d web/node_modules || (cd web && $(WEBPATH) ./node_modules/.bin/oxlint --fix --quiet; $(WEBPATH) ./node_modules/.bin/oxfmt >/dev/null)
 
-# Not in `check` yet: the first run found ~700 issues, most of them "this might
-# be None" warnings on code that is guarded some other way. Putting it in the
-# gate before those are worked through would block every commit and teach
-# --no-verify. Add it to `check` once the count is zero.
+# ty: does each piece of code hand the next what it expects. The backlog it
+# found on adoption (~970 findings, 5 of them real bugs) was worked to zero
+# before it joined `check`, so any finding now is new. Silence one only on its
+# own line, naming the rule and the reason: `# ty: ignore[rule]  # why`.
 types:
 	@.venv/bin/ty check
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import time
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -72,7 +73,7 @@ def test_an_option_list_still_carrying_yesterdays_expiry_is_not_todays(monkeypat
     cache = tmp_path / "kite_instruments.csv"
     monkeypatch.setattr(kite, "_INSTRUMENTS_CACHE", cache)
     today = dt.date(2026, 10, 16)
-    now = pd.Timestamp("2026-10-16 09:20", tz=IST)
+    now = cast(pd.Timestamp, pd.Timestamp("2026-10-16 09:20", tz=IST))
     stale = pd.DataFrame([_option(today, dt.date(2026, 10, 15))])
     fresh = pd.DataFrame([_option(today, dt.date(2026, 10, 20))])
     downloads = []
@@ -119,7 +120,7 @@ class _VixKite:
 
     def index_bars(self, symbol, timeframe, start, end):
         assert (symbol, timeframe) == ("INDIA VIX", "1d")
-        s = self.closes[(self.closes.index.date >= start) & (self.closes.index.date <= end)]
+        s = self.closes[(self.closes.index.date >= start) & (self.closes.index.date <= end)]  # ty: ignore[unresolved-attribute]  # pandas stub lacks Index.date
         return pd.DataFrame({"open": s, "high": s, "low": s, "close": s, "volume": 0.0})
 
 
@@ -133,7 +134,7 @@ def test_vix_percentile_uses_yesterdays_close_ranked_against_the_days_before():
         {"close": 1.0},
         index=pd.DatetimeIndex([days[-2] + pd.Timedelta(hours=10), now - pd.Timedelta(hours=1)]),
     )
-    iv = vix_iv_fn(_VixKite(closes), now)("NIFTY", bars, 20)
+    iv = vix_iv_fn(_VixKite(closes), now)("NIFTY", bars, 20)  # ty: ignore[invalid-argument-type]  # test double stands in for KiteOptionClient
     # Today's value: yesterday's 5.0 against the 20 sessions to yesterday -> 0.
     assert iv.iloc[-1] == 0.0
     # Yesterday's value: the day before (48.0) against the 20 before it, all
@@ -167,7 +168,7 @@ def test_vix_ranks_the_same_for_any_index():
     closes = pd.Series(np.arange(10.0, 50.0), index=days)
     now = days[-1] + pd.Timedelta(hours=11)
     bars = pd.DataFrame({"close": 1.0}, index=pd.DatetimeIndex([now - pd.Timedelta(hours=1)]))
-    fn = vix_iv_fn(_VixKite(closes), now)
+    fn = vix_iv_fn(_VixKite(closes), now)  # ty: ignore[invalid-argument-type]  # test double stands in for KiteOptionClient
     assert fn("SENSEX", bars, 20).iloc[-1] == fn("NIFTY", bars, 20).iloc[-1] == 100.0
 
 
@@ -176,6 +177,7 @@ def test_options_are_no_longer_refused_and_say_how_paper_differs():
         "Buy NIFTY weekly ATM call on 15 minute bars when RSI crosses above 55. "
         "Stop 20%, target 40% on the premium."
     ).spec
+    assert spec is not None
     assert paper_problem(spec) is None
     # Squared off at 15:15 every day, expiry day included: nothing differs.
     assert not any("3:40 PM" in n for n in paper_notes(spec))
@@ -193,10 +195,12 @@ def test_option_runs_keep_checking_until_the_fno_close():
         "Stop 20%, target 40% on the premium."
     ).spec
     stock = parse("buy nifty when rsi crosses below 40, target 3%, stop 2%").spec
+    assert option is not None
+    assert stock is not None
     stock = stock.model_copy(
         update={"instrument": stock.instrument.model_copy(update={"timeframe": "15m"})}
     )
-    at = pd.Timestamp("2026-10-15 15:44", tz=IST)
+    at = cast(pd.Timestamp, pd.Timestamp("2026-10-15 15:44", tz=IST))
     run = {"id": 1}
     assert runner.is_due(run, None, option, at)
     assert not runner.is_due(run, None, stock, at)
@@ -209,7 +213,7 @@ def test_an_alert_for_a_sold_position_never_says_buy():
         "Sell the NIFTY weekly ATM straddle at 09:20 with a 25% stop on each leg. "
         "Square off at 15:15."
     ).spec
-    at = pd.Timestamp("2026-10-15 09:19", tz=IST)
+    at = cast(pd.Timestamp, pd.Timestamp("2026-10-15 09:19", tz=IST))
     opened = runner._signal_alert_text(
         spec,
         "S",
@@ -234,8 +238,8 @@ def test_a_position_keeps_its_key_when_a_leg_re_enters_at_a_new_strike():
 
     from nlt.engine.backtest import Trade
 
-    at = pd.Timestamp("2026-10-15 09:20", tz=IST)
-    common = dict(
+    at = cast(pd.Timestamp, pd.Timestamp("2026-10-15 09:20", tz=IST))
+    common: dict[str, Any] = dict(
         entry_time=at,
         entry_price=200.0,
         exit_time=at,
@@ -250,8 +254,8 @@ def test_a_position_keeps_its_key_when_a_leg_re_enters_at_a_new_strike():
         entry_reason="x",
     )
     leg = (SimpleNamespace(symbol="A"),)
-    before = Trade(symbol="A + B", legs=leg, **common)
-    after = Trade(symbol="A + B + C", legs=leg, **common)
+    before = Trade(symbol="A + B", legs=leg, **common)  # ty: ignore[invalid-argument-type]  # SimpleNamespace stands in for LegFill
+    after = Trade(symbol="A + B + C", legs=leg, **common)  # ty: ignore[invalid-argument-type]  # SimpleNamespace stands in for LegFill
     assert runner._key(before, "NIFTY") == runner._key(after, "NIFTY")
 
 
@@ -273,7 +277,9 @@ def test_nse_futures_trade_until_the_fno_close():
     spec = spec.model_copy(
         update={"instrument": spec.instrument.model_copy(update={"timeframe": "15m"})}
     )
-    assert runner.is_due({"id": 1}, None, spec, pd.Timestamp("2026-10-15 15:44", tz=IST))
+    assert runner.is_due(
+        {"id": 1}, None, spec, cast(pd.Timestamp, pd.Timestamp("2026-10-15 15:44", tz=IST))
+    )
 
 
 def test_a_day_with_no_pass_at_all_is_still_lost(tmp_path):
@@ -286,8 +292,8 @@ def test_a_day_with_no_pass_at_all_is_still_lost(tmp_path):
         def instruments(self, now):
             return pd.DataFrame(columns=["name", "tradingsymbol", "instrument_token"])
 
-    now = pd.Timestamp("2026-10-16 10:00", tz=IST)
-    source = LiveOptionSource(NoTokens(), now, root=tmp_path)
+    now = cast(pd.Timestamp, pd.Timestamp("2026-10-16 10:00", tz=IST))
+    source = LiveOptionSource(NoTokens(), now, root=tmp_path)  # ty: ignore[invalid-argument-type]  # test double stands in for KiteOptionClient
     source._live = pd.DataFrame(columns=["name", "tradingsymbol", "instrument_token"])
     source.contract_bars(
         "NIFTY", "NIFTY26O1525000CE", "1m", dt.date(2026, 10, 15), dt.date(2026, 10, 15)

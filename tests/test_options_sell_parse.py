@@ -80,7 +80,7 @@ def _asks(text, field, **kw):
 
 
 def _lines(result, answers=None) -> list[tuple[str, str]]:
-    return [
+    return [  # ty: ignore[invalid-return-type]  # label may be None in describe_lines; helper is used only where it is a str
         (line, label) for _h, line, label in describe_lines(result.spec, result.sources, answers)
     ]
 
@@ -523,6 +523,7 @@ def test_named_strikes_on_legs_read_exactly() -> None:
         "At 09:30, sell the NIFTY weekly 25000 call and buy the weekly 25200 call. "
         "Square off at 15:15."
     ).spec
+    assert spec is not None
     assert [(leg.side, leg.strike, leg.strike_offset) for leg in spec.instrument.legs] == [
         ("sell", 25000, 0),
         ("buy", 25200, 0),

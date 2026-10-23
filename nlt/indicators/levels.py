@@ -130,7 +130,7 @@ def opening_range(high: pd.Series, low: pd.Series, minutes: int = 15) -> pd.Data
     already runs past 15 minutes, and its high is not the 15-minute high.
     """
     idx = high.index
-    day = idx.normalize()
+    day = idx.normalize()  # ty: ignore[unresolved-attribute]
     first = pd.Series(idx, index=idx).groupby(day).transform("min")
     in_range = pd.Series(idx < (first + pd.Timedelta(minutes=minutes)).to_numpy(), index=idx)
     range_high = high.where(in_range).groupby(day).transform("max")
@@ -164,9 +164,9 @@ def session_open(open_: pd.Series, close: pd.Series) -> pd.DataFrame:
     data has no previous close, so no gap.
     """
     idx = open_.index
-    day = idx.normalize()
+    day = idx.normalize()  # ty: ignore[unresolved-attribute]
     day_open = open_.groupby(day).transform("first")
     last_close = close.groupby(day).last()
-    prev_close = pd.Series(day, index=idx).map(last_close.shift(1))
+    prev_close = pd.Series(day, index=idx).map(last_close.shift(1))  # ty: ignore[invalid-argument-type]
     gap = 100.0 * (day_open / prev_close - 1.0)
     return pd.DataFrame({"open": day_open, "gap_pct": gap}, index=idx)

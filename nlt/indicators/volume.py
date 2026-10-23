@@ -16,7 +16,7 @@ from nlt.indicators.smoothing import ema, sma
 def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
     """On Balance Volume -- running total of volume signed by the close's direction."""
     direction = np.sign(close.diff().fillna(0.0))
-    return (direction * volume).cumsum()
+    return (direction * volume).cumsum()  # ty: ignore[invalid-return-type]
 
 
 def _money_flow_multiplier(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
@@ -64,7 +64,7 @@ def vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -
     price. It only carries information intraday.
     """
     tp = (high + low + close) / 3.0
-    session = close.index.tz_convert("Asia/Kolkata").date
+    session = close.index.tz_convert("Asia/Kolkata").date  # ty: ignore[unresolved-attribute]
 
     grouped_pv = (tp * volume).groupby(session).cumsum()
     grouped_v = volume.groupby(session).cumsum()

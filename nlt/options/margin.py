@@ -67,7 +67,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 
@@ -326,7 +326,11 @@ class SpanMargin:
 
         separate = day if (day >= NO_EXPIRY_DAY_CALENDAR_FROM) else None
         span = span_requirement(
-            file, underlying, rows, [leg.quantity for leg in legs], separate_expiry=separate
+            file,
+            underlying,
+            cast("list[int]", rows),
+            [leg.quantity for leg in legs],
+            separate_expiry=separate,
         )
 
         exposure = extra = 0.0
@@ -383,7 +387,7 @@ class FixedMargin:
         index_prev_close: float,
     ) -> MarginBreakdown:
         if callable(self.rupees):
-            value = float(self.rupees(underlying, day, legs, index_prev_close))
+            value = float(self.rupees(underlying, day, legs, index_prev_close))  # ty: ignore[invalid-argument-type]
         else:
             value = float(self.rupees)
         return MarginBreakdown(

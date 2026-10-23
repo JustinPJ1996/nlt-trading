@@ -15,6 +15,8 @@ the bug worth catching is a gate that falls open.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pandas as pd
 import pytest
 from starlette.routing import Route
@@ -55,7 +57,9 @@ def authed(client) -> TestClient:
 
 
 def _spec_json(text: str) -> dict:
-    return logic.translate_text(text).spec.model_dump(mode="json")
+    spec = logic.translate_text(text).spec
+    assert spec is not None
+    return spec.model_dump(mode="json")
 
 
 # --------------------------------------------------------------------- login
@@ -174,7 +178,9 @@ def test_translate_returns_the_engines_own_readback(authed) -> None:
     body = authed.post("/api/translate", json={"text": RSI}).json()
     spec = StrategySpec.model_validate(body["understood"]["spec"])
     assert body["understood"]["readback"] == describe(spec)
-    assert body["understood"]["readback"] == describe(logic.translate_text(RSI).spec)
+    assert body["understood"]["readback"] == describe(
+        cast(StrategySpec, logic.translate_text(RSI).spec)
+    )
 
 
 def test_a_missing_stop_loss_is_a_question_with_nothing_filled_in(authed) -> None:
@@ -234,9 +240,12 @@ def test_backtest_result_matches_the_engine(authed) -> None:
         spec,
         capital=100000,
         cost_model_label="Index futures",
-        start=pd.Timestamp(WINDOW["start"]).date(),
-        end=pd.Timestamp(WINDOW["end"]).date(),
+        start=cast(pd.Timestamp, pd.Timestamp(WINDOW["start"])).date(),
+        end=cast(pd.Timestamp, pd.Timestamp(WINDOW["end"])).date(),
     )
+    assert direct.verdict is not None
+    assert direct.backtest is not None
+    assert direct.comparison is not None
     assert body["verdict"]["summary"] == direct.verdict.summary
     assert body["verdict"]["passed"] == direct.verdict.passed
     assert len(body["trades"]) == len(direct.backtest.trades)
@@ -415,7 +424,9 @@ def test_order_read_back_is_the_engines_text(authed, no_prices) -> None:
     from nlt.orders.readback import describe as describe_order
 
     body = _read(authed)
-    assert body["readback"] == describe_order(parse_order(ORDER).order)
+    parsed_order = parse_order(ORDER).order
+    assert parsed_order is not None
+    assert body["readback"] == describe_order(parsed_order)
     assert body["offer_stop"] is True
     assert any("couldn't check today's price" in n for n in body["notes"])
 
@@ -496,19 +507,29 @@ def test_positions_flow_from_fill_to_exit_order_to_close_now(authed, no_prices) 
             "slippage": {"kind": "pct", "value": 0.02},
         },
     )
-    created = pd.Timestamp(store.one_off_orders()[0]["created_at"]).tz_convert("Asia/Kolkata")
+    created = cast(
+        pd.Timestamp,
+        pd.Timestamp(store.one_off_orders()[0]["created_at"]).tz_convert("Asia/Kolkata"),
+    )
     start = created.ceil("min")
     idx = pd.date_range(start, periods=30, freq="1min")
     index = pd.DataFrame({"open": 21900.0, "high": 21900.0, "low": 21900.0, "close": 21900.0}, idx)
     fut = pd.DataFrame({"open": 22000.0, "high": 22000.0, "low": 22000.0, "close": 22000.0}, idx)
-    oct_ = Contract("NIFTY", "NIFTY26OCTFUT", (start + pd.Timedelta(days=20)).date(), 1)
+    oct_ = Contract(
+        "NIFTY", "NIFTY26OCTFUT", cast(pd.Timestamp, start + pd.Timedelta(days=20)).date(), 1
+    )
     feed = runner.Feed(
         index_minutes=lambda s, a, b: index,
         contract_minutes=lambda c, a, b: fut,
         daily=lambda n, a, b: index,
         contracts=lambda s: [oct_],
     )
-    runner.step(store, feed, now=start + pd.Timedelta(minutes=10), charges=lambda s: lambda *a: 0.0)
+    runner.step(
+        store,
+        feed,
+        now=cast(pd.Timestamp, start + pd.Timedelta(minutes=10)),
+        charges=lambda s: lambda *a: 0.0,
+    )
 
     page = authed.get("/api/orders").json()
     (pos,) = page["positions"]
@@ -540,7 +561,8 @@ def test_a_test_period_in_the_sentence_comes_back_as_dates(authed) -> None:
     assert body["understood"] is not None
     period = body["period"]
     assert period["words"] == "backtest the last 2 years"
-    start, end = pd.Timestamp(period["start"]), pd.Timestamp(period["end"])
+    start = cast(pd.Timestamp, pd.Timestamp(period["start"]))
+    end = cast(pd.Timestamp, pd.Timestamp(period["end"]))
     assert end.date() == pd.Timestamp.today().date()
     assert end - pd.DateOffset(years=2) == start
 
@@ -559,14 +581,18 @@ def test_period_dates_never_start_before_trusted_history() -> None:
     out = logic.period_dates(
         BacktestPeriod(words="the last 10 years", last=10, unit="years"), today
     )
+    assert out is not None
     assert out["start"] == DATA_FLOOR.isoformat()
     assert out["note"] and "starts on" in out["note"]
     year = logic.period_dates(BacktestPeriod(words="2024", year=2024), today)
+    assert year is not None
     assert (year["start"], year["end"], year["note"]) == ("2024-01-01", "2024-12-31", None)
     this_year = logic.period_dates(BacktestPeriod(words="2026", year=2026), today)
+    assert this_year is not None
     assert this_year["end"] == "2026-10-12"
     assert logic.period_dates(BacktestPeriod(words="2027", year=2027), today) is None
     months = logic.period_dates(BacktestPeriod(words="6 months", last=6, unit="months"), today)
+    assert months is not None
     assert months["start"] == "2026-04-12"
 
 
@@ -584,6 +610,7 @@ def test_a_saved_strategy_has_no_guessed_labels(authed) -> None:
     from nlt.translate.readback import describe_lines
 
     spec = logic.translate_text(RSI).spec
+    assert spec is not None
     assert api._spec_payload(spec)["readback_labels"] is None
     assert [label for *_x, label in describe_lines(spec, None)] == [None] * len(
         describe_lines(spec, None)
@@ -606,8 +633,8 @@ def _pinned_run(spec, cost_model="Index futures"):
         spec,
         capital=2_500_000,
         cost_model_label=cost_model,
-        start=pd.Timestamp(WINDOW["start"]).date(),
-        end=pd.Timestamp(WINDOW["end"]).date(),
+        start=cast(pd.Timestamp, pd.Timestamp(WINDOW["start"])).date(),
+        end=cast(pd.Timestamp, pd.Timestamp(WINDOW["end"])).date(),
     )
 
 
@@ -617,6 +644,7 @@ def test_before_charges_is_a_second_run_with_no_charges() -> None:
     # A fixed size, so both runs buy exactly the same quantities and the gap
     # between them is the charges and nothing else.
     spec = logic.translate_text(RSI).spec
+    assert spec is not None
     spec = spec.model_copy(update={"sizing": Sizing(mode="fixed_lots", lots=10)})
     result = _pinned_run(spec)
     after, before = result.backtest, result.before_charges
@@ -683,13 +711,16 @@ def test_a_basket_is_also_run_again_with_no_charges() -> None:
     spec = logic.translate_text(
         "Buy NIFTY 100 stocks when ema8 crosses above ema21, target 3%, stop loss 1.5%"
     ).spec
+    assert spec is not None
     result = logic.backtest_spec(
         spec,
         capital=2_500_000,
-        start=pd.Timestamp("2024-01-01").date(),
-        end=pd.Timestamp("2024-06-30").date(),
+        start=cast(pd.Timestamp, pd.Timestamp("2024-01-01")).date(),
+        end=cast(pd.Timestamp, pd.Timestamp("2024-06-30")).date(),
     )
     assert result.error is None, result.error
+    assert result.backtest is not None
+    assert result.before_charges is not None
     assert result.backtest.metrics["total_charges"] > 0
     assert sum(t.charges for t in result.before_charges.trades) == 0
 
@@ -865,6 +896,7 @@ def _seed_paper_run(store: Store, *, realised: float = 500.0, open_pnl: float = 
     happened -- enough to drive the pause/resume routes and `/api/running`
     without needing a real Kite feed."""
     spec = logic.translate_text(RSI).spec
+    assert spec is not None
     sid = store.save_strategy(spec, describe(spec))
     started_at = pd.Timestamp.now(tz="Asia/Kolkata") - pd.Timedelta(days=1)
     run_id = store.start_run(
@@ -967,7 +999,7 @@ def test_closed_today_is_judged_in_ist_not_utc(authed) -> None:
     """
     store = authed.app.state.store
     run_id = _seed_paper_run(store)
-    pinned_now = pd.Timestamp("2024-06-10T01:30:00", tz="Asia/Kolkata")
+    pinned_now = cast(pd.Timestamp, pd.Timestamp("2024-06-10T01:30:00", tz="Asia/Kolkata"))
     bar_time = pd.Timestamp("2024-06-10T01:00:00", tz="Asia/Kolkata")
     store.record_paper_event(
         run_id,
@@ -988,9 +1020,9 @@ def test_today_ist_judges_the_ist_calendar_day_not_utcs() -> None:
     `_today_ist` must use the IST date, the only calendar this product's user
     (and the rest of the paper-trading feed) uses."""
     bar_time = "2024-06-10T01:00:00+05:30"
-    today_ist = pd.Timestamp("2024-06-10T00:00:00", tz="Asia/Kolkata")
+    today_ist = cast(pd.Timestamp, pd.Timestamp("2024-06-10T00:00:00", tz="Asia/Kolkata"))
     assert api._today_ist(bar_time, today_ist) is True
-    assert api._today_ist(bar_time, today_ist + pd.Timedelta(days=1)) is False
+    assert api._today_ist(bar_time, cast(pd.Timestamp, today_ist + pd.Timedelta(days=1))) is False
 
 
 def test_running_never_shows_an_unknown_price_as_rs_0(authed, monkeypatch) -> None:
@@ -1021,7 +1053,7 @@ def test_running_never_shows_an_unknown_price_as_rs_0(authed, monkeypatch) -> No
 
 def test_running_closed_today_includes_one_off_orders_closed_today(authed, monkeypatch) -> None:
     store = authed.app.state.store
-    now = pd.Timestamp("2024-06-10T14:00:00", tz="Asia/Kolkata")
+    now = cast(pd.Timestamp, pd.Timestamp("2024-06-10T14:00:00", tz="Asia/Kolkata"))
     exits = [
         {
             "kind": "exited",

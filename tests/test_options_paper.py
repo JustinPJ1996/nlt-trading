@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -85,6 +86,7 @@ class _PastKite:
     def minute_candles(self, token, start, end):
         self.requests += 1
         underlying, sym, expiry = self._tokens[int(token)]
+        assert self.now is not None
         if expiry < self.now.date():
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
         if sym not in self._minutes:
@@ -96,7 +98,7 @@ class _PastKite:
             raw.loc[~raw["traded"], "volume"] = 0
             self._minutes[sym] = raw[["open", "high", "low", "close", "volume"]]
         rows = self._minutes[sym]
-        days = rows.index.date
+        days = rows.index.date  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
         rows = rows[(days >= start) & (days <= end)]
         # Kite hands back the minute still forming, too.
         return rows[rows.index <= self.now]
@@ -120,7 +122,7 @@ def _replay(tmp_path, spec, first_day, last_day, *, evenings=True, margin_fn=Non
     kite = _PastKite()
     root = tmp_path / "fno_live"
     store = Store(tmp_path / "paper.sqlite")
-    start = pd.Timestamp(dt.datetime.combine(first_day, dt.time(9, 14)), tz=IST)
+    start = cast(pd.Timestamp, pd.Timestamp(dt.datetime.combine(first_day, dt.time(9, 14)), tz=IST))
     all_bars = load_option_bars(spec, first_day - dt.timedelta(days=30), last_day, ParquetSource())
     sid = store.save_strategy(spec, describe(spec))
     run_id = store.start_run(
@@ -129,6 +131,8 @@ def _replay(tmp_path, spec, first_day, last_day, *, evenings=True, margin_fn=Non
         {"capital": CAPITAL, "started_at": start.isoformat(), "slippage": Slippage().to_dict()},
     )
     run = store.get_run(run_id)
+
+    assert run is not None
 
     def source(now):
         kite.now = now
@@ -306,9 +310,13 @@ def test_replayed_straddle_paper_trades_match_the_backtest(straddle):
 def test_an_option_position_is_held_through_the_day_not_squared_off_each_pass(bought):
     """The bug the stock engine once had: mid-session, the newest candle was
     taken for the day's last, and every position squared off on each pass."""
-    for e in bought.store.paper_events(bought.run["id"]):
+    events = bought.store.paper_events(bought.run["id"])
+    # Without a position there is nothing to square off, and the loop below
+    # would pass having checked nothing.
+    assert any(e["kind"] == "entry" for e in events)
+    for e in events:
         if e["kind"] == "exit" and eval_reason(e) == "square_off":
-            assert pd.Timestamp(e["bar_time"]).time() >= dt.time(15, 15)
+            assert pd.Timestamp(e["bar_time"]).time() >= dt.time(15, 15)  # ty: ignore[unresolved-attribute]  # pandas stubs: Timestamp(str) is never NaT
 
 
 @needs_data
@@ -345,7 +353,7 @@ def test_a_lost_expiry_day_is_said_plainly_never_guessed(tmp_path):
 @needs_data
 def test_the_forming_minute_is_never_used(tmp_path):
     kite = _PastKite()
-    now = pd.Timestamp("2025-01-08 10:20:30", tz=IST)
+    now = cast(pd.Timestamp, pd.Timestamp("2025-01-08 10:20:30", tz=IST))
     kite.now = now
     source = LiveOptionSource(kite, now, root=tmp_path)
     listing = source.listing("NIFTY", now.date())
@@ -378,6 +386,7 @@ def test_paper_freezes_an_expiring_option_at_its_last_traded_price(tmp_path):
     """Justin (2026-10-15): in paper, an option still open on expiry day is held
     to the close and valued at its last trade -- worked out here straight from
     the raw minute rows, not through the engine."""
+    assert BOUGHT.spec is not None
     spec = BOUGHT.spec.model_copy(
         update={
             "schedule": BOUGHT.spec.schedule.model_copy(update={"intraday": False}),

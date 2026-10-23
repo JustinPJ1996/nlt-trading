@@ -79,7 +79,7 @@ def test_codes_match_the_published_standard(at, code) -> None:
 def test_an_authenticator_link_is_accepted_as_well_as_the_bare_secret() -> None:
     link = f"otpauth://totp/Kite:AB1234?secret={RFC_SECRET}&issuer=Kite"
     kite_login.save_credentials("AB1234", "pw", link)
-    assert kite_login.load_credentials()["totp_secret"] == RFC_SECRET
+    assert kite_login.load_credentials()["totp_secret"] == RFC_SECRET  # ty: ignore[not-subscriptable]  # credentials were saved just above; None would fail here
 
 
 @pytest.mark.parametrize("bad", ["123456", "not a secret!", "", "otpauth://totp/x?issuer=Kite"])
@@ -99,7 +99,7 @@ def test_the_login_lives_outside_the_repository() -> None:
 
 def test_a_saved_login_is_readable_only_by_its_owner(saved) -> None:
     assert stat.S_IMODE(kite_login.CREDENTIALS_PATH.stat().st_mode) == 0o600
-    assert kite_login.load_credentials()["user_id"] == "AB1234"
+    assert kite_login.load_credentials()["user_id"] == "AB1234"  # ty: ignore[not-subscriptable]  # credentials were saved just above; None would fail here
 
 
 def test_forgetting_the_login_removes_it(saved) -> None:
@@ -194,7 +194,7 @@ class FakeHttp:
         self.tokens = []
 
     def get(self, url, params=None, headers=None, timeout=None):
-        self.tokens.append(headers["Authorization"])
+        self.tokens.append(headers["Authorization"])  # ty: ignore[not-subscriptable]  # test double: every call passes headers
         return self.responses.pop(0)
 
 

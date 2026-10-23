@@ -82,7 +82,7 @@ def test_empty_and_single_bar_inputs_are_safe():
 
 
 def test_artefact_renders_readably():
-    a = Artefact(pd.Timestamp("2005-07-29", tz="Asia/Kolkata"), -99.1, 109.0)
+    a = Artefact(pd.Timestamp("2005-07-29", tz="Asia/Kolkata"), -99.1, 109.0)  # ty: ignore[invalid-argument-type]  # pandas stubs: Timestamp(str) is never NaT
     text = str(a)
     assert "2005-07-29" in text and "-99.1%" in text
 

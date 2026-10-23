@@ -14,6 +14,7 @@ test fail -- see the mutation table in the PR description.
 from __future__ import annotations
 
 import sqlite3
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -39,7 +40,7 @@ CAPITAL = 1_000_000.0
 
 
 def t(s: str) -> pd.Timestamp:
-    return pd.Timestamp(s, tz=IST)
+    return cast(pd.Timestamp, pd.Timestamp(s, tz=IST))
 
 
 @pytest.fixture
@@ -87,14 +88,18 @@ def test_ambiguous_pnl_alert_asks_loss_or_profit():
     assert r.order is None
     assert [q.field for q in r.questions] == ["pnl.sign"]
     loss = parse_order(s, {"pnl.sign": "a loss"})
+    assert loss.order is not None
     assert isinstance(loss.order.action, AlertAction)
+    assert isinstance(loss.order.trigger, PnlTrigger)
     assert loss.order.trigger.threshold == -50000
 
 
 def test_a_stated_pnl_alert_needs_no_question():
     r = parse_order("Tell me if my loss exceeds 50000")
     assert r.questions == [], [q.text for q in r.questions]
+    assert r.order is not None
     assert isinstance(r.order.action, AlertAction)
+    assert isinstance(r.order.trigger, PnlTrigger)
     assert r.order.trigger.threshold == -50000
 
 
@@ -143,12 +148,14 @@ def test_alert_readback_always_says_nothing_is_bought_or_sold():
 
 def test_alert_readback_has_no_stop_loss_warning():
     order = parse_order("Tell me when NIFTY goes below 22000").order
+    assert order is not None
     lines = describe(order)
     assert not any("stop loss" in line.lower() for line in lines)
 
 
 def test_alert_fired_text_says_nothing_was_bought_or_sold():
     order = parse_order("Tell me when NIFTY goes below 22000").order
+    assert order is not None
     text = alert_fired_text(order)
     assert "Nothing was bought or sold." in text
     assert "22,000" in text
@@ -157,7 +164,7 @@ def test_alert_fired_text_says_nothing_was_bought_or_sold():
 # ----------------------------------------------------------------- the engine
 
 
-OCT = Contract("NIFTY", "NIFTY26OCTFUT", pd.Timestamp("2026-10-27").date(), 101)
+OCT = Contract("NIFTY", "NIFTY26OCTFUT", cast(pd.Timestamp, pd.Timestamp("2026-10-27")).date(), 101)
 DAY = "2026-10-05"
 
 
@@ -249,6 +256,7 @@ def test_pnl_alert_watches_the_chosen_positions_and_never_closes_them(store):
     # Build one open paper position with a real trade order, then an alert
     # watching its P&L -- the alert must notify but must never close it.
     trade_order = parse_order("If Nifty goes below 22000, buy 1 lot Nifty Futures").order
+    assert trade_order is not None
     a = store.save_one_off_order(
         "If Nifty goes below 22000, buy 1 lot Nifty Futures",
         trade_order.model_dump_json(),
@@ -354,7 +362,7 @@ def _start_alert_only(store: Store, spec: StrategySpec, started_at: pd.Timestamp
         {"capital": CAPITAL, "started_at": started_at.isoformat(), "alert_only": True},
         alert_only=True,
     )
-    return store.get_run(run_id)
+    return cast(dict, store.get_run(run_id))
 
 
 def _replay(store, run, bars_, timeframe, *, from_index):
@@ -374,6 +382,7 @@ def alert_only_replay(tmp_path_factory):
     bars_ = _daily_bars()
     store = Store(tmp_path_factory.mktemp("alert_only") / "paper.sqlite")
     started_at = bars_.index[300] - pd.Timedelta(minutes=1)
+    assert DAILY_SPEC is not None
     run = _start_alert_only(store, DAILY_SPEC, started_at)
     _replay(store, run, bars_, "1d", from_index=300)
     return store, run, bars_, started_at
@@ -381,6 +390,7 @@ def alert_only_replay(tmp_path_factory):
 
 def test_alert_only_run_notifies_once_per_signal_and_exit_never_for_skips(alert_only_replay):
     store, run, bars_, started_at = alert_only_replay
+    assert DAILY_SPEC is not None
     expected = run_backtest(
         DAILY_SPEC,
         bars_,
@@ -437,6 +447,7 @@ def test_alert_only_run_shows_no_money_and_is_never_proven(alert_only_replay):
 def test_is_proven_requires_a_non_alert_only_paper_run(store):
     from app import logic
 
+    assert DAILY_SPEC is not None
     bt = run_backtest(DAILY_SPEC, _daily_bars(), capital=CAPITAL, charge_fn=_zero)
     result = logic.PipelineResult(
         translation=TranslationResult(spec=DAILY_SPEC), spec=DAILY_SPEC, backtest=bt
@@ -460,6 +471,7 @@ def test_is_proven_requires_a_non_alert_only_paper_run(store):
 
 def test_a_short_strategys_alert_says_sell_short_not_buy(tmp_path):
     spec = translate_parse("short nifty when rsi crosses above 60, target 3%, stop 2%").spec
+    assert spec is not None
     assert spec.direction == "short"
     bars_ = _daily_bars()
     store = Store(tmp_path / "short.sqlite")
@@ -476,6 +488,7 @@ def test_an_alert_only_run_is_marked_in_the_same_step_it_is_created(tmp_path):
     """The every-minute job must never see an alert-only run unmarked: it would
     record paper money for it."""
     store = Store(tmp_path / "start.sqlite")
+    assert DAILY_SPEC is not None
     sid = store.save_strategy(DAILY_SPEC, strategy_describe(DAILY_SPEC))
     seen = []
     real_tx = store.tx
@@ -489,7 +502,7 @@ def test_an_alert_only_run_is_marked_in_the_same_step_it_is_created(tmp_path):
         for r in store.active_paper_runs():
             seen.append(store.is_alert_only(r["id"]))
 
-    store.tx = watching_tx
+    store.tx = watching_tx  # ty: ignore[invalid-assignment]  # test double: swaps the transaction hook to observe it
     store.start_run(sid, "paper", {}, alert_only=True)
     assert seen and all(seen)
 
@@ -506,7 +519,7 @@ def test_alert_readback_never_promises_an_instant_alert(sentence):
     and only while the job runs. "The moment it does" overpromised."""
     from nlt.orders.readback import describe as order_describe
 
-    text = " ".join(order_describe(parse_order(sentence).order))
+    text = " ".join(order_describe(cast(ConditionalOrder, parse_order(sentence).order)))
     assert "moment" not in text
     assert "goes through" not in text
     assert "after that candle ends" in text

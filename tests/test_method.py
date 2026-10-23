@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import inspect
+from typing import Any, cast
 
 import pytest
 
@@ -18,6 +19,7 @@ from nlt.costs.slippage import Slippage
 from nlt.engine.backtest import run_backtest
 from nlt.engine.basket import run_basket_backtest
 from nlt.report import method
+from nlt.spec.models import StrategySpec
 
 WINDOW = {"start": dt.date(2023, 1, 1), "end": dt.date(2024, 12, 31)}
 NIFTY = "buy nifty when rsi cracks 30, target 2%, stop loss 1%"
@@ -26,7 +28,10 @@ BASKET = "buy nifty 50 stocks when rsi cracks 30, target 3%, stop loss 1.5%"
 
 
 def _run(text: str, **kw):
-    result = logic.backtest_spec(logic.translate_text(text).spec, **{**WINDOW, **kw})
+    result = logic.backtest_spec(
+        cast(StrategySpec, logic.translate_text(text).spec),
+        **cast("dict[str, Any]", {**WINDOW, **kw}),
+    )
     assert result.error is None, result.error
     return result
 
@@ -96,6 +101,7 @@ def test_futures_weak_spots_carry_the_margin_note() -> None:
     from nlt.translate.rules import parse
 
     spec = parse("buy crude oil futures when rsi cracks 30, target 2%, stop 1%").spec
+    assert spec is not None
     spots, notes = method.weak_spots(
         spec, ["FUTURES ON MARGIN: one lot...", "Other note"], slippage=ZERO_SLIPPAGE
     )
@@ -108,9 +114,11 @@ def test_same_day_share_trades_are_said_to_be_charged_as_delivery() -> None:
     from nlt.translate.rules import parse
 
     intraday = parse("buy reliance when rsi cracks 30 on 15 minute candles, stop 1%").spec
+    assert intraday is not None
     spots, _ = method.weak_spots(intraday, [], slippage=ZERO_SLIPPAGE)
     assert any("charged as delivery" in s for s in spots)
     held = parse("buy reliance when rsi cracks 30 on 15 minute candles, stop 1%, hold overnight")
+    assert held.spec is not None
     spots, _ = method.weak_spots(held.spec, [], slippage=ZERO_SLIPPAGE)
     assert not any("charged as delivery" in s for s in spots)
 
@@ -124,6 +132,7 @@ def test_the_loader_dates_its_survivor_note_from_the_test_not_the_warm_up() -> N
     from nlt.engine.loader import load_for_spec
 
     spec = logic.translate_text(BASKET).spec
+    assert spec is not None
     _, notes = load_for_spec(
         spec, start=dt.date(2022, 6, 1), end=dt.date(2022, 6, 10), tested_from=dt.date(2023, 1, 1)
     )

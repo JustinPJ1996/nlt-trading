@@ -17,7 +17,7 @@ import datetime as dt
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -57,7 +57,7 @@ class Store:
         return conn
 
     @contextmanager
-    def tx(self) -> Iterator[sqlite3.Connection]:
+    def tx(self) -> Generator[sqlite3.Connection]:
         conn = self._connect()
         try:
             conn.execute("BEGIN")
@@ -113,7 +113,7 @@ class Store:
                     now(),
                 ),
             )
-            strategy_id = int(cur.lastrowid)
+            strategy_id = int(cur.lastrowid)  # ty: ignore[invalid-argument-type]
             self._audit(
                 conn,
                 "strategy_created",
@@ -211,7 +211,7 @@ class Store:
                 "INSERT INTO run (strategy_id, mode, started_at, params_json) VALUES (?, ?, ?, ?)",
                 (strategy_id, mode, now(), json.dumps(params or {})),
             )
-            run_id = int(cur.lastrowid)
+            run_id = int(cur.lastrowid)  # ty: ignore[invalid-argument-type]
             if alert_only:
                 # Same transaction as the run itself: the every-minute paper job
                 # must never see this run before it is marked alert-only, or it
@@ -665,7 +665,7 @@ class Store:
                     (order_id, slippage["kind"], slippage["value"]),
                 )
             self._audit(conn, "one_off_order_saved", None, None, {"order_id": order_id})
-            return order_id
+            return order_id  # ty: ignore[invalid-return-type]
 
     def one_off_orders(self) -> list[dict]:
         """Every saved order, each with `slippage_kind`/`slippage_value` -- both

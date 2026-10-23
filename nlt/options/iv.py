@@ -204,7 +204,7 @@ def implied_vol(
 
 def _years_to_expiry(at: pd.Timestamp, expiry: dt.date) -> float:
     close = pd.Timestamp(dt.datetime.combine(expiry, EXPIRY_CLOSE), tz=IST)
-    return (close - at) / _YEAR
+    return (close - at) / _YEAR  # ty: ignore[unsupported-operator]
 
 
 def _last_traded(bars: pd.DataFrame, cutoff: pd.Timestamp) -> tuple[pd.Timestamp, float] | None:
@@ -316,7 +316,11 @@ def _day_iv(
         spot = float(index_minutes["close"].asof(stamp))
         price_time = stamp + pd.Timedelta(minutes=1)  # a 1m candle's close
         iv = implied_vol(
-            price, spot, strike, _years_to_expiry(price_time, expires) * 365.0, option_type
+            price,
+            spot,
+            strike,
+            _years_to_expiry(price_time, expires) * 365.0,  # ty: ignore[invalid-argument-type]
+            option_type,
         )
         row.update(
             {
@@ -402,19 +406,19 @@ def daily_atm_iv(
     if use_cache and isinstance(source, ParquetSource):
         cached = _read_cache(underlying)
         if cached is not None:
-            days = cached.index.date
+            days = cached.index.date  # ty: ignore[unresolved-attribute]
             return cached[(days >= start) & (days <= end)]
 
     # Reaches a few weeks past `end` only to know the trading calendar (for a
     # holiday-shifted expiry); no price after `end` is used.
     minutes = source.underlying_bars(underlying, "1m", start, end + dt.timedelta(days=45))
-    sessions = sorted(set(minutes.index.date))
-    minutes = minutes[minutes.index.date <= end]
+    sessions = sorted(set(minutes.index.date))  # ty: ignore[unresolved-attribute]
+    minutes = minutes[minutes.index.date <= end]  # ty: ignore[unresolved-attribute]
     rows: list[dict] = []
     stamps: list[pd.Timestamp] = []
     for day, day_minutes in minutes.groupby(minutes.index.date):
         rows.append(_day_iv(underlying, day, day_minutes, source, sessions))
-        stamps.append(pd.Timestamp(day, tz=IST))
+        stamps.append(pd.Timestamp(day, tz=IST))  # ty: ignore[invalid-argument-type]
     frame = pd.DataFrame(rows, columns=IV_COLUMNS, index=pd.DatetimeIndex(stamps, name="date"))
     frame["iv"] = frame["iv"].astype(float)
     return frame
@@ -449,7 +453,7 @@ def iv_percentile(daily_iv: pd.Series, lookback_days: int) -> pd.Series:
     # recent ranking, at most STALE_SESSIONS sessions back, carries on (a real
     # past value, never an invented one). Then known at that close, so usable
     # from the next session's open: moved on one session.
-    return known_at_close.ffill(limit=STALE_SESSIONS - 1).shift(1)
+    return known_at_close.ffill(limit=STALE_SESSIONS - 1).shift(1)  # ty: ignore[invalid-return-type]
 
 
 # How many sessions old the IV percentile a day uses may be, when the days
@@ -487,7 +491,7 @@ def iv_feature(
     series = daily_iv["iv"] if isinstance(daily_iv, pd.DataFrame) else daily_iv
     by_day = iv_percentile(series, lookback_days)
     lookup = pd.Series(by_day.to_numpy(), index=[d.date() for d in by_day.index])
-    days = pd.Index(index_bars.index.date)
+    days = pd.Index(index_bars.index.date)  # ty: ignore[unresolved-attribute]
     out = pd.Series(
         lookup.reindex(days).to_numpy(dtype=float),
         index=index_bars.index,
@@ -496,6 +500,6 @@ def iv_feature(
     # The candle days whose percentile was carried over from an older session
     # (the day before had no IV) -- for the report to count, never hidden.
     stale = iv_stale_days(series, lookback_days)
-    stale_dates = {d.date() for d, flag in stale.items() if flag}
+    stale_dates = {d.date() for d, flag in stale.items() if flag}  # ty: ignore[unresolved-attribute]
     out.attrs["stale_days"] = sorted(stale_dates & set(days))
     return out

@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,7 +23,7 @@ SENTENCE = (
     "Go long on TCS the moment its 9-day EMA climbs over its 50-day EMA, bank 4% profit, SL 2%"
 )
 
-GOOD = {
+GOOD: dict[str, Any] = {
     "kind": "strategy",
     "symbol": "TCS",
     "direction": "long",
@@ -117,12 +118,15 @@ def test_defaults_come_from_the_rules_not_the_model() -> None:
     """Risk limits and sizing must be identical whichever reader built the recipe."""
     spec = llm.translate(SENTENCE, transport=Scripted(GOOD)).spec
     rules_spec = parse("Buy TCS when RSI crosses below 30, target 4%, stop loss 2%").spec
+    assert spec is not None
+    assert rules_spec is not None
     assert spec.risk == rules_spec.risk
     assert spec.sizing == rules_spec.sizing
 
 
 def test_the_readback_is_still_generated_mechanically() -> None:
     spec = llm.translate(SENTENCE, transport=Scripted(GOOD)).spec
+    assert spec is not None
     text = describe(spec)
     assert "TCS" in text
     assert "Stop loss at -2%" in text
@@ -134,6 +138,7 @@ def test_naming_the_only_output_reads_the_same_as_the_rules() -> None:
     draft["entry"]["left"]["output"] = "ema"
     spec = llm.translate(SENTENCE, transport=Scripted(draft)).spec
     assert spec == llm.translate(SENTENCE, transport=Scripted(GOOD)).spec
+    assert spec is not None
     assert "ema ema" not in describe(spec).lower()
 
 
@@ -141,7 +146,7 @@ def test_a_target_stated_as_a_gain_is_accepted() -> None:
     sentence = SENTENCE.replace("bank 4% profit", "cover at 4% gain")
     draft = copy.deepcopy(GOOD)
     draft["evidence"][3] = {"field": "exit.target", "quote": "cover at 4% gain"}
-    spec = llm.parse_llm(sentence, transport=Scripted(draft)).spec
+    spec = llm.parse_llm(sentence, transport=Scripted(draft)).spec  # ty: ignore[unresolved-attribute]  # parse_llm(...) is Optional; a None fails here
     assert spec is not None
     assert spec.exit.target_pct == 4
 
@@ -223,6 +228,7 @@ def test_futures_are_refused_without_asking_the_model() -> None:
         "Buy TCS futures when its 9-day EMA climbs over 50, SL 2%", transport=fake
     )
     assert fake.calls == []
+    assert result is not None
     assert result.spec is None
     assert "futures" in result.questions[0].text
 
@@ -271,6 +277,7 @@ def test_a_quote_the_user_never_wrote_discards_the_whole_reply() -> None:
 def test_a_dropped_clause_comes_back_as_a_question() -> None:
     sentence = SENTENCE + " and only if P/E is under 18"
     result = llm.parse_llm(sentence, transport=Scripted(GOOD))
+    assert result is not None
     assert result.spec is None
     assert "unparsed" in _fields(result)
     assert "18" in result.questions[0].text
@@ -293,10 +300,12 @@ def test_a_model_that_leaves_the_stop_out_gets_the_stop_question() -> None:
     sentence = "Go long on TCS the moment its 9-day EMA climbs over its 50-day EMA, bank 4% profit"
     draft = _variant(exit={"target_pct": 4}, evidence=GOOD["evidence"][:-1])
     result = llm.parse_llm(sentence, transport=Scripted(draft))
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"exit.stop_pct"}
 
     answered = llm.parse_llm(sentence, answers={"exit.stop_pct": "1.5"}, transport=Scripted(draft))
+    assert answered is not None
     assert answered.spec is not None
     assert answered.spec.exit.stop_pct == 1.5
 
@@ -382,6 +391,7 @@ def test_the_model_cannot_overrule_the_rules_on_the_instrument() -> None:
     bad = copy.deepcopy(GOOD)
     bad["evidence"][1] = {"field": "instrument", "quote": "NIFTY"}
     result = llm.parse_llm(sentence, transport=Scripted(bad))  # still says TCS
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"instrument.symbol"}
 
@@ -397,6 +407,7 @@ def test_the_model_cannot_invent_an_instrument() -> None:
         ]
     )
     result = llm.parse_llm(sentence, transport=Scripted(draft))
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"instrument.symbol"}
 
@@ -413,6 +424,7 @@ def test_the_model_cannot_offer_no_instrument_at_all() -> None:
         ],
     )
     result = llm.parse_llm(sentence, transport=Scripted(draft))
+    assert result is not None
     assert result.spec is None
     assert result.questions[0].text == "Which instrument should this strategy trade?"
 
@@ -430,12 +442,14 @@ def test_the_model_cannot_invent_an_index_or_basket(invented) -> None:
         ],
     )
     result = llm.parse_llm(sentence, transport=Scripted(draft))
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"instrument.symbol"}
 
 
 def test_the_model_cannot_overrule_the_rules_on_direction() -> None:
     result = llm.parse_llm(SENTENCE, transport=Scripted(_variant(direction="short")))
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"direction"}
 
@@ -459,6 +473,7 @@ def test_vwap_on_daily_bars_is_refused_on_the_ai_path_too() -> None:
         ],
     )
     result = llm.parse_llm(sentence, transport=Scripted(draft))
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"instrument.timeframe"}
 
@@ -477,6 +492,7 @@ def test_a_refusal_uses_our_words_not_the_models() -> None:
 
     del reply["reason"]
     result = llm.parse_llm(SENTENCE + " and P/E is under 18", transport=Scripted(reply))
+    assert result is not None
     assert result.spec is None
     assert result.questions[0].text.startswith(llm._REFUSALS["fundamental"][0])
     assert '"P/E is under 18"' in result.questions[0].text
@@ -485,6 +501,7 @@ def test_a_refusal_uses_our_words_not_the_models() -> None:
 def test_a_refusal_never_echoes_words_the_user_did_not_type() -> None:
     reply = {"kind": "refuse", "refuse_category": "event", "unsupported_quote": "buy crypto now"}
     result = llm.parse_llm(SENTENCE, transport=Scripted(reply))
+    assert result is not None
     assert "crypto" not in result.questions[0].text
 
 
@@ -539,9 +556,11 @@ def test_every_ai_recipe_among_the_70_states_a_stop_the_user_gave() -> None:
 def test_ai_path_hold_overnight_on_hourly_bars() -> None:
     text = SENTENCE_IN_CANDLES + ", on hourly bars, hold overnight. Backtest the last 2 years."
     result = llm.parse_llm(text, transport=Scripted(GOOD_IN_CANDLES))
+    assert result is not None
     assert result.spec is not None, result.questions
     assert result.spec.instrument.timeframe == "1h"
     assert result.spec.schedule.intraday is False
+    assert result.period is not None
     assert (result.period.last, result.period.unit) == (2, "years")
 
 
@@ -552,6 +571,7 @@ def test_ai_path_hold_overnight_and_a_square_off_is_a_question() -> None:
         evidence=[*GOOD["evidence"], {"field": "square_off", "quote": "square off at 15:15"}],
     )
     result = llm.parse_llm(text, transport=Scripted(reply))
+    assert result is not None
     assert result.spec is None
     assert _fields(result) == {"schedule.intraday"}
 
@@ -559,6 +579,7 @@ def test_ai_path_hold_overnight_and_a_square_off_is_a_question() -> None:
 def test_ai_path_stop_question_has_buttons() -> None:
     reply = _variant(exit={"target_pct": 4}, evidence=GOOD["evidence"][:4])
     result = llm.parse_llm(SENTENCE.replace(", SL 2%", ""), transport=Scripted(reply))
+    assert result is not None
     assert result.questions[0].field == "exit.stop_pct"
     assert [c.value for c in result.questions[0].choices] == ["0.5", "1", "2"]
 
@@ -574,6 +595,7 @@ def test_ai_path_overnight_question_takes_a_button(pick, intraday) -> None:
         ],
     )
     result = llm.parse_llm(text, answers={"schedule.intraday": pick}, transport=Scripted(reply))
+    assert result is not None
     assert result.spec is not None, result.questions
     assert result.spec.schedule.intraday is intraday
 
@@ -582,12 +604,14 @@ def test_ai_path_a_day_length_average_on_hourly_bars_is_asked() -> None:
     """The model reads "9-day EMA" as length 9; on hourly bars that is nine
     hours, not nine days -- asked, as on the rules path."""
     result = llm.parse_llm(SENTENCE + ", on hourly bars, hold overnight", transport=Scripted(GOOD))
+    assert result is not None
     assert result.spec is None
     assert "is not the same as" in result.questions[0].text
 
 
 def test_ai_path_a_day_length_average_on_daily_bars_reads() -> None:
     result = llm.parse_llm(SENTENCE, transport=Scripted(GOOD))
+    assert result is not None
     assert result.spec is not None, result.questions
 
 
@@ -621,12 +645,14 @@ _TIMED = {
 def test_ai_path_an_entry_time_reads_on_minute_candles() -> None:
     text = "Go long on TCS at 09:30 if RSI is above 60 on 5 minute candles, SL 2%"
     result = llm.parse_llm(text, transport=Scripted(_TIMED))
+    assert result is not None
     assert result.spec is not None, result.questions
 
 
 def test_ai_path_an_entry_time_on_daily_candles_is_asked() -> None:
     text = "Go long on TCS at 09:30 if RSI is above 60, SL 2%"
     result = llm.parse_llm(text, transport=Scripted(_TIMED))
+    assert result is not None
     assert result.spec is None and "time of day needs minute" in result.questions[0].text
 
 
@@ -635,4 +661,5 @@ def test_ai_path_an_entry_time_the_user_never_said_is_refused() -> None:
     reply["entry"]["conditions"][0]["time"] = "10:15"
     text = "Go long on TCS at 09:30 if RSI is above 60 on 5 minute candles, SL 2%"
     result = llm.parse_llm(text, transport=Scripted(reply))
+    assert result is not None
     assert result.spec is None and "couldn't match every number" in result.questions[0].text

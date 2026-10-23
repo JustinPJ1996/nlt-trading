@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import streamlit as st
@@ -45,7 +46,9 @@ LOGIN_ID_FILE = Path.home() / ".nlt-dashboard-login-id"
 _STATE_KEY = "_auth_ok"
 
 
-def configured_password(env: dict[str, str] | None = None, path: Path | None = None) -> str | None:
+def configured_password(
+    env: Mapping[str, str] | None = None, path: Path | None = None
+) -> str | None:
     """The expected password, or None if none is configured.
 
     The environment wins over the file so a one-off run can override without
@@ -70,7 +73,9 @@ def configured_password(env: dict[str, str] | None = None, path: Path | None = N
     return raw or None
 
 
-def configured_login_id(env: dict[str, str] | None = None, path: Path | None = None) -> str | None:
+def configured_login_id(
+    env: Mapping[str, str] | None = None, path: Path | None = None
+) -> str | None:
     """The expected login ID, or None if none is configured. Same rules as the password."""
     env = os.environ if env is None else env
     raw = (env.get(LOGIN_ID_ENV_VAR) or "").strip()

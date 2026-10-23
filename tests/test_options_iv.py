@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -57,6 +58,7 @@ def test_price_to_iv_to_price_round_trips(option_type, spot, strike, days, vol):
     price = bs_price(spot, strike, days / 365, vol, option_type)
     solved = implied_vol(price, spot, strike, days, option_type)
     assert solved == pytest.approx(vol, abs=1e-5)
+    assert solved is not None
     assert bs_price(spot, strike, days / 365, solved, option_type) == pytest.approx(price, abs=1e-4)
 
 
@@ -154,7 +156,7 @@ def test_a_gap_longer_than_five_sessions_still_blanks():
 
 
 def _ts(day: dt.date, hour: int, minute: int) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, dt.time(hour, minute)), tz=IST)
+    return cast(pd.Timestamp, pd.Timestamp(dt.datetime.combine(day, dt.time(hour, minute)), tz=IST))
 
 
 def _row(timeframe, symbol, kind, expiry, strike, stamp, close, volume) -> dict:
@@ -193,7 +195,7 @@ class Chain:
             self.rows.append(_row("1m", "IDX", "EQ", day, 0.0, _ts(day, h, m), close, 0))
         return self
 
-    def list(self, day: dt.date, expiry: dt.date, strikes: list[float]) -> Chain:
+    def list(self, day: dt.date, expiry: dt.date, strikes: list[float]) -> Chain:  # ty: ignore[invalid-type-form]  # method named list shadows the builtin in class scope
         for strike in strikes:
             for kind in ("CE", "PE"):
                 symbol = _symbol(expiry, strike, kind)
@@ -461,6 +463,7 @@ def test_the_feature_gives_every_candle_of_a_day_that_days_percentile():
     assert out.name == iv_percentile_column(4)
     assert out.index.equals(bars.index)
     for stamp, value in out.items():
+        assert isinstance(stamp, pd.Timestamp)
         day = stamp.normalize()
         if day in expected.index:
             want = expected.loc[day]
@@ -636,6 +639,8 @@ def test_the_readback_says_banknifty_iv_is_from_its_monthly_options():
         "percentile is above 70. Square off at 15:15."
     )
     bank = parse(text.format("BANKNIFTY")).spec
+    assert bank is not None
     nifty = parse(text.format("NIFTY")).spec
+    assert nifty is not None
     assert "at-the-money monthly options at the previous day's close" in describe(bank)
     assert "at-the-money options at the previous day's close" in describe(nifty)
