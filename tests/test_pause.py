@@ -14,6 +14,7 @@ No test here touches Kite or the network -- same discipline as `test_paper.py`.
 from __future__ import annotations
 
 import sqlite3
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -75,8 +76,11 @@ def test_daily_bar_timing_pausing_0900_to_1600_blocks_that_days_signal():
     """A daily bar is stamped at 00:00 but its signal is only known at the
     session close (15:30 for NSE). Pausing 09:00-16:00 spans that close, so
     the day's signal must be blocked."""
-    day = pd.Timestamp("2024-05-02", tz=IST)
-    window = [(day + pd.Timedelta(hours=9), day + pd.Timedelta(hours=16))]
+    day = cast(pd.Timestamp, pd.Timestamp("2024-05-02", tz=IST))
+    window = cast(
+        list[tuple[pd.Timestamp, pd.Timestamp]],
+        [(day + pd.Timedelta(hours=9), day + pd.Timedelta(hours=16))],
+    )
     shifted = runner.blocked_windows_for_engine(window, "1d", NSE_EQUITY)
     assert _in_blocked_window(day, shifted)
 
@@ -85,8 +89,11 @@ def test_daily_bar_timing_pausing_1600_to_2300_does_not_block_that_days_signal()
     """The same day's close (15:30) is BEFORE this window opens, so the
     signal was already known before the pause started and must not be
     blocked."""
-    day = pd.Timestamp("2024-05-02", tz=IST)
-    window = [(day + pd.Timedelta(hours=16), day + pd.Timedelta(hours=23))]
+    day = cast(pd.Timestamp, pd.Timestamp("2024-05-02", tz=IST))
+    window = cast(
+        list[tuple[pd.Timestamp, pd.Timestamp]],
+        [(day + pd.Timedelta(hours=16), day + pd.Timedelta(hours=23))],
+    )
     shifted = runner.blocked_windows_for_engine(window, "1d", NSE_EQUITY)
     assert not _in_blocked_window(day, shifted)
 
@@ -279,6 +286,7 @@ def test_stop_summary_states_the_pause_time_and_skipped_count(tmp_path_factory):
 
     logic.stop_paper(store, run["id"])
     finished = store.get_run(run["id"])
+    assert finished is not None
     import json
 
     metrics = json.loads(finished["metrics_json"])

@@ -81,6 +81,7 @@ def test_no_trade_is_entered_before_the_range_is_known() -> None:
         "15 minutes, target 1%, stop 0.5%",
         answers={"schedule.daily_limit": "every"},
     ).spec
+    assert spec is not None
     result = run_backtest(spec, bars, capital=2_500_000, drop_partial_last_bar=False)
     assert result.trades
     # The earliest possible signal is the 09:30 candle, filled at the next open.
@@ -92,7 +93,7 @@ def test_no_trade_is_entered_before_the_range_is_known() -> None:
 
 def test_a_candle_sees_only_the_previous_days_close_and_average() -> None:
     bars = _session_bars(days=6, minutes=15)
-    daily_closes = bars.close.groupby(bars.index.date).last()
+    daily_closes = bars.close.groupby(bars.index.date).last()  # ty: ignore[unresolved-attribute]  # pandas stub lacks Index.date
     avg = levels.daily_average(bars.close, length=3)
     friday = bars.loc["2026-03-06"].index[0]
     assert avg.loc[friday, "close"] == pytest.approx(daily_closes.iloc[3])  # Thursday's
@@ -112,6 +113,7 @@ def test_warm_up_for_a_daily_average_counts_days_not_candles() -> None:
     spec = rules.parse(
         "buy axisbank on 15-minute candles when the daily close is above the 50-day sma, stop 1%"
     ).spec
+    assert spec is not None
     assert warmup.longest_lookback(spec) == 50 * 25  # 50 sessions of 25 candles
 
 
