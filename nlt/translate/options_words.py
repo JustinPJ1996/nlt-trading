@@ -31,6 +31,7 @@ import datetime as dt
 import math
 import re
 from dataclasses import dataclass, field
+from typing import Literal, cast
 
 # NSE/BSE underlyings this platform can test as options. A stock option is not
 # supported yet -- "RELIANCE call" is refused by name rather than silently
@@ -334,7 +335,8 @@ def _strike_from_phrase(phrase: str, option_type: str) -> dict:
                 )
             )
         return {"strike_offset": -n if itm else n}
-    m = re.match(r"(?P<n>\d+)\s*points?\s*(?P<way>\w+)", phrase)
+    # Every phrase reaching here was matched by `_STRIKE_P`, whose points form this matches.
+    m = cast(re.Match[str], re.match(r"(?P<n>\d+)\s*points?\s*(?P<way>\w+)", phrase))
     n = int(m.group("n"))
     way = m.group("way")
     if way == "below":
@@ -546,7 +548,7 @@ def _read_chain(text: str) -> tuple[list[dict], list[tuple[int, int]]] | None:
             new, end = _legs_from_clause(m, text)
             legs.extend(new)
         spans.append((m.start(), end))
-        nxt = _CHAIN_GAP.match(text, end).end()
+        nxt = cast(re.Match[str], _CHAIN_GAP.match(text, end)).end()  # can match empty
         m = _WINGS_CLAUSE.match(text, nxt) or _LEG_CLAUSE.match(text, nxt)
         if m is not None:
             spans.append((end, nxt))  # the "and" joining two clauses
@@ -687,7 +689,11 @@ def _read_legs(
         try:
             built.append(
                 OptionLeg(
-                    expiry=per_leg[k] if per_leg is not None else expiry,
+                    # Every expiry here is one of the three names (else `OptionLeg` raises).
+                    expiry=cast(
+                        Literal["nearest_weekly", "next_weekly", "monthly"],
+                        per_leg[k] if per_leg is not None else expiry,
+                    ),
                     lots=lots[k],
                     **leg,
                 )
@@ -741,8 +747,10 @@ def _ratio(counts: list[int | None]) -> tuple[list[int], int | None]:
                 "An option bought or sold zero times would be dropped, testing a different trade.",
             )
         )
-    g = math.gcd(*counts)
-    return [c // g for c in counts], g
+    # No count is None here: that case raised above.
+    ints = cast(list[int], counts)
+    g = math.gcd(*ints)
+    return [c // g for c in ints], g
 
 
 def _check_named_shapes(text: str, legs: list[dict], per_leg, lots: list[int]) -> str:

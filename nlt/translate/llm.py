@@ -46,7 +46,7 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import Field, ValidationError
 
@@ -720,6 +720,8 @@ def parse_llm(
     _, rules_kwargs, instrument_question = rules._extract_instrument(lowered, answers)
     if instrument_question is not None:
         return TranslationResult(spec=None, questions=[instrument_question], source="rules")
+    # `_extract_instrument` gives no kwargs exactly when it gives a question.
+    rules_kwargs = cast(dict, rules_kwargs)
     # The rules refuse futures on anything they have no contract for; this is
     # the backstop if a futures word ever got past them without a contract.
     if rules_kwargs.get("trade_as") != "future" and re.search(r"\bfutures?\b|\bfut\b", lowered):
@@ -873,7 +875,11 @@ def parse_llm(
                 "exit.rule",
                 notes=notes,
             )
-        draft = _without_level_words(draft, lowered, level_span)
+        draft = _without_level_words(
+            draft,
+            lowered,
+            cast(tuple[int, int], level_span),  # set with level_stop
+        )
         level_ind = rules._Indicators()
         entry_dicts = [
             {"id": i.id, "type": i.type, "params": dict(i.params)} for i in draft.indicators
@@ -978,7 +984,7 @@ def parse_llm(
         if not stop_pct:
             return _stop_question(notes)
 
-    instrument_kwargs = {
+    instrument_kwargs: dict[str, Any] = {
         "symbol": symbol,
         "trade_as": rules_kwargs.get("trade_as") or ("index" if symbol in INDICES else "stock"),
     }
@@ -1032,7 +1038,7 @@ def parse_llm(
             instrument=Instrument(**instrument_kwargs),
             indicators=draft.indicators,
             direction=draft.direction,
-            entry=entry,
+            entry=cast(Condition, entry),  # `draft.entry` was checked non-None above
             exit=ExitRules(**exit_kwargs),
             sizing=sizing or rules._default_sizing(instrument_kwargs),
             risk=rules._default_risk(instrument_kwargs),

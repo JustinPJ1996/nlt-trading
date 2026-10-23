@@ -45,6 +45,7 @@ import functools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal, TypeGuard, cast
 
 from pydantic import ValidationError
 
@@ -68,6 +69,9 @@ from nlt.spec.models import (
     Sizing,
     StrategySpec,
 )
+
+_CompareOp = Literal["lt", "lte", "gt", "gte", "eq", "crosses_above", "crosses_below"]
+_StateOp = Literal["lt", "lte", "gt", "gte"]
 
 # --------------------------------------------------------------------- results
 
@@ -489,7 +493,7 @@ def _extract_instrument(
                 return text, None, options_words.unsupported_underlying_question(stock[0])
 
         if opt.question is not None:
-            return text, None, opt.question
+            return text, None, cast(Question, opt.question)  # always a rules.Question
 
         kwargs.update(opt.kwargs)
         if symbol is not None:
@@ -568,7 +572,7 @@ _DIRECTION_LEAD = re.compile(
 )
 
 
-def _extract_direction(text: str) -> tuple[str, str, bool]:
+def _extract_direction(text: str) -> tuple[str, Literal["long", "short"], bool]:
     """Returns (text, direction, explicit). `explicit` distinguishes "no verb
     found, defaulted to long" from "the user actually typed 'buy'" -- a named
     pattern like 'death cross' is allowed to set direction only in the former
@@ -628,7 +632,7 @@ def _rsi(ind: _Indicators, length: int | None) -> Ref:
     return Ref(name=ind_id, output=None)
 
 
-def _build_rsi_cross(op: str):
+def _build_rsi_cross(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         length = int(m.group("len")) if m.groupdict().get("len") else None
         ref = _rsi(ind, length)
@@ -652,7 +656,7 @@ def _said_in_days(m: re.Match, length_group: str, type_group: str) -> bool:
     return "day" in m.string[m.end(length_group) : end]
 
 
-def _build_ma_cross(op: str):
+def _build_ma_cross(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         t1 = m.group("t1") or "ma"
         t2 = m.group("t2") or t1
@@ -663,7 +667,7 @@ def _build_ma_cross(op: str):
     return build
 
 
-def _build_price_vs_ma(op: str):
+def _build_price_vs_ma(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         ref = _ma_ref(ind, m.group("t"), int(m.group("len")), in_days=_said_in_days(m, "len", "t"))
         return Compare(op=op, left=Ref(name="close"), right=ref)
@@ -689,7 +693,7 @@ def _macd_ref(ind: _Indicators, output: str) -> Ref:
     return Ref(name="macd", output=output)
 
 
-def _build_macd_cross_signal(op: str):
+def _build_macd_cross_signal(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         return Compare(op=op, left=_macd_ref(ind, "macd"), right=_macd_ref(ind, "signal"))
 
@@ -786,7 +790,7 @@ def _osc_builder(kind: str, ind_type: str, output: str, default_len: int):
         ind.declare(ind_id, ind_type, {"length": n})
         return Ref(name=ind_id, output=output)
 
-    def build(op: str):
+    def build(op: _CompareOp):
         def inner(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
             length = int(m.group("len")) if m.groupdict().get("len") else None
             value = float(m.group("level"))
@@ -808,7 +812,7 @@ def _prior_ref(ind: _Indicators, period: str, output: str) -> Ref:
     return Ref(name=ind_id, output=output)
 
 
-def _build_prior_level(op: str, output: str, period: str):
+def _build_prior_level(op: _CompareOp, output: str, period: str):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         return Compare(op=op, left=Ref(name="close"), right=_prior_ref(ind, period, output))
 
@@ -876,7 +880,7 @@ def _build_pattern_needs_direction(base: str, default_note: str):
     return build
 
 
-def _build_pct_change(op: str, sign: float):
+def _build_pct_change(op: _StateOp, sign: float):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         lookback = int(m.group("bars")) if m.groupdict().get("bars") else 1
         value = sign * float(m.group("pct"))
@@ -1002,7 +1006,7 @@ def _operand_ref(token: str, ind: _Indicators) -> Ref:
     raise AssertionError(f"unhandled operand token {token!r}")  # pragma: no cover
 
 
-def _build_generic_compare(op: str):
+def _build_generic_compare(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         left = _operand_ref(m.group("left"), ind)
         right = _operand_ref(m.group("right"), ind)
@@ -1016,21 +1020,21 @@ def _stoch_kd_ref(ind: _Indicators, output: str) -> Ref:
     return Ref(name="stoch14", output=output)
 
 
-def _build_stoch_k_cross_d(op: str):
+def _build_stoch_k_cross_d(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         return Compare(op=op, left=_stoch_kd_ref(ind, "k"), right=_stoch_kd_ref(ind, "d"))
 
     return build
 
 
-def _build_stoch_k_level(op: str):
+def _build_stoch_k_level(op: _CompareOp):
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
         return Compare(op=op, left=_stoch_kd_ref(ind, "k"), right=Const(value=float(m["level"])))
 
     return build
 
 
-def _build_extreme_level(op: str, output: str):
+def _build_extreme_level(op: _CompareOp, output: str):
     """ "close above the highest high of the last 20 days" -- a Donchian channel edge."""
 
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
@@ -1040,7 +1044,7 @@ def _build_extreme_level(op: str, output: str):
     return build
 
 
-def _build_opening_range(op: str, output: str):
+def _build_opening_range(op: _CompareOp, output: str):
     """ "breaks above the high of the first 15 minutes" -- only once those minutes end."""
 
     def build(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
@@ -1052,7 +1056,7 @@ def _build_opening_range(op: str, output: str):
     return build
 
 
-def _build_daily_close_vs_average(op: str):
+def _build_daily_close_vs_average(op: _CompareOp):
     """ "the daily close is above the 50-day SMA" on an intraday chart.
 
     Read as the previous day's close against its average, because today's
@@ -1192,7 +1196,7 @@ def _build_gap(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
     )
 
 
-def _build_vs_day_open(m: re.Match, ind: _Indicators, notes: list[str]) -> Condition:
+def _build_vs_day_open(m: re.Match | _DirMatch, ind: _Indicators, notes: list[str]) -> Condition:
     op = "lt" if m.group("dir") in ("below", "under") else "gt"
     return Compare(op=op, left=Ref(name="close"), right=_session_open_ref(ind, "open"))
 
@@ -2334,13 +2338,13 @@ def _range_ids(indicators) -> set[str]:
     return out
 
 
-_STATE_TO_CROSS = {
+_STATE_TO_CROSS: dict[str, _CompareOp] = {
     "gt": "crosses_above",
     "gte": "crosses_above",
     "lt": "crosses_below",
     "lte": "crosses_below",
 }
-_FLIP = {
+_FLIP: dict[str, _CompareOp] = {
     "gt": "lt",
     "gte": "lte",
     "lt": "gt",
@@ -2350,7 +2354,7 @@ _FLIP = {
 }
 
 
-def _range_compare(c, range_ids: set[str]) -> bool:
+def _range_compare(c, range_ids: set[str]) -> TypeGuard[Compare]:
     return isinstance(c, Compare) and any(
         isinstance(side, Ref) and side.name in range_ids for side in (c.left, c.right)
     )
@@ -2370,7 +2374,8 @@ def _as_crossing(cond: Condition, range_ids: set[str]) -> Condition:
     left, right, op = cond.left, cond.right, cond.op
     if isinstance(left, Ref) and left.name in range_ids:
         left, right, op = right, left, _FLIP.get(op, op)
-    if not (isinstance(left, Ref) and left.name in PRICE_FIELDS and not right.bars_ago):
+    if not (isinstance(left, Ref) and left.name in PRICE_FIELDS and not cast(Ref, right).bars_ago):
+        # `right` is the range Ref here: `left` is a price field, not a range id.
         return cond
     return Compare(op=_STATE_TO_CROSS.get(op, op), left=left, right=right)
 
@@ -2740,6 +2745,8 @@ def parse(description: str, *, answers: dict[str, str] | None = None) -> Transla
         return TranslationResult(
             spec=None, questions=[instrument_question], notes=notes, source="rules"
         )
+    # `_extract_instrument` gives no kwargs exactly when it gives a question.
+    instrument_kwargs = cast(dict, instrument_kwargs)
     legs_expiry_worked_out = bool(instrument_kwargs.pop("_legs_expiry_worked_out", False))
     if instrument_kwargs.get("legs"):
         # A position of option legs: each leg carries its own side, and the
@@ -3114,11 +3121,11 @@ def _parse_legs(
 
     position = options_words.read_position_exits(text, instrument_kwargs["legs"], answers)
     if position.question is not None:
-        return ask(position.question)
+        return ask(cast(Question, position.question))  # always a rules.Question
     text, legs = position.text, position.legs
     timing = options_words.read_position_timing(text)
     if timing.question is not None:
-        return ask(timing.question)
+        return ask(cast(Question, timing.question))  # always a rules.Question
     text = timing.text
 
     square_off = rest_exits.get("_square_off")
