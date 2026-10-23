@@ -36,7 +36,7 @@ _LISTED_HOLIDAYS = {
 def _traded_days(symbol: str) -> list[dt.date]:
     k = KEY[symbol]
     closed = {dt.date.fromisoformat(d) for d in k["closed_weekdays"]}
-    days = [d for d in pd.bdate_range(k["first"], k["last"]).date if d not in closed]
+    days = [d for d in pd.bdate_range(k["first"], k["last"]).date if d not in closed]  # ty: ignore[unresolved-attribute]  # pandas stub lacks DatetimeIndex.date
     days += [dt.date.fromisoformat(d) for d in k["weekend_sessions"]]
     return sorted(days)
 
@@ -51,7 +51,7 @@ def test_rules_reproduce_every_expiry_kite_listed(symbol):
         expiry = dt.date.fromisoformat(listed)
         days = [
             d
-            for d in pd.bdate_range(
+            for d in pd.bdate_range(  # ty: ignore[unresolved-attribute]  # pandas stub lacks DatetimeIndex.date
                 expiry - dt.timedelta(days=20), expiry + dt.timedelta(days=5)
             ).date
             if d not in _LISTED_HOLIDAYS[F.contract(symbol).exchange]
@@ -103,14 +103,16 @@ def test_an_expiry_on_a_closed_day_moves_back_to_the_last_day_the_market_traded(
     # Crude's December 2026 contract: the rule names Friday 18 Dec. If that day
     # had been a holiday, the expiry is Thursday, never the Monday after.
     days = [
-        d for d in pd.bdate_range("2026-12-01", "2026-12-31").date if d != dt.date(2026, 12, 18)
+        d
+        for d in pd.bdate_range("2026-12-01", "2026-12-31").date  # ty: ignore[unresolved-attribute]  # pandas stub lacks DatetimeIndex.date
+        if d != dt.date(2026, 12, 18)
     ]
     assert dt.date(2026, 12, 17) in F.expiry_dates("CRUDEOIL", days)
 
 
 def test_a_published_expiry_replaces_the_rule_for_its_month():
     # The morning of 25 Jan 2027, the price data cannot know 26 Jan is a holiday.
-    days = list(pd.bdate_range("2027-01-01", "2027-01-25").date)
+    days = list(pd.bdate_range("2027-01-01", "2027-01-25").date)  # ty: ignore[unresolved-attribute]  # pandas stub lacks DatetimeIndex.date
     assert dt.date(2027, 1, 25) not in F.expiry_dates("NATURALGAS", days)
     assert dt.date(2027, 1, 25) in F.expiry_dates("NATURALGAS", days, listed=[dt.date(2027, 1, 25)])
 

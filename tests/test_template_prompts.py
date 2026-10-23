@@ -193,7 +193,7 @@ def test_ai_path_labels_for_a_template() -> None:
 
 @pytest.mark.parametrize(("pick", "limit"), [("once", 1), ("every", None)])
 def test_36_asks_how_often_then_reads_each_answer(pick, limit) -> None:
-    from nlt.spec.models import Compare
+    from nlt.spec.models import Compare, Ref
 
     replies = json.loads(_REPLIES_PATH.read_text())["replies"]
     case = next(c for c in TEMPLATES if c["n"] == 36)
@@ -209,6 +209,7 @@ def test_36_asks_how_often_then_reads_each_answer(pick, limit) -> None:
     assert answered.spec.schedule.max_entries_per_day == limit
     entry = answered.spec.entry
     assert isinstance(entry, Compare) and entry.op == "crosses_above"
+    assert isinstance(entry.left, Ref) and isinstance(entry.right, Ref)
     assert entry.left.name == "close" and entry.right.output == "high"
 
 
@@ -227,6 +228,7 @@ def test_26_reads_the_gap_the_time_and_the_open() -> None:
     kinds = {i.id: i.type for i in spec.indicators}
     gaps = [c for c in parts if isinstance(c, Compare) and isinstance(c.right, Const)]
     (gap,) = gaps
+    assert isinstance(gap.left, Ref) and isinstance(gap.right, Const)
     assert (kinds[gap.left.name], gap.left.output, gap.op, gap.right.value) == (
         "session_open",
         "gap_pct",
@@ -235,6 +237,7 @@ def test_26_reads_the_gap_the_time_and_the_open() -> None:
     )
     opens = [c for c in parts if isinstance(c, Compare) and isinstance(c.right, Ref)]
     (below,) = opens
+    assert isinstance(below.left, Ref) and isinstance(below.right, Ref)
     assert (below.left.name, below.op, kinds[below.right.name], below.right.output) == (
         "close",
         "lt",

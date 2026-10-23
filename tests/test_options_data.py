@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -28,7 +29,7 @@ IST = "Asia/Kolkata"
 
 
 def _ts(day: dt.date, hour: int, minute: int) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, dt.time(hour, minute)), tz=IST)
+    return cast(pd.Timestamp, pd.Timestamp(dt.datetime.combine(day, dt.time(hour, minute)), tz=IST))
 
 
 def _row(
@@ -398,6 +399,7 @@ def test_resample_daily_indexed_at_midnight_ist(source: FrameSource):
     raw = source.contract_bars("IDX", "IDX21500CE", "1m", DAY1, DAY1)
     out = resample_daily(raw)
     assert all(ts.time() == dt.time(0, 0) for ts in out.index)
+    assert isinstance(out.index, pd.DatetimeIndex)
     assert str(out.index.tz) == IST
 
 
@@ -420,7 +422,7 @@ def test_resample_daily_empty_frame_returns_empty():
 
 
 def test_coverage_from_frame_source(source: FrameSource):
-    start, end = source.coverage("IDX", "1d")
+    start, end = cast("tuple[Any, Any]", source.coverage("IDX", "1d"))
     assert start == DAY1
     assert end == DAY2
 
@@ -494,7 +496,8 @@ def test_real_banknifty_15m_bar_opens_at_the_first_real_trade_not_the_stale_forw
     assert not raw.empty
 
     bars_15m = resample_traded(raw, 15)
-    bucket = bars_15m.loc[bars_15m.index.time == dt.time(11, 0)]
+    assert isinstance(bars_15m.index, pd.DatetimeIndex)
+    bucket = bars_15m.loc[bars_15m.index.time == dt.time(11, 0)]  # ty: ignore[unresolved-attribute]  # pandas stub omits DatetimeIndex.time
     assert len(bucket) == 1
     assert bucket["open"].iloc[0] == pytest.approx(7735.60, abs=0.01)
     assert bucket["traded"].iloc[0]
@@ -515,5 +518,5 @@ def test_real_banknifty_listing_has_the_last_weekly_expiry():
 
 @pytest.mark.skipif(not ONE_M_PRESENT, reason="1m data not present in this worktree")
 def test_real_1m_coverage_is_measured_not_assumed():
-    start, end = coverage("NIFTY", "1m")
+    start, end = cast("tuple[Any, Any]", coverage("NIFTY", "1m"))
     assert start is not None and end is not None

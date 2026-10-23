@@ -164,7 +164,7 @@ def test_the_limit_counts_trades_opened_not_signals() -> None:
     """Two allowed a day: both crossings trade, a third would not."""
     spec = _spec("every")
     spec = spec.model_copy(
-        update={"schedule": Schedule(**{**spec.schedule.model_dump(), "max_entries_per_day": 2})}
+        update={"schedule": Schedule(**{**spec.schedule.model_dump(), "max_entries_per_day": 2})}  # ty: ignore[invalid-argument-type]  # stub imprecision: model_dump() values are mixed types
     )
     res = _run(spec, _bars())
     assert len(res.trades) == 2

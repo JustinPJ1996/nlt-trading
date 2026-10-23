@@ -425,7 +425,7 @@ def test_option_type_has_no_value_besides_auto_ce_pe() -> None:
     """The field's own `Literal` is the first line of defence -- nothing but
     "auto", "CE" or "PE" can reach the model at all."""
     with pytest.raises(ValidationError):
-        Instrument(symbol="NIFTY", trade_as="option", option_type="XY")
+        Instrument(symbol="NIFTY", trade_as="option", option_type="XY")  # ty: ignore[invalid-argument-type]  # deliberately invalid: proves it is refused
 
 
 def test_a_tradeable_option_must_be_on_a_supported_underlying() -> None:

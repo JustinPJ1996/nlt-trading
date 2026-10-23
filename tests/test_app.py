@@ -62,7 +62,10 @@ def test_every_example_strategy_takes_trades_at_the_default_capital(example: str
 
     translation = logic.translate_text(example)
     end = dt.date.fromisoformat(NIFTY_FIXTURE_CUTOFF)
+    assert translation.period is not None
     dates = logic.period_dates(translation.period, end)
+    assert dates is not None
+    assert translation.spec is not None
     result = logic.backtest_spec(
         translation.spec,
         start=dt.date.fromisoformat(dates["start"]),
@@ -70,6 +73,7 @@ def test_every_example_strategy_takes_trades_at_the_default_capital(example: str
         translation=translation,
     )
     assert result.error is None, result.error
+    assert result.backtest is not None
     assert len(result.backtest.trades) >= 1, example
 
 
@@ -281,7 +285,7 @@ def _spec_trading(trade_as: str):
     spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
     assert spec is not None
     symbol = "RELIANCE" if trade_as == "stock" else "NIFTY"
-    return spec.model_copy(update={"instrument": Instrument(symbol=symbol, trade_as=trade_as)})
+    return spec.model_copy(update={"instrument": Instrument(symbol=symbol, trade_as=trade_as)})  # ty: ignore[invalid-argument-type]  # trade_as is a plain str here; the helper is also fed other values
 
 
 def test_a_share_strategy_is_not_charged_option_taxes() -> None:
@@ -388,6 +392,7 @@ def test_single_stock_strategy_runs_end_to_end() -> None:
     )
     assert result.error is None, result.error
     assert result.backtest is not None and result.verdict is not None
+    assert result.spec is not None
     assert result.spec.instrument.symbol == "RELIANCE"
 
 
@@ -399,6 +404,7 @@ def test_basket_strategy_runs_end_to_end_and_reports_its_caveats() -> None:
     )
     assert result.error is None, result.error
     assert result.basket is not None, "a universe must take the basket path"
+    assert result.backtest is not None
     assert result.backtest.metrics["total_trades"] > 0
 
     # Moved from the notes into the report's weak spots, where it is still said.
@@ -423,6 +429,8 @@ def test_basket_benchmark_is_the_same_stocks_held_not_the_index() -> None:
     # The equal-weight basket of 100 stocks is nothing like NIFTY's own return
     # over the same window, so a mix-up would be visible as a near-identical number.
     nifty = logic.run_pipeline("buy nifty when rsi cracks 30, target 2%, stop loss 1%")
+    assert result.comparison is not None
+    assert nifty.comparison is not None
     assert abs(result.comparison.benchmark_return_pct - nifty.comparison.benchmark_return_pct) > 1.0
 
 
@@ -445,21 +453,21 @@ def test_the_default_account_is_25_lakh():
 
 def test_names_say_what_the_strategy_is() -> None:
     assert (
-        logic.translate_text("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec.name
+        logic.translate_text("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec.name  # ty: ignore[unresolved-attribute]  # translate_text(...).spec is Optional; a None fails here
         == "Buy NIFTY · RSI"
     )
     assert (
-        logic.translate_text("short banknifty on death cross, target 2%, stop 1%").spec.name
+        logic.translate_text("short banknifty on death cross, target 2%, stop 1%").spec.name  # ty: ignore[unresolved-attribute]  # translate_text(...).spec is Optional; a None fails here
         == "Short BANKNIFTY · SMA"
     )
     assert (
-        logic.translate_text(
+        logic.translate_text(  # ty: ignore[unresolved-attribute]  # translate_text(...).spec is Optional; a None fails here
             "buy tcs when rsi crosses below 30 and close is above 200 ema, stop 1%"
         ).spec.name
         == "Buy TCS · RSI + EMA"
     )
     # Named for its entry: the ATR behind the stop is not what it trades on.
-    name = logic.translate_text("buy tcs when rsi cracks 30, stop loss at 2x atr").spec.name
+    name = logic.translate_text("buy tcs when rsi cracks 30, stop loss at 2x atr").spec.name  # ty: ignore[unresolved-attribute]  # translate_text(...).spec is Optional; a None fails here
     assert name == "Buy TCS · RSI"
 
 

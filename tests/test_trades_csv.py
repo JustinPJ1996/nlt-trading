@@ -29,7 +29,7 @@ from tests.test_legs_engine import (
 def _export(spec, source):
     bt = _run(spec, source, days=(D1,))
     assert bt.trades
-    text = logic.trades_csv(SimpleNamespace(backtest=SimpleNamespace(spec=spec, trades=bt.trades)))
+    text = logic.trades_csv(SimpleNamespace(backtest=SimpleNamespace(spec=spec, trades=bt.trades)))  # ty: ignore[invalid-argument-type]  # duck-typed stand-in for PipelineResult
     return bt, list(csv.DictReader(io.StringIO(text)))
 
 

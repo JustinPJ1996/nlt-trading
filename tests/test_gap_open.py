@@ -16,14 +16,14 @@ from tests.test_conditions_a6 import _session_bars
 def test_the_gap_is_todays_open_against_yesterdays_last_close() -> None:
     bars = _session_bars(days=3, minutes=15)
     out = levels.session_open(bars.open, bars.close)
-    days = sorted(set(bars.index.date))
-    d1_last = bars.close[bars.index.date == days[0]].iloc[-1]
-    d2 = bars[bars.index.date == days[1]]
+    days = sorted(set(bars.index.date))  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
+    d1_last = bars.close[bars.index.date == days[0]].iloc[-1]  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
+    d2 = bars[bars.index.date == days[1]]  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
     assert (out.loc[d2.index, "open"] == d2.open.iloc[0]).all()
     assert out.loc[d2.index, "gap_pct"].iloc[5] == pytest.approx(
         100 * (d2.open.iloc[0] / d1_last - 1)
     )
-    assert out.loc[bars.index.date == days[0], "gap_pct"].isna().all()
+    assert out.loc[bars.index.date == days[0], "gap_pct"].isna().all()  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
 
 
 @pytest.mark.parametrize("cut", [30, 40, 60])

@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -70,11 +71,15 @@ def _intraday_bars(sessions: int = 7, seed: int = 11) -> pd.DataFrame:
     )
 
 
-DAILY_SPEC = parse("buy nifty when rsi crosses below 40, target 3%, stop 2%").spec
+DAILY_SPEC = cast(
+    StrategySpec, parse("buy nifty when rsi crosses below 40, target 3%, stop 2%").spec
+)
+assert DAILY_SPEC is not None
 
 
 def _intraday_spec() -> StrategySpec:
     spec = parse("buy nifty when rsi crosses below 40, target 0.4%, stop 0.3%").spec
+    assert spec is not None
     return spec.model_copy(
         update={"instrument": Instrument(symbol="NIFTY", trade_as="index", timeframe="5m")}
     )
@@ -85,7 +90,9 @@ def _start(store: Store, spec: StrategySpec, started_at: pd.Timestamp) -> dict:
     run_id = store.start_run(
         sid, "paper", {"capital": CAPITAL, "started_at": started_at.isoformat()}
     )
-    return store.get_run(run_id)
+    run = store.get_run(run_id)
+    assert run is not None
+    return run
 
 
 def _replay(store, run, bars, timeframe, *, from_index: int, extra=None):
@@ -371,7 +378,7 @@ def test_the_snapshot_adds_up(daily):
 
 
 def _at(s: str) -> pd.Timestamp:
-    return pd.Timestamp(s, tz=IST)
+    return cast(pd.Timestamp, pd.Timestamp(s, tz=IST))
 
 
 @pytest.mark.parametrize(

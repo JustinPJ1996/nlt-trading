@@ -9,6 +9,7 @@ the bottom, skipped if `data/fno` is absent.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -28,7 +29,7 @@ IST = "Asia/Kolkata"
 
 
 def _ts(day: dt.date, hour: int = 9, minute: int = 15) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, dt.time(hour, minute)), tz=IST)
+    return cast(pd.Timestamp, pd.Timestamp(dt.datetime.combine(day, dt.time(hour, minute)), tz=IST))
 
 
 def _dt(day: dt.date, hour: int = 9, minute: int = 15) -> dt.datetime:
@@ -139,7 +140,7 @@ class TestPickExpiry:
 
 
 EXPIRY = dt.date(2024, 1, 4)
-STRIKES_CE = [21400, 21450, 21500, 21550, 21600]
+STRIKES_CE: list[float] = [21400, 21450, 21500, 21550, 21600]
 
 
 def _listing_df(day: dt.date, strikes: list[float] | None = None) -> pd.DataFrame:
@@ -169,22 +170,26 @@ class TestResolve:
         # Exactly between 21450 and 21500 -> 25 away from each.
         listing = _listing_df(EXPIRY)
         res = resolve(listing, "IDX", _dt(EXPIRY), 21475.0, "CE", 0, "nearest_weekly")
+        assert res.contract is not None
         assert res.contract.strike == 21450.0
         assert "lower strike" in res.why
 
     def test_call_offset_plus_one_is_next_higher_strike(self):
         listing = _listing_df(EXPIRY)
         res = resolve(listing, "IDX", _dt(EXPIRY), 21500.0, "CE", 1, "nearest_weekly")
+        assert res.contract is not None
         assert res.contract.strike == 21550.0
 
     def test_put_offset_plus_one_is_next_lower_strike(self):
         listing = _listing_df(EXPIRY)
         res = resolve(listing, "IDX", _dt(EXPIRY), 21500.0, "PE", 1, "nearest_weekly")
+        assert res.contract is not None
         assert res.contract.strike == 21450.0
 
     def test_call_offset_minus_one_is_next_lower_strike_itm(self):
         listing = _listing_df(EXPIRY)
         res = resolve(listing, "IDX", _dt(EXPIRY), 21500.0, "CE", -1, "nearest_weekly")
+        assert res.contract is not None
         assert res.contract.strike == 21450.0
 
     def test_offset_running_off_the_end_is_refused(self):
@@ -217,6 +222,7 @@ class TestResolve:
     def test_lot_size_is_todays_not_historical(self):
         listing = _listing_df(EXPIRY)
         res = resolve(listing, "BANKNIFTY", _dt(EXPIRY), 21500.0, "CE", 0, "nearest_weekly")
+        assert res.contract is not None
         assert res.contract.lot_size == LOT_SIZES["BANKNIFTY"]
 
     def test_invalid_option_type_raises(self):
@@ -304,11 +310,13 @@ class TestOptionExecution:
     def test_resolve_picks_atm(self, exec_source: FrameSource):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
+        assert res.contract is not None
         assert res.contract.strike == 105.0
 
     def test_price_at_signal_reads_the_candles_own_close_if_traded(self, exec_source: FrameSource):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
+        assert res.contract is not None
         price = ex.price_at_signal(res.contract, _dt(DAY1, 9, 15))
         assert price == 10.0
 
@@ -316,6 +324,7 @@ class TestOptionExecution:
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
         # Asking as of 09:15 must never see the 09:45 close (12.0).
+        assert res.contract is not None
         price = ex.price_at_signal(res.contract, _dt(DAY1, 9, 15))
         assert price != 12.0
         assert price == 10.0
@@ -326,6 +335,7 @@ class TestOptionExecution:
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
         # 09:30 itself is untraded; the question is "as of 09:30", same session.
+        assert res.contract is not None
         price = ex.price_at_signal(res.contract, _dt(DAY1, 9, 30))
         assert price == 10.0  # last traded close (09:15), not the 09:30 repeat
 
@@ -335,13 +345,17 @@ class TestOptionExecution:
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
         # DAY2 09:15 never traded; same-session rule forbids reaching back to DAY1.
+        assert res.contract is not None
         price = ex.price_at_signal(res.contract, _dt(DAY2, 9, 15))
         assert price is None
 
     def test_last_trade_is_strictly_before_ts(self, exec_source: FrameSource):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
-        price, when = ex.last_trade(res.contract, _dt(DAY1, 9, 45))
+        assert res.contract is not None
+        trade = ex.last_trade(res.contract, _dt(DAY1, 9, 45))
+        assert trade is not None
+        price, when = trade
         assert price == 10.0  # the 09:15 trade, not 09:45 itself
         assert when == _dt(DAY1, 9, 15)
 
@@ -349,7 +363,10 @@ class TestOptionExecution:
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
         # DAY2 never traded -- squaring off on DAY2 must look back to DAY1.
-        price, when = ex.last_trade(res.contract, _dt(DAY2, 9, 30))
+        assert res.contract is not None
+        trade = ex.last_trade(res.contract, _dt(DAY2, 9, 30))
+        assert trade is not None
+        price, when = trade
         assert price == 12.0
         assert when == _dt(DAY1, 9, 45)
 
@@ -358,24 +375,30 @@ class TestOptionExecution:
     ):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
-        price, when = ex.expiry_session_close(res.contract)
+        assert res.contract is not None
+        trade = ex.expiry_session_close(res.contract)
+        assert trade is not None
+        price, when = trade
         assert price == 12.0
         assert when == _dt(DAY1, 9, 45)
 
     def test_traded_reflects_the_bar(self, exec_source: FrameSource):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
+        assert res.contract is not None
         assert ex.traded(res.contract, _dt(DAY1, 9, 15)) is True
         assert ex.traded(res.contract, _dt(DAY1, 9, 30)) is False
 
     def test_traded_false_when_no_bar_exists(self, exec_source: FrameSource):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
+        assert res.contract is not None
         assert ex.traded(res.contract, _dt(DAY1, 11, 0)) is False
 
     def test_contract_bars_loaded_once_and_cached(self, exec_source: FrameSource):
         ex = OptionExecution(exec_source, "IDX", "15m", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
+        assert res.contract is not None
         first = ex._contract_bars(res.contract, DAY1)
         second = ex._contract_bars(res.contract, DAY1)
         assert first is second  # identical object: not reloaded
@@ -385,6 +408,7 @@ class TestOptionExecution:
         `resample_daily`, not to the (forbidden) native 1d option file."""
         ex = OptionExecution(exec_source, "IDX", "1d", "CE", 0, "monthly")
         res = ex.resolve(_dt(DAY1), 104.0)
+        assert res.contract is not None
         bars = ex._contract_bars(res.contract, DAY1)
         # DAY1 and DAY2 each collapse to a single midnight-indexed bar.
         assert all(ts.time() == dt.time(0, 0) for ts in bars.index)
@@ -416,7 +440,7 @@ def test_real_banknifty_resolve_matches_hand_checked_strike():
     source = ParquetSource()
     day = dt.date(2024, 11, 13)
     bars = source.underlying_bars("BANKNIFTY", "15m", day, day)
-    close_1015 = float(bars.loc[bars.index.time == dt.time(10, 15), "close"].iloc[0])
+    close_1015 = float(bars.loc[bars.index.time == dt.time(10, 15), "close"].iloc[0])  # ty: ignore[unresolved-attribute]  # pandas stub lacks Index.time
     assert close_1015 == pytest.approx(50958.80, abs=0.01)
 
     ex = OptionExecution(source, "BANKNIFTY", "15m", "CE", 1, "nearest_weekly")

@@ -204,6 +204,7 @@ def test_candles_are_read_in_indian_time_and_never_guessed(token) -> None:
         )
     )
     bars = kite.KiteSource(http).bars("RELIANCE", "5m", dt.date(2026, 9, 1), dt.date(2026, 9, 1))
+    assert isinstance(bars.index, pd.DatetimeIndex)
     assert str(bars.index.tz) == "Asia/Kolkata"
     assert bars.index[0] == pd.Timestamp("2026-09-01 09:15", tz="Asia/Kolkata")
     assert list(bars.columns) == ["open", "high", "low", "close", "volume"]
