@@ -21,7 +21,12 @@ function Stepper({
   const clamp = (n: number) => Math.min(hi, Math.max(lo, Math.round(n)));
   return (
     <span className="stepper">
-      <button type="button" aria-label={`Less: ${label}`} disabled={disabled || value <= lo} onClick={() => onChange(clamp(value - 1))}>
+      <button
+        type="button"
+        aria-label={`Less: ${label}`}
+        disabled={disabled || value <= lo}
+        onClick={() => onChange(clamp(value - 1))}
+      >
         −
       </button>
       <input
@@ -36,7 +41,12 @@ function Stepper({
         }}
         onBlur={() => onChange(clamp(value))}
       />
-      <button type="button" aria-label={`More: ${label}`} disabled={disabled || value >= hi} onClick={() => onChange(clamp(value + 1))}>
+      <button
+        type="button"
+        aria-label={`More: ${label}`}
+        disabled={disabled || value >= hi}
+        onClick={() => onChange(clamp(value + 1))}
+      >
         +
       </button>
     </span>
@@ -63,12 +73,16 @@ export function SettingsPanel({
         <select
           value={settings.algo_type}
           disabled={!settings.can_be_intraday}
-          onChange={(e) => onChange({ algo_type: e.target.value === "intraday" ? "intraday" : "multi_day" })}
+          onChange={(e) =>
+            onChange({ algo_type: e.target.value === "intraday" ? "intraday" : "multi_day" })
+          }
         >
           <option value="intraday">Same-day (closes every day)</option>
           <option value="multi_day">Multi-day (can hold overnight)</option>
         </select>
-        {!settings.can_be_intraday && <span className="hint">Daily candles are always multi-day.</span>}
+        {!settings.can_be_intraday && (
+          <span className="hint">Daily candles are always multi-day.</span>
+        )}
       </label>
 
       <div className="field">
@@ -90,7 +104,8 @@ export function SettingsPanel({
           onChange={(n) => onChange({ entry_cutoff_minutes: n })}
         />
         <span className="hint">
-          Min: {limits.entry_cutoff_minutes[0]} mins, max: {limits.entry_cutoff_minutes[1]} mins before market close
+          Min: {limits.entry_cutoff_minutes[0]} mins, max: {limits.entry_cutoff_minutes[1]} mins
+          before market close
         </span>
       </div>
 
@@ -119,7 +134,8 @@ export function SettingsPanel({
             onChange={(n) => onChange({ square_off_minutes: n })}
           />
           <span className="hint">
-            Min: {limits.square_off_minutes[0]} mins, max: {limits.square_off_minutes[1]} mins before market close
+            Min: {limits.square_off_minutes[0]} mins, max: {limits.square_off_minutes[1]} mins
+            before market close
           </span>
         </div>
       )}

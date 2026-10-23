@@ -35,7 +35,10 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   }
   if (!res.ok) {
     if (res.status === 401 && path !== "/api/login") onLoggedOut();
-    throw new ApiError(data?.error ?? "Something went wrong on our side. Try again in a moment.", res.status);
+    throw new ApiError(
+      data?.error ?? "Something went wrong on our side. Try again in a moment.",
+      res.status,
+    );
   }
   return data as T;
 }
@@ -490,7 +493,8 @@ export const api = {
     order: unknown,
     positions: number[],
     slippage?: Slippage,
-  ) => call<{ order_id: number }>("/api/orders/create", { text, answers, order, positions, slippage }),
+  ) =>
+    call<{ order_id: number }>("/api/orders/create", { text, answers, order, positions, slippage }),
   orderCancel: (id: number) => call<{ ok: boolean }>(`/api/orders/${id}/cancel`, {}),
   orderClose: (positionId: number) =>
     call<{ order_id: number }>(`/api/orders/positions/${positionId}/close`, {}),
@@ -510,7 +514,6 @@ export const api = {
     call<{ steps: string[] }>(`/api/paper/${runId}/trade/${encodeURIComponent(tradeKey)}`),
   orderTimeline: (orderId: number) => call<{ steps: string[] }>(`/api/orders/${orderId}/timeline`),
   notifications: () => call<NotificationsState>("/api/notifications"),
-  notificationRead: (id: number) =>
-    call<NotificationsState>(`/api/notifications/${id}/read`, {}),
+  notificationRead: (id: number) => call<NotificationsState>(`/api/notifications/${id}/read`, {}),
   notificationReadAll: () => call<NotificationsState>("/api/notifications/read-all", {}),
 };

@@ -8,9 +8,17 @@ import { api } from "../api";
 import { ErrorLine, Working } from "./Callout";
 import { message, useDialog } from "../util";
 
-export type TimelineTarget = { kind: "trade"; runId: number; tradeKey: string } | { kind: "order"; orderId: number };
+export type TimelineTarget =
+  | { kind: "trade"; runId: number; tradeKey: string }
+  | { kind: "order"; orderId: number };
 
-export function TradeTimeline({ target, onClose }: { target: TimelineTarget; onClose: () => void }) {
+export function TradeTimeline({
+  target,
+  onClose,
+}: {
+  target: TimelineTarget;
+  onClose: () => void;
+}) {
   const [steps, setSteps] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useDialog(onClose);
@@ -19,7 +27,9 @@ export function TradeTimeline({ target, onClose }: { target: TimelineTarget; onC
     setSteps(null);
     setError(null);
     const call =
-      target.kind === "trade" ? api.paperTrade(target.runId, target.tradeKey) : api.orderTimeline(target.orderId);
+      target.kind === "trade"
+        ? api.paperTrade(target.runId, target.tradeKey)
+        : api.orderTimeline(target.orderId);
     call.then(
       (r) => setSteps(r.steps),
       (err) => setError(message(err, "Could not load this timeline.")),
@@ -36,7 +46,9 @@ export function TradeTimeline({ target, onClose }: { target: TimelineTarget; onC
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h3 className="item-name">{target.kind === "trade" ? "This trade, step by step" : "This order, step by step"}</h3>
+          <h3 className="item-name">
+            {target.kind === "trade" ? "This trade, step by step" : "This order, step by step"}
+          </h3>
           <button className="btn quiet" ref={closeRef} onClick={onClose} aria-label="Close">
             Close
           </button>

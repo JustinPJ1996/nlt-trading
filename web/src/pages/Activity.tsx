@@ -38,7 +38,11 @@ export function Activity() {
   const sources = (() => {
     const seen = new Map<string, { source: "strategy" | "order"; id: number; name: string }>();
     for (const it of items ?? []) {
-      seen.set(`${it.source}:${it.source_id}`, { source: it.source, id: it.source_id, name: it.source_name });
+      seen.set(`${it.source}:${it.source_id}`, {
+        source: it.source,
+        id: it.source_id,
+        name: it.source_name,
+      });
     }
     return [...seen.values()];
   })();
@@ -54,8 +58,8 @@ export function Activity() {
     <div className="narrow">
       <h1 className="page-title">Activity</h1>
       <p className="page-lede">
-        Everything paper trading and one-off orders have recorded, newest first: every signal taken, every
-        signal skipped and why, every fill and exit.
+        Everything paper trading and one-off orders have recorded, newest first: every signal taken,
+        every signal skipped and why, every fill and exit.
       </p>
       <ErrorLine error={error} />
 
@@ -76,7 +80,11 @@ export function Activity() {
           </select>
         </label>
         <label className="check mt-0">
-          <input type="checkbox" checked={skipsOnly} onChange={(e) => setSkipsOnly(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={skipsOnly}
+            onChange={(e) => setSkipsOnly(e.target.checked)}
+          />
           <span>Skipped signals only</span>
         </label>
       </div>
@@ -84,7 +92,11 @@ export function Activity() {
       {!items && !error && <Working>Loading the activity feed...</Working>}
       {items && shown.length === 0 && (
         <div className="panel empty mt-4">
-          <h2>{skipsOnly || sourceId !== "all" ? "Nothing matches this filter" : "Nothing recorded yet"}</h2>
+          <h2>
+            {skipsOnly || sourceId !== "all"
+              ? "Nothing matches this filter"
+              : "Nothing recorded yet"}
+          </h2>
           <p className="muted mb-5">
             {skipsOnly || sourceId !== "all"
               ? "Try choosing Everything, or untick the skipped-signals box."
@@ -113,7 +125,9 @@ export function Activity() {
                   <strong className="muted small">{it.source_name}</strong>
                   {it.skip && <span className="tag ml-2">skipped</span>}
                   <br />
-                  <span className={it.skip ? "skip" : it.kind === "drift" ? "drift" : undefined}>{it.text}</span>
+                  <span className={it.skip ? "skip" : it.kind === "drift" ? "drift" : undefined}>
+                    {it.text}
+                  </span>
                 </span>
               </>
             );

@@ -23,7 +23,10 @@ function Sparkline({ curve }: { curve: { s: number[]; b: number[] } }) {
   const span = hi - lo || 1;
   const x = (i: number, n: number) => (n <= 1 ? 0 : (i / (n - 1)) * W);
   const y = (v: number) => 4 + (1 - (v - lo) / span) * (H - 8);
-  const path = (vals: number[]) => vals.map((v, i) => `${i ? "L" : "M"}${x(i, vals.length).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const path = (vals: number[]) =>
+    vals
+      .map((v, i) => `${i ? "L" : "M"}${x(i, vals.length).toFixed(1)},${y(v).toFixed(1)}`)
+      .join("");
   return (
     <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
       <line className="spark-zero" x1={0} x2={W} y1={y(0)} y2={y(0)} />
@@ -102,8 +105,8 @@ export function Library({ onPick }: { onPick: (sentence: string) => void }) {
               ))}
           </div>
           <p className="hint mt-3">
-            Tested to {data.tested_to} with {data.capital_text} and real charges. Tap one to read it,
-            change it and make it yours. Past results are not a promise.
+            Tested to {data.tested_to} with {data.capital_text} and real charges. Tap one to read
+            it, change it and make it yours. Past results are not a promise.
           </p>
         </>
       )}

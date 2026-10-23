@@ -83,8 +83,9 @@ export function Readback({
       ))}
       {usable && (
         <p className="readback-legend">
-          <b>You said</b>: your own words. <b>We worked out</b>: filled in from what you said, such as
-          the standard 14-period RSI. <b>Default</b>: you did not say, so we used our usual setting.
+          <b>You said</b>: your own words. <b>We worked out</b>: filled in from what you said, such
+          as the standard 14-period RSI. <b>Default</b>: you did not say, so we used our usual
+          setting.
         </p>
       )}
     </div>

@@ -10,7 +10,15 @@
 //  - A suggested answer is a hint, never pre-filled.
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type OrderPosition, type OrderReading, type OrdersState, type SavedOrder, type Slippage, ZERO_SLIPPAGE } from "../api";
+import {
+  api,
+  type OrderPosition,
+  type OrderReading,
+  type OrdersState,
+  type SavedOrder,
+  type Slippage,
+  ZERO_SLIPPAGE,
+} from "../api";
 import { Callout, ErrorLine, Working, type Tone } from "../components/Callout";
 import { Readback } from "../components/Readback";
 import { SlippageInput } from "../components/SlippageInput";
@@ -146,9 +154,7 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
         />
         {!text && (
           <div className="examples" aria-label="Examples">
-            <span className="muted small">
-              Or try:
-            </span>
+            <span className="muted small">Or try:</span>
             {EXAMPLES.map((ex) => (
               <button
                 type="button"
@@ -178,7 +184,9 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
         </Callout>
       )}
       <ErrorLine error={error} />
-      {stale && <p className="muted">You changed your order. Read it again to see what I understand now.</p>}
+      {stale && (
+        <p className="muted">You changed your order. Read it again to see what I understand now.</p>
+      )}
 
       {!!r && !r.order && r.questions.length > 0 && (
         <form className="panel reveal" onSubmit={onAnswers}>
@@ -214,7 +222,9 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
 
       {!!r?.order && (
         <div className="stack reveal">
-          <p className="muted">Read this carefully. If anything is not what you meant, change your sentence.</p>
+          <p className="muted">
+            Read this carefully. If anything is not what you meant, change your sentence.
+          </p>
           <Lines lines={r.readback} />
           {r.notes.map((n, i) => (
             <Callout key={`n${i}`} tone="info">
@@ -230,11 +240,13 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
           {r.offer_stop && (
             <form className="panel" onSubmit={onAddStop}>
               <Callout tone="warning" title="This order has no stop loss">
-                If the price keeps moving against the position, nothing closes it until you do, or the
-                contract expires. You can add one now.
+                If the price keeps moving against the position, nothing closes it until you do, or
+                the contract expires. You can add one now.
               </Callout>
               <label className="field">
-                <span className="label">Stop loss, as a percentage of the price it is bought or sold at</span>
+                <span className="label">
+                  Stop loss, as a percentage of the price it is bought or sold at
+                </span>
                 <span className="money">
                   <input
                     type="text"
@@ -264,7 +276,9 @@ function NewOrder({ onSaved }: { onSaved: () => void }) {
                     type="checkbox"
                     checked={chosen.includes(p.id)}
                     onChange={(e) =>
-                      setChosen(e.target.checked ? [...chosen, p.id] : chosen.filter((x) => x !== p.id))
+                      setChosen(
+                        e.target.checked ? [...chosen, p.id] : chosen.filter((x) => x !== p.id),
+                      )
                     }
                   />
                   <span>
@@ -323,7 +337,12 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
     }
   }
 
-  if (positions.length === 0) return <p className="muted">No open paper positions. When an order fires, the position it opens will appear here.</p>;
+  if (positions.length === 0)
+    return (
+      <p className="muted">
+        No open paper positions. When an order fires, the position it opens will appear here.
+      </p>
+    );
   return (
     <>
       <div className="table-wrap cards">
@@ -357,7 +376,9 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
                     Since {p.entered}. Expires {p.expiry}.
                   </div>
                 </td>
-                <td className="num" data-label="Entered at">{p.entry_price}</td>
+                <td className="num" data-label="Entered at">
+                  {p.entry_price}
+                </td>
                 <td className="num" data-label="Last price">
                   {p.last_price || "-"}
                   {p.last_at && <div className="muted small">{p.last_at}</div>}
@@ -365,7 +386,10 @@ function Positions({ positions, reload }: { positions: OrderPosition[]; reload: 
                 <td className="num" data-label="Stop / target">
                   {p.stop || "none"} / {p.target || "none"}
                 </td>
-                <td className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`} data-label="Profit or loss, before charges">
+                <td
+                  className={`num ${p.pnl && p.pnl > 0 ? "pos" : p.pnl && p.pnl < 0 ? "neg" : ""}`}
+                  data-label="Profit or loss, before charges"
+                >
                   {p.pnl_text || "-"}
                 </td>
                 <td>
@@ -413,9 +437,7 @@ function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void })
     <article className="panel">
       <div className="run-head">
         <div>
-          <h3 className="item-name">
-            {order.sentence}
-          </h3>
+          <h3 className="item-name">{order.sentence}</h3>
           <p className="muted small">Saved {order.saved}.</p>
         </div>
         <span className={`tag ${STATUS_TAG[order.status]}`}>{order.status_label}</span>
@@ -423,7 +445,15 @@ function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void })
       {order.result_text && (
         <p className="mt-2">
           Result after charges:{" "}
-          <span className={order.result && order.result > 0 ? "pos" : order.result && order.result < 0 ? "neg" : ""}>
+          <span
+            className={
+              order.result && order.result > 0
+                ? "pos"
+                : order.result && order.result < 0
+                  ? "neg"
+                  : ""
+            }
+          >
             {order.result_text}
           </span>
         </p>
@@ -450,7 +480,10 @@ function OrderCard({ order, reload }: { order: SavedOrder; reload: () => void })
         </>
       )}
       {showTimeline && (
-        <TradeTimeline target={{ kind: "order", orderId: order.id }} onClose={() => setShowTimeline(false)} />
+        <TradeTimeline
+          target={{ kind: "order", orderId: order.id }}
+          onClose={() => setShowTimeline(false)}
+        />
       )}
       {order.can_cancel && (
         <div className="row mt-4 end">
@@ -504,15 +537,18 @@ export function Orders() {
     }
   }
 
-  const active = state?.orders.filter((o) => o.status === "waiting" || o.status === "filling" || o.status === "open") ?? [];
+  const active =
+    state?.orders.filter(
+      (o) => o.status === "waiting" || o.status === "filling" || o.status === "open",
+    ) ?? [];
   const past = state?.orders.filter((o) => !active.includes(o)) ?? [];
 
   return (
     <div className="narrow">
       <h1 className="page-title">One-off orders</h1>
       <p className="page-lede">
-        Tell the app what to wait for and what to do when it happens, once. Like Zerodha's alert-triggered
-        orders, but with pretend money: nothing here is sent to Zerodha.
+        Tell the app what to wait for and what to do when it happens, once. Like Zerodha's
+        alert-triggered orders, but with pretend money: nothing here is sent to Zerodha.
       </p>
       <ErrorLine error={error} />
       {!state && !error && <Working>Loading your orders...</Working>}
@@ -521,8 +557,9 @@ export function Orders() {
           <div className="stack">
             {state.kill_switch && (
               <Callout tone="critical" title="The paper kill switch is on">
-                No order is checked or filled while it is on, and minutes that pass meanwhile are skipped, not
-                caught up on later. Turn it off on the <a href="#/safety">Safety</a> page.
+                No order is checked or filled while it is on, and minutes that pass meanwhile are
+                skipped, not caught up on later. Turn it off on the <a href="#/safety">Safety</a>{" "}
+                page.
               </Callout>
             )}
             {!state.job_installed && (
@@ -566,7 +603,10 @@ export function Orders() {
               </div>
             </div>
             {active.length === 0 ? (
-              <p className="muted">No orders waiting. Write one in the box below and it will wait here until its moment comes.</p>
+              <p className="muted">
+                No orders waiting. Write one in the box below and it will wait here until its moment
+                comes.
+              </p>
             ) : (
               <div className="stack">
                 {active.map((o) => (
