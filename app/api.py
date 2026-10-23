@@ -39,6 +39,7 @@ import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 from pydantic import ValidationError
@@ -53,6 +54,7 @@ from starlette.staticfiles import StaticFiles
 from app import auth, logic, orders_view
 from nlt.costs.slippage import ZERO as ZERO_SLIPPAGE
 from nlt.costs.slippage import Slippage
+from nlt.engine.backtest import BacktestResult
 from nlt.spec.models import StrategySpec
 from nlt.store.db import Store
 from nlt.translate.readback import describe_lines, format_inr
@@ -438,11 +440,11 @@ def _chart(bt_equity: pd.Series, bench_equity: pd.Series) -> list[dict]:
     frame = _downsample(frame.reset_index(drop=True))
     return [
         {
-            "t": row.time,
-            "s": round(float(row.strategy), 2),
-            "b": round(float(row.benchmark), 2),
-            "sd": round(float(row.strategy_dd), 3),
-            "bd": round(float(row.benchmark_dd), 3),
+            "t": row.time,  # ty: ignore[unresolved-attribute]  # itertuples rows are namedtuples
+            "s": round(float(row.strategy), 2),  # ty: ignore[unresolved-attribute]
+            "b": round(float(row.benchmark), 2),  # ty: ignore[unresolved-attribute]
+            "sd": round(float(row.strategy_dd), 3),  # ty: ignore[unresolved-attribute]
+            "bd": round(float(row.benchmark_dd), 3),  # ty: ignore[unresolved-attribute]
         }
         for row in frame.itertuples(index=False)
     ]
@@ -530,7 +532,11 @@ def _time_text(ts, timeframe: str) -> str:
 
 
 def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) -> dict:
-    bt, bench, comp, verdict = result.backtest, result.benchmark, result.comparison, result.verdict
+    # The caller checked `result.ok`; every success path in logic fills all of these together.
+    bt = cast("BacktestResult", result.backtest)
+    bench = cast("logic.Benchmark", result.benchmark)
+    comp = cast("logic.Comparison", result.comparison)
+    verdict = cast("logic.Verdict", result.verdict)
     spec = bt.spec
     m = bt.metrics
     tf = spec.instrument.timeframe
@@ -538,7 +544,7 @@ def _result_payload(result: logic.PipelineResult, result_id: str, params: dict) 
     notes = [n for n in dict.fromkeys([*result.data_notes, *bt.warnings]) if n not in spotted]
     return {
         "result_id": result_id,
-        "tested": _spec_payload(result.spec),
+        "tested": _spec_payload(cast("StrategySpec", result.spec)),
         "params": params,
         "verdict": {
             "summary": verdict.summary,
@@ -828,7 +834,8 @@ async def strategy_settings(request: Request) -> Response:
     except logic.AdjustError as exc:
         raise _BadRequest(str(exc)) from None
     new_id = await _run(store.save_strategy, adjusted, logic.describe_spec(adjusted))
-    row = store.get_strategy(new_id)
+    # Just saved above, and strategy rows are never deleted.
+    row = cast("dict", store.get_strategy(new_id))
     return JSONResponse(
         {
             "id": new_id,
@@ -847,7 +854,8 @@ async def strategy_settings(request: Request) -> Response:
 
 def _paper_run_card(store: Store, run: dict) -> dict:
     spec = store.load_spec(run["strategy_id"])
-    strategy = store.get_strategy(run["strategy_id"])
+    # `store.load_spec` above raised KeyError if this strategy did not exist.
+    strategy = cast("dict", store.get_strategy(run["strategy_id"]))
     params = json.loads(run["params_json"] or "{}")
     status = store.paper_status(run["id"]) or {}
     snap = json.loads(status.get("snapshot_json") or "{}")
@@ -955,7 +963,8 @@ async def paper_start(request: Request) -> Response:
     if not alert_only and cost_label not in logic.COST_MODEL_LABELS:
         raise _BadRequest("Pick which trading costs to charge.")
     try:
-        sid = int(body.get("strategy_id"))
+        # A missing strategy_id is None: int(None) raises the TypeError caught just below.
+        sid = int(body.get("strategy_id"))  # ty: ignore[invalid-argument-type]
         capital = float(body.get("capital") or logic.DEFAULT_CAPITAL)
     except (TypeError, ValueError):
         raise _BadRequest("Pick a strategy and an amount of money.") from None
@@ -986,7 +995,7 @@ async def paper_start(request: Request) -> Response:
 def _active_run(store: Store, run_id: int) -> dict:
     if not any(r["id"] == run_id for r in store.active_paper_runs()):
         raise _BadRequest("That paper run is not running.")
-    return store.get_run(run_id)
+    return cast("dict", store.get_run(run_id))  # exists: the check above found it running
 
 
 async def paper_check(request: Request) -> Response:
@@ -1038,7 +1047,7 @@ def _today_ist(bar_time: str | None, today: pd.Timestamp) -> bool:
         return False
     ts = pd.Timestamp(bar_time)
     ts = ts.tz_localize("Asia/Kolkata") if ts.tzinfo is None else ts.tz_convert("Asia/Kolkata")
-    return ts.normalize() == today
+    return ts.normalize() == today  # ty: ignore[unresolved-attribute]  # never NaT: bar_time is set
 
 
 def _no_money() -> dict:
@@ -1075,7 +1084,8 @@ def _running(store: Store, *, now: pd.Timestamp | None = None) -> dict:
     totals = {"closed_today": 0.0, "open_now": 0.0, "total": 0.0}
 
     for run in store.active_paper_runs():
-        strategy = store.get_strategy(run["strategy_id"])
+        # Every run row has a strategy (NOT NULL reference); strategies are never deleted.
+        strategy = cast("dict", store.get_strategy(run["strategy_id"]))
         status = store.paper_status(run["id"]) or {}
         snap = json.loads(status.get("snapshot_json") or "{}")
         paused = store.is_paper_run_paused(run["id"])

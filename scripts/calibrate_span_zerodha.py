@@ -77,7 +77,7 @@ def main() -> None:
     today = dt.date.today()
     margin = SpanMargin()
     files = {ex: margin._file_for(u, today)[0] for u, ex in EXCHANGE.items()}
-    out = []
+    out: list[dict] = []
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()

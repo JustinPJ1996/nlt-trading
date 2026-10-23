@@ -22,6 +22,7 @@ import re
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 from pydantic import ValidationError
@@ -49,23 +50,31 @@ from nlt.translate.llm import translate
 from nlt.translate.readback import describe, format_inr
 from nlt.translate.rules import BacktestPeriod, Question, TranslationResult
 
-try:  # pragma: no cover -- exercised once nlt.report exists
+if TYPE_CHECKING:
+    # nlt.report exists; type-check against it alone (the fallback below is a legacy stub whose
+    # shapes differ). At runtime this branch is skipped, so behaviour is unchanged.
     from nlt.report.benchmark import Benchmark, Comparison, buy_and_hold, compare
     from nlt.report.verdict import Flag, Verdict, assess
 
     REPORT_SOURCE = "nlt.report"
-except ImportError:  # nlt.report is being built by another agent concurrently
-    from app.report_fallback import (
-        Benchmark,
-        Comparison,
-        Flag,
-        Verdict,
-        assess,
-        buy_and_hold,
-        compare,
-    )
+else:
+    try:  # pragma: no cover -- exercised once nlt.report exists
+        from nlt.report.benchmark import Benchmark, Comparison, buy_and_hold, compare
+        from nlt.report.verdict import Flag, Verdict, assess
 
-    REPORT_SOURCE = "app.report_fallback"
+        REPORT_SOURCE = "nlt.report"
+    except ImportError:  # nlt.report is being built by another agent concurrently
+        from app.report_fallback import (
+            Benchmark,
+            Comparison,
+            Flag,
+            Verdict,
+            assess,
+            buy_and_hold,
+            compare,
+        )
+
+        REPORT_SOURCE = "app.report_fallback"
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +131,7 @@ EXAMPLE_STRATEGIES = [
 # The first entry is the default. Index futures, not options: "buy NIFTY" is
 # tested on the index itself, and futures are the way to hold that; option
 # charges (STT on premium) describe a different trade (changed 2026-10-12).
-COST_MODEL_LABELS: dict[str, ChargeModel | None] = {
+COST_MODEL_LABELS: dict[str, ChargeModel] = {
     "Index futures": NseFuturesCharges(),
     "Index options (NIFTY/BANKNIFTY weekly)": NseOptionsCharges(),
     "MCX commodity futures": McxFuturesCharges(),
@@ -310,8 +319,11 @@ def period_dates(
     if period.year is not None:
         start, end = dt.date(period.year, 1, 1), min(dt.date(period.year, 12, 31), today)
     else:
-        offset = pd.DateOffset(**{period.unit: period.last})
-        start, end = (pd.Timestamp(today) - offset).date(), today
+        # Both are set whenever `year` is not: the only constructor (`_extract_backtest_window`)
+        # always gives either `year` or `last` + `unit`.
+        offset = pd.DateOffset(**{period.unit: period.last})  # ty: ignore[invalid-argument-type]
+        # Timestamp(date) is never NaT.
+        start, end = (pd.Timestamp(today) - offset).date(), today  # ty: ignore[unsupported-operator]
     if start >= today:
         return None
     note = None
@@ -691,7 +703,10 @@ def backtest_spec(
                 capital,
                 multiplier=c.multiplier,
                 expiry_close=expiry_close_mask(
-                    c.symbol, bars.index, load_spec.instrument.timeframe, listed
+                    c.symbol,
+                    bars.index,  # ty: ignore[invalid-argument-type]  # a DatetimeIndex
+                    load_spec.instrument.timeframe,
+                    listed,
                 ),
                 name=f"holding {c.title} futures, closed at each expiry",
                 charge_fn=cf,
@@ -771,7 +786,8 @@ def _backtest_option_spec(
 
         load_from = max(
             warmup.padded_start(spec, start),
-            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],
+            # Not None: `option_window` above raised on a None coverage from this same source.
+            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],  # ty: ignore[not-subscriptable]
         )
         all_bars = load_option_bars(spec, load_from, end, source)
         if all_bars.empty:
@@ -782,7 +798,10 @@ def _backtest_option_spec(
                 window_notes=window_notes,
                 error="There is no price history for that index and date range to test against.",
             )
-        start_bar = warmup.first_bar_on_or_after(all_bars.index, start)
+        start_bar = warmup.first_bar_on_or_after(
+            all_bars.index,  # ty: ignore[invalid-argument-type]  # a DatetimeIndex
+            start,
+        )
         if start_bar is None:
             return PipelineResult(
                 translation=translation,
@@ -943,7 +962,8 @@ def _backtest_legs_spec(
 
         load_from = max(
             warmup.padded_start(spec, start),
-            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],
+            # Not None: `option_window` above raised on a None coverage from this same source.
+            source.coverage(spec.instrument.symbol, spec.instrument.timeframe)[0],  # ty: ignore[not-subscriptable]
         )
         all_bars = load_option_bars(spec, load_from, end, source)
         if all_bars.empty:
@@ -954,7 +974,10 @@ def _backtest_legs_spec(
                 window_notes=window_notes,
                 error="There is no price history for that index and date range to test against.",
             )
-        start_bar = warmup.first_bar_on_or_after(all_bars.index, start)
+        start_bar = warmup.first_bar_on_or_after(
+            all_bars.index,  # ty: ignore[invalid-argument-type]  # a DatetimeIndex
+            start,
+        )
         if start_bar is None:
             return PipelineResult(
                 translation=translation,
@@ -1027,7 +1050,7 @@ def _backtest_legs_spec(
         )
 
 
-def safe_call(fn: Callable[[], object], *, on_error: str) -> tuple[object | None, str | None]:
+def safe_call[T](fn: Callable[[], T], *, on_error: str) -> tuple[T | None, str | None]:
     """Runs `fn`, turning any exception into a plain-English message instead of a crash.
 
     Returns `(result, None)` on success or `(None, message)` on failure. Every
@@ -1072,9 +1095,12 @@ def save_strategy(
             "backtest",
             {"capital": capital, "cost_model_label": cost_model_label, "slippage": slippage},
         )
-        store.save_trades(run_id, result.backtest.trades, spec.instrument.symbol)
-        store.finish_run(run_id, result.backtest.metrics)
-        if store.get_strategy(strategy_id)["state"] == "draft":
+        # `result.ok` above means `backtest` is set.
+        backtest = cast("BacktestResult", result.backtest)
+        store.save_trades(run_id, backtest.trades, spec.instrument.symbol)
+        store.finish_run(run_id, backtest.metrics)
+        # Just saved above, and strategy rows are never deleted.
+        if cast("dict", store.get_strategy(strategy_id))["state"] == "draft":
             store.set_state(strategy_id, "backtested")
     return strategy_id
 
@@ -1284,7 +1310,8 @@ def check_paper_now(store: Store, run_id: int) -> str:
     from nlt.data.kite import KiteSource
     from nlt.paper import runner
 
-    run = store.get_run(run_id)
+    # Callers (api `_active_run`, main) only pass the id of a run that exists.
+    run = cast("dict", store.get_run(run_id))
     spec = store.load_spec(run["strategy_id"])
     params = json.loads(run["params_json"] or "{}")
     model, _ = charge_model_for_spec(spec, params.get("cost_model_label", ""))
@@ -1321,7 +1348,8 @@ def paper_pause_summary(store: Store, run_id: int, run: dict, as_of: pd.Timestam
 
     params = json.loads(run["params_json"] or "{}")
     started_at = pd.Timestamp(params["started_at"]).tz_convert("Asia/Kolkata")
-    windows = pause_windows_for_run(store, run_id, params, started_at, as_of)
+    # `started_at` is a real timestamp: Timestamp(...) of a stored ISO string is never NaT.
+    windows = pause_windows_for_run(store, run_id, params, started_at, as_of)  # ty: ignore[invalid-argument-type]
     seconds = sum(max((end - start).total_seconds(), 0) for start, end in windows)
     skipped = sum(
         1
@@ -1358,10 +1386,11 @@ def stop_paper(store: Store, run_id: int) -> None:
     """
     status = store.paper_status(run_id) or {}
     events = store.paper_events(run_id)
-    run = store.get_run(run_id)
+    # Callers only pass the id of a run that exists.
+    run = cast("dict", store.get_run(run_id))
     alert_only = store.is_alert_only(run_id)
     if alert_only:
-        metrics = {
+        metrics: dict = {
             "alert_only": True,
             "signals_notified": sum(1 for e in events if e["kind"] == "signal"),
             "exits_notified": sum(1 for e in events if e["kind"] == "exit"),
@@ -1610,7 +1639,7 @@ def trade_timeline(
         else ""
     )
     steps.append(
-        f"Filled {qty_text}{symbol}".rstrip() + f" at {format_inr(entry.get('price'))}"
+        f"Filled {qty_text}{symbol}".rstrip() + f" at {format_inr(entry.get('price'))}"  # ty: ignore[invalid-argument-type]
         f"{slippage_bit} on the {when(entry.get('bar_time'))} candle."
     )
 
@@ -1633,7 +1662,7 @@ def trade_timeline(
             else ""
         )
         steps.append(
-            f"Exited at {format_inr(exit_.get('price'))} on the {when(exit_.get('bar_time'))} "
+            f"Exited at {format_inr(exit_.get('price'))} on the {when(exit_.get('bar_time'))} "  # ty: ignore[invalid-argument-type]
             f"candle because {reason_text}.{both_bit}"
         )
         net_pnl = exit_detail.get("net_pnl")
@@ -1797,10 +1826,11 @@ def trades_csv(result: PipelineResult) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(TRADE_CSV_COLUMNS)
-    spec = result.backtest.spec
+    # Only called for a finished run, so `backtest` is set.
+    spec = result.backtest.spec  # ty: ignore[unresolved-attribute]
     # A daily candle has no time of day; printing 00:00 would suggest one.
     when = "%Y-%m-%d" if spec.instrument.timeframe == "1d" else "%Y-%m-%d %H:%M"
-    for n, t in enumerate(result.backtest.trades, start=1):
+    for n, t in enumerate(result.backtest.trades, start=1):  # ty: ignore[unresolved-attribute]
         writer.writerow(
             [
                 n,
@@ -2444,26 +2474,28 @@ def library_card(entry: dict[str, str], tested_to: dt.date) -> dict:
     card: dict = {"title": entry["title"], "sentence": entry["sentence"]}
     if translation.spec is None or translation.period is None:
         return {**card, "error": "This strategy could not be read."}
-    dates = period_dates(translation.period, tested_to)
+    # Never None here: every library sentence is "the last N years", which starts before today.
+    dates = cast("dict", period_dates(translation.period, tested_to))
     start = dt.date.fromisoformat(dates["start"])
     result = backtest_spec(translation.spec, start=start, end=tested_to, translation=translation)
     if result.error:
         return {**card, "error": result.error}
-    m = result.backtest.metrics
-    equity = result.backtest.equity
+    # `result.error` is None, so the run finished and all of its parts are set.
+    m = result.backtest.metrics  # ty: ignore[unresolved-attribute]
+    equity = result.backtest.equity  # ty: ignore[unresolved-attribute]
     return {
         **card,
         "name": translation.spec.name,
-        "return": format_signed_pct(result.comparison.strategy_return_pct),
-        "holding_return": format_signed_pct(result.comparison.benchmark_return_pct),
-        "benchmark_name": result.benchmark.name,
+        "return": format_signed_pct(result.comparison.strategy_return_pct),  # ty: ignore[unresolved-attribute]
+        "holding_return": format_signed_pct(result.comparison.benchmark_return_pct),  # ty: ignore[unresolved-attribute]
+        "benchmark_name": result.benchmark.name,  # ty: ignore[unresolved-attribute]
         "win_rate": format_pct(m.get("win_rate_pct")),
         "worst_drop": format_pct(m.get("max_drawdown_pct")),
         "trades": int(m.get("total_trades") or 0),
         "first": f"{equity.index[0]:%d %b %Y}",
         "last": f"{equity.index[-1]:%d %b %Y}",
-        "serious_warning": any(f.severity == "critical" for f in result.verdict.flags),
-        "curve": card_curve(equity, result.benchmark.equity, DEFAULT_CAPITAL),
+        "serious_warning": any(f.severity == "critical" for f in result.verdict.flags),  # ty: ignore[unresolved-attribute]
+        "curve": card_curve(equity, result.benchmark.equity, DEFAULT_CAPITAL),  # ty: ignore[unresolved-attribute]
     }
 
 
