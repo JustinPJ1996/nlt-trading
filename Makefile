@@ -7,10 +7,10 @@
 
 PY := .venv/bin/python
 
-.PHONY: check fix lint format types test mutation secrets hooks clean-cache help web serve
+.PHONY: check fix lint format web-lint web-format types test mutation secrets hooks clean-cache help web serve
 
 help:
-	@echo "make check     lint + format check + the full test suite (the gate)"
+	@echo "make check     lint + format check (Python and web) + the full test suite (the gate)"
 	@echo "make fix       autofix lint and rewrite formatting -- run before reading errors"
 	@echo "make types     type check with ty (report only -- not part of the gate yet)"
 	@echo "make test      the test suite alone"
@@ -20,7 +20,7 @@ help:
 	@echo "make web       build the TypeScript front end (web/ -> web/dist)"
 	@echo "make serve     run the web app on http://127.0.0.1:8502"
 
-check: lint format test
+check: lint format web-lint web-format test
 
 lint:
 	@$(PY) -m ruff check .
@@ -28,9 +28,24 @@ lint:
 format:
 	@$(PY) -m ruff format --check .
 
+# The web front end's equivalents of the two above: oxlint for mistakes, oxfmt
+# for layout. Same family as ruff, same split. node is put on PATH explicitly
+# because git hooks do not inherit it, and both tools are node launchers.
+# Needs web/node_modules, which `make web` installs.
+WEBPATH := PATH="/opt/mise/shims:/usr/local/bin:$$PATH"
+web-lint:
+	@test -d web/node_modules || { echo "web/node_modules is missing. Run: make web"; exit 1; }
+	@cd web && $(WEBPATH) ./node_modules/.bin/oxlint --quiet
+
+web-format:
+	@test -d web/node_modules || { echo "web/node_modules is missing. Run: make web"; exit 1; }
+	@cd web && $(WEBPATH) ./node_modules/.bin/oxfmt --check >/dev/null || { \
+		echo "Web files are not formatted. Run: make fix"; exit 1; }
+
 fix:
 	@$(PY) -m ruff check . --fix
 	@$(PY) -m ruff format .
+	@test ! -d web/node_modules || (cd web && $(WEBPATH) ./node_modules/.bin/oxlint --fix --quiet; $(WEBPATH) ./node_modules/.bin/oxfmt >/dev/null)
 
 # Not in `check` yet: the first run found ~700 issues, most of them "this might
 # be None" warnings on code that is guarded some other way. Putting it in the
