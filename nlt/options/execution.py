@@ -36,6 +36,7 @@ every other daily bar frame in this project.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -85,7 +86,7 @@ def _base_timeframe(timeframe: str) -> tuple[str, int | str | None]:
 
 def _bucket_start(index: pd.DatetimeIndex, bucket_minutes: int) -> pd.DatetimeIndex:
     """Each timestamp's bucket start, aligned to that day's 09:15 session open."""
-    day_open = index.normalize() + pd.Timedelta(
+    day_open = index.normalize() + pd.Timedelta(  # ty: ignore[unresolved-attribute]
         hours=SESSION_OPEN.hour, minutes=SESSION_OPEN.minute
     )
     minutes_since_open = (index - day_open) / pd.Timedelta(minutes=1)
@@ -129,7 +130,7 @@ def resample_traded(df: pd.DataFrame, bucket_minutes: int) -> pd.DataFrame:
         return df.reindex(columns=BAR_COLUMNS)
 
     work = df.copy()
-    work["_bucket"] = _bucket_start(work.index, bucket_minutes)
+    work["_bucket"] = _bucket_start(work.index, bucket_minutes)  # ty: ignore[invalid-argument-type]
     return _aggregate(work)
 
 
@@ -145,7 +146,7 @@ def resample_daily(df: pd.DataFrame) -> pd.DataFrame:
         return df.reindex(columns=BAR_COLUMNS)
 
     work = df.copy()
-    work["_bucket"] = pd.DatetimeIndex(work.index).normalize()
+    work["_bucket"] = pd.DatetimeIndex(work.index).normalize()  # ty: ignore[unresolved-attribute]
     return _aggregate(work)
 
 
@@ -272,7 +273,7 @@ class OptionExecution:
         elif spec == "1d":
             bars = resample_daily(raw)
         else:
-            bars = resample_traded(raw, spec)
+            bars = resample_traded(raw, cast("int", spec))  # spec is not "1d" here
         self._bars_cache[contract.tradingsymbol] = bars
         return bars
 
@@ -297,8 +298,8 @@ class OptionExecution:
         """Start times of the contract's candles later than `after` and before
         `until` on the same day -- the option candles after the index's last."""
         bars = self._contract_bars(contract, after.date())
-        after = pd.Timestamp(after)
-        end = pd.Timestamp(dt.datetime.combine(after.date(), until), tz=after.tz)
+        after = pd.Timestamp(after)  # ty: ignore[invalid-assignment]
+        end = pd.Timestamp(dt.datetime.combine(after.date(), until), tz=after.tz)  # ty: ignore[unresolved-attribute]
         return list(bars.index[(bars.index > after) & (bars.index < end)])
 
     def traded(self, contract: Contract, ts: dt.datetime) -> bool:
@@ -311,7 +312,7 @@ class OptionExecution:
         never a bar that starts after `signal_ts`."""
         bars = self._contract_bars(contract, signal_ts.date())
         ts = pd.Timestamp(signal_ts)
-        same_day = bars[bars.index.date == ts.date()]
+        same_day = bars[bars.index.date == ts.date()]  # ty: ignore[unresolved-attribute]
         traded_up_to_ts = same_day[(same_day.index <= ts) & same_day["traded"]]
         if traded_up_to_ts.empty:
             return None
@@ -334,4 +335,4 @@ class OptionExecution:
         boundary = pd.Timestamp(
             dt.datetime.combine(contract.expiry + dt.timedelta(days=1), dt.time(0, 0)), tz=IST
         )
-        return self.last_trade(contract, boundary.to_pydatetime())
+        return self.last_trade(contract, boundary.to_pydatetime())  # ty: ignore[invalid-argument-type]

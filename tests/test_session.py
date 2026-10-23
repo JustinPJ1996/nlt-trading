@@ -9,6 +9,7 @@ bars at all) must not break anything that comes after it.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -104,7 +105,10 @@ def test_first_and_last_bar_across_three_days_with_weekend():
     monday = dt.date(2026, 9, 28)
     tuesday = dt.date(2026, 9, 29)
 
-    index = _full_nse_day(friday).append(_full_nse_day(monday)).append(_full_nse_day(tuesday))
+    index = cast(
+        pd.DatetimeIndex,
+        _full_nse_day(friday).append(_full_nse_day(monday)).append(_full_nse_day(tuesday)),
+    )
     first = is_first_bar_of_session(index, NSE_EQUITY)
     last = is_last_bar_of_session(index, NSE_EQUITY)
 
@@ -125,7 +129,10 @@ def test_short_muhurat_session_last_bar_is_not_at_1515():
     normal_day = dt.date(2026, 9, 21)
     muhurat_day = dt.date(2026, 9, 22)  # e.g. Diwali muhurat, 09:15-12:15 only
 
-    index = _full_nse_day(normal_day).append(_session_index(muhurat_day, "09:15", "12:15", 15))
+    index = cast(
+        pd.DatetimeIndex,
+        _full_nse_day(normal_day).append(_session_index(muhurat_day, "09:15", "12:15", 15)),
+    )
     last = is_last_bar_of_session(index, NSE_EQUITY)
 
     n_normal = 25
@@ -155,7 +162,7 @@ def test_short_session_last_bar_still_first_if_only_one_bar():
 
 def test_session_boundaries_true_exactly_on_first_bars():
     day1, day2 = dt.date(2026, 9, 21), dt.date(2026, 9, 22)
-    index = _full_nse_day(day1).append(_full_nse_day(day2))
+    index = cast(pd.DatetimeIndex, _full_nse_day(day1).append(_full_nse_day(day2)))
     boundaries = session_boundaries(index, NSE_EQUITY)
 
     assert boundaries.sum() == 2
@@ -217,7 +224,7 @@ def test_drop_incomplete_sessions_removes_short_day_keeps_full_ones():
     partial_idx = _session_index(partial_day, "09:15", "10:45", 15)  # 7 of 25 bars
     assert len(partial_idx) == 7
 
-    index = full_idx.append(partial_idx)
+    index = cast(pd.DatetimeIndex, full_idx.append(partial_idx))
     bars = _bars_frame(index)
     cleaned, notes = drop_incomplete_sessions(bars, NSE_EQUITY, "15m")
 
@@ -228,7 +235,7 @@ def test_drop_incomplete_sessions_removes_short_day_keeps_full_ones():
 
 def test_drop_incomplete_sessions_keeps_all_when_all_full():
     day1, day2 = dt.date(2026, 9, 21), dt.date(2026, 9, 22)
-    index = _full_nse_day(day1).append(_full_nse_day(day2))
+    index = cast(pd.DatetimeIndex, _full_nse_day(day1).append(_full_nse_day(day2)))
     cleaned, notes = drop_incomplete_sessions(_bars_frame(index), NSE_EQUITY, "15m")
     assert len(cleaned) == 50
     assert notes == []
@@ -243,7 +250,7 @@ def test_is_partial_last_bar_true_mid_session():
     day = dt.date(2026, 9, 22)
     idx = _session_index(day, "09:15", "10:00", 15)  # last bar 10:00-10:15
     bars = _bars_frame(idx)
-    now = pd.Timestamp(f"{day} 10:05", tz=IST)
+    now = cast(pd.Timestamp, pd.Timestamp(f"{day} 10:05", tz=IST))
     assert is_partial_last_bar(bars, NSE_EQUITY, "15m", now=now) is True
 
 
@@ -251,7 +258,7 @@ def test_is_partial_last_bar_false_after_bar_closes():
     day = dt.date(2026, 9, 22)
     idx = _session_index(day, "09:15", "10:00", 15)
     bars = _bars_frame(idx)
-    now = pd.Timestamp(f"{day} 10:16", tz=IST)  # bar 10:00 closed at 10:15
+    now = cast(pd.Timestamp, pd.Timestamp(f"{day} 10:16", tz=IST))  # bar 10:00 closed at 10:15
     assert is_partial_last_bar(bars, NSE_EQUITY, "15m", now=now) is False
 
 
@@ -266,12 +273,12 @@ def test_is_partial_last_bar_empty_frame_is_false():
 
 
 def test_session_date_normal_nse_bar():
-    ts = pd.Timestamp("2026-09-22 12:00", tz=IST)
+    ts = cast(pd.Timestamp, pd.Timestamp("2026-09-22 12:00", tz=IST))
     assert session_date(ts, NSE_EQUITY) == dt.date(2026, 9, 22)
 
 
 def test_session_date_mcx_evening_bar_same_calendar_day():
-    ts = pd.Timestamp("2026-09-22 23:00", tz=IST)
+    ts = cast(pd.Timestamp, pd.Timestamp("2026-09-22 23:00", tz=IST))
     assert session_date(ts, MCX) == dt.date(2026, 9, 22)
 
 
@@ -279,7 +286,7 @@ def test_session_date_overnight_session_late_bar_belongs_to_prior_day():
     # A hypothetical overnight session (close < open, spans midnight): a bar
     # at 00:30 belongs to the session that opened the previous evening.
     overnight = Session("overnight", dt.time(18, 0), dt.time(2, 0), (0, 1, 2, 3, 4))
-    ts = pd.Timestamp("2026-09-23 00:30", tz=IST)
+    ts = cast(pd.Timestamp, pd.Timestamp("2026-09-23 00:30", tz=IST))
     assert session_date(ts, overnight) == dt.date(2026, 9, 22)
 
 
@@ -293,7 +300,7 @@ def test_holiday_weekday_absent_from_index_does_not_appear_in_trading_days():
     # Tuesday 2026-09-22 deliberately omitted -- simulates a holiday.
     wednesday = dt.date(2026, 9, 23)
 
-    index = _full_nse_day(monday).append(_full_nse_day(wednesday))
+    index = cast(pd.DatetimeIndex, _full_nse_day(monday).append(_full_nse_day(wednesday)))
     days = trading_days(index, NSE_EQUITY)
 
     assert days == [monday, wednesday]
@@ -303,7 +310,7 @@ def test_holiday_weekday_absent_from_index_does_not_appear_in_trading_days():
 def test_holiday_gap_does_not_break_boundary_detection():
     monday = dt.date(2026, 9, 21)
     wednesday = dt.date(2026, 9, 23)  # Tuesday skipped, as if a holiday
-    index = _full_nse_day(monday).append(_full_nse_day(wednesday))
+    index = cast(pd.DatetimeIndex, _full_nse_day(monday).append(_full_nse_day(wednesday)))
 
     first = is_first_bar_of_session(index, NSE_EQUITY)
     last = is_last_bar_of_session(index, NSE_EQUITY)

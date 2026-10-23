@@ -175,6 +175,7 @@ def test_tradl_24_reads_with_the_range_low_as_its_stop() -> None:
     spec = result.spec
     assert spec is not None, result.questions
     assert spec.exit.condition is None
+    assert spec.exit.stop_level is not None
     assert (spec.exit.stop_level.output, spec.exit.target_pct) == ("low", 1.2)
     assert {i.type for i in spec.indicators} == {"opening_range"}
     assert (spec.instrument.symbol, spec.instrument.timeframe) == ("HDFCBANK", "5m")

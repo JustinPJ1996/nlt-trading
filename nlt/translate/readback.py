@@ -16,6 +16,7 @@ avoid on the way in.
 from __future__ import annotations
 
 import re
+from typing import cast
 
 from nlt.indicators.registry import get as get_indicator
 from nlt.spec.models import (
@@ -25,6 +26,7 @@ from nlt.spec.models import (
     Compare,
     Condition,
     Const,
+    IndicatorSpec,
     IsTrue,
     IvPercentile,
     Not,
@@ -124,7 +126,9 @@ def _bar_word(timeframe: str) -> str:
     return "day" if timeframe == "1d" else "bar"
 
 
-def _indicator_desc(ind_id: str, indicators: dict[str, dict], timeframe: str) -> tuple[str, object]:
+def _indicator_desc(
+    ind_id: str, indicators: dict[str, IndicatorSpec], timeframe: str
+) -> tuple[str, object]:
     """Returns (label, IndicatorDef) for a declared indicator id."""
     spec = indicators[ind_id]
     d = get_indicator(spec.type)
@@ -197,7 +201,7 @@ _FIB_WORDS = {
 }
 
 
-def _special_ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> str | None:
+def _special_ref_desc(ref: Ref, indicators: dict[str, IndicatorSpec], timeframe: str) -> str | None:
     """Indicators whose plain meaning is not "label(params) output".
 
     The daily average says "previous day" out loud because that is what it
@@ -238,7 +242,7 @@ def _special_ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> 
     return None
 
 
-def _ref_desc(ref: Ref, indicators: dict[str, dict], timeframe: str) -> str:
+def _ref_desc(ref: Ref, indicators: dict[str, IndicatorSpec], timeframe: str) -> str:
     special = _special_ref_desc(ref, indicators, timeframe)
     if special is not None:
         text = special
@@ -260,7 +264,7 @@ def _const_desc(c: Const) -> str:
     return _num(c.value)
 
 
-def _operand_desc(op, indicators: dict[str, dict], timeframe: str) -> str:
+def _operand_desc(op, indicators: dict[str, IndicatorSpec], timeframe: str) -> str:
     if isinstance(op, Ref):
         return _ref_desc(op, indicators, timeframe)
     return _const_desc(op)
@@ -289,7 +293,9 @@ _TREND_WORDS = {
 }
 
 
-def _trend_turn_desc(cond: Compare, indicators: dict[str, dict], timeframe: str) -> str | None:
+def _trend_turn_desc(
+    cond: Compare, indicators: dict[str, IndicatorSpec], timeframe: str
+) -> str | None:
     """Supertrend / Parabolic SAR "direction" is +1 up, -1 down (never 0), so
     "direction crosses above 0" is "turns to an uptrend"."""
     left, right = cond.left, cond.right
@@ -309,7 +315,7 @@ def _trend_turn_desc(cond: Compare, indicators: dict[str, dict], timeframe: str)
     return f"{label} {_TREND_WORDS[cond.op]}"
 
 
-def _gap_desc(cond: Compare, indicators: dict[str, dict]) -> str | None:
+def _gap_desc(cond: Compare, indicators: dict[str, IndicatorSpec]) -> str | None:
     """ "the day opened more than 0.5% below the previous day's close"."""
     left, right = cond.left, cond.right
     if not (
@@ -333,7 +339,9 @@ def _gap_desc(cond: Compare, indicators: dict[str, dict]) -> str | None:
     return f"the day opened {amount} {'below' if down else 'above'} the previous day's close"
 
 
-def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe: str) -> str:
+def _describe_condition(
+    cond: Condition, indicators: dict[str, IndicatorSpec], timeframe: str
+) -> str:
     if isinstance(cond, Compare):
         trend = _trend_turn_desc(cond, indicators, timeframe)
         if trend is not None:
@@ -345,14 +353,15 @@ def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe:
         right = _operand_desc(cond.right, indicators, timeframe)
         if (
             _same_indicator(cond.left, cond.right)
-            and _special_ref_desc(cond.right, indicators, timeframe) is None
+            and _special_ref_desc(cast(Ref, cond.right), indicators, timeframe) is None
         ):
+            right_ref = cast(Ref, cond.right)  # `_same_indicator` checked it is a Ref
             # "MACD(12, 26, 9) line crosses above its signal line", not the
             # indicator's name and settings said twice.
-            out_word = _OUTPUT_WORDS.get(cond.right.output, cond.right.output)
+            out_word = _OUTPUT_WORDS.get(right_ref.output, right_ref.output)
             right = f"its {out_word}"
-            if cond.right.bars_ago:
-                right += f" {_plural(cond.right.bars_ago, _bar_word(timeframe))} ago"
+            if right_ref.bars_ago:
+                right += f" {_plural(right_ref.bars_ago, _bar_word(timeframe))} ago"
         return f"{left} {_OP_WORDS[cond.op]} {right}"
 
     if isinstance(cond, IsTrue):
@@ -396,7 +405,7 @@ def _describe_condition(cond: Condition, indicators: dict[str, dict], timeframe:
     raise TypeError(f"unhandled condition node: {cond!r}")  # pragma: no cover
 
 
-def _wrap(cond: Condition, indicators: dict[str, dict], timeframe: str) -> str:
+def _wrap(cond: Condition, indicators: dict[str, IndicatorSpec], timeframe: str) -> str:
     """Parenthesise nested All/Any_/Not so a mixed and/or tree reads unambiguously."""
     text = _describe_condition(cond, indicators, timeframe)
     if isinstance(cond, (All, Any_, Not)):
@@ -487,7 +496,7 @@ def _timeframe_desc(spec: StrategySpec) -> str:
 
 
 def _exit_lines(
-    spec: StrategySpec, indicators: dict[str, dict], timeframe: str
+    spec: StrategySpec, indicators: dict[str, IndicatorSpec], timeframe: str
 ) -> list[tuple[str, str]]:
     """(line, the part of the strategy it states) for each exit rule."""
     lines: list[tuple[str, str]] = []
@@ -504,7 +513,8 @@ def _exit_lines(
     if e.trailing_stop_pct:
         lines.append((f"Trailing stop of {_num(e.trailing_stop_pct)}%", "exit.trailing_stop"))
     if e.stop_atr_mult:
-        atr_label, _d = _indicator_desc(e.atr_id, indicators, timeframe)
+        # `ExitRules` requires `atr_id` whenever `stop_atr_mult` is set.
+        atr_label, _d = _indicator_desc(cast(str, e.atr_id), indicators, timeframe)
         lines.append((f"Stop loss at {_num(e.stop_atr_mult)}x {atr_label}", "exit.atr_stop"))
     if e.stop_level is not None:
         level = _ref_desc(e.stop_level, indicators, timeframe)
@@ -615,8 +625,8 @@ def _sizing_desc(spec: StrategySpec) -> str:
             return f"Quantity {quantity:,} per trade ({_plural(s.lots, 'lot')} of {lot_size}{today_note})"
         return f"Quantity {quantity:,} per trade"
     if s.mode == "fixed_value":
-        return f"About {format_inr(s.value)} per trade"
-    return f"Risk {_num(s.risk_pct)}% of capital per trade"
+        return f"About {format_inr(cast(float, s.value))} per trade"
+    return f"Risk {_num(cast(float, s.risk_pct))}% of capital per trade"
 
 
 def _risk_lines(spec: StrategySpec) -> list[str]:
@@ -833,7 +843,7 @@ def _reentry_lines(legs: list[OptionLeg]) -> list[str]:
 
 
 def _legs_exit_lines(
-    spec: StrategySpec, indicators: dict[str, dict], timeframe: str
+    spec: StrategySpec, indicators: dict[str, IndicatorSpec], timeframe: str
 ) -> list[tuple[str, str]]:
     from nlt.translate.options_words import _credit_shape
 

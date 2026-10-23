@@ -9,6 +9,7 @@ minutes before the close.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -409,10 +410,10 @@ def test_paper_trading_reads_the_minutes_and_sells_at_the_1515_close(tmp_path):
 
     runner.step(
         store,
-        store.get_run(rid),
+        cast(dict, store.get_run(rid)),
         fetch=fetch,
         charge_fn=lambda p, q, s: 0.0,
-        now=pd.Timestamp(f"{day} 15:31", tz=IST),
+        now=cast(pd.Timestamp, pd.Timestamp(f"{day} 15:31", tz=IST)),
     )
     assert ("NIFTY", "1m", dt.date(2026, 10, 15)) in asked
     (exit_,) = [e for e in store.paper_events(rid) if e["kind"] == "exit"]

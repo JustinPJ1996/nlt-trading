@@ -109,7 +109,7 @@ def is_session_time(session: Session, ts: pd.Timestamp) -> bool:
 
 
 def _to_session_tz(ts: pd.Timestamp, session: Session) -> pd.Timestamp:
-    ts = pd.Timestamp(ts)
+    ts = pd.Timestamp(ts)  # ty: ignore[invalid-assignment]
     if ts.tz is None:
         ts = ts.tz_localize(session.tz)
     else:
@@ -129,7 +129,7 @@ def session_date(ts: pd.Timestamp, session: Session = NSE_EQUITY) -> dt.date:
     ts = _to_session_tz(ts, session)
     if session.close_time <= session.open_time and ts.time() < session.open_time:
         # Past midnight, before today's open: still part of yesterday's session.
-        return (ts - pd.Timedelta(days=1)).date()
+        return (ts - pd.Timedelta(days=1)).date()  # ty: ignore[invalid-return-type]
     return ts.date()
 
 
@@ -235,7 +235,7 @@ def drop_incomplete_sessions(
         return bars, notes
 
     expected = bars_per_session(session, timeframe)
-    dates = _session_date_series(bars.index, session)
+    dates = _session_date_series(bars.index, session)  # ty: ignore[invalid-argument-type]
     counts = dates.value_counts()
     incomplete = counts[counts < expected].index
 

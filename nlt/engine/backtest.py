@@ -60,6 +60,7 @@ import datetime as dt
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -352,7 +353,7 @@ def run_backtest(
     trade_from: pd.Timestamp | None = None,
     final_session_in_progress: bool = False,
     listed_expiries: Iterable[dt.date] = (),
-    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    blocked_windows: Iterable[tuple[dt.datetime, dt.datetime]] = (),
     minute_bars: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Run `spec` bar by bar over `bars`.
@@ -443,7 +444,7 @@ def run_backtest(
     session = _session_for_spec(spec)
     minutes_by_day: dict[dt.date, pd.DataFrame] = {}
     if minute_bars is not None and len(minute_bars) and is_intraday_tf and spec.schedule.intraday:
-        minutes_by_day = {d: g for d, g in minute_bars.groupby(minute_bars.index.date)}
+        minutes_by_day = {d: g for d, g in minute_bars.groupby(minute_bars.index.date)}  # ty: ignore[invalid-assignment, unresolved-attribute]
     square_off_fallback_days: set[dt.date] = set()
     session_bar_count = _bars_per_session_safe(session, spec.instrument.timeframe)
 
@@ -482,7 +483,7 @@ def run_backtest(
     # a short/early-close day that never reaches the square-off clock time (2),
     # and refusing to schedule an entry fill across a session boundary (1).
     if is_intraday_tf and len(bars) > 0:
-        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()  # ty: ignore[invalid-argument-type]
         if final_session_in_progress:
             # The day is not over, so none of today's candles is its last.
             # Walk back from the newest candle only as far as today's first.
@@ -504,7 +505,7 @@ def run_backtest(
 
         expiry_close = expiry_close_mask(
             spec.instrument.symbol,
-            bars.index,
+            bars.index,  # ty: ignore[invalid-argument-type]
             spec.instrument.timeframe,
             listed_expiries,
             last_bar_of_session,
@@ -552,7 +553,7 @@ def run_backtest(
         # --- 1. fill an entry scheduled from the previous bar's signal -----
         if pending_entry:
             pending_entry = False
-            signal_ts = pending_entry_ts
+            signal_ts = cast("pd.Timestamp", pending_entry_ts)  # always set with pending_entry
             pending_entry_ts = None
             level_problem = level_stop_problem(
                 spec, features, i, _apply_slippage(bar.open, entry_side, slippage)
@@ -1288,14 +1289,18 @@ def _size_position(
     if sizing.mode == "fixed_lots":
         quantity = sizing.lots * lot_size
     elif sizing.mode == "fixed_value":
-        lots = math.floor(sizing.value / entry_price / lot_size)
+        lots = math.floor(
+            cast("float", sizing.value) / entry_price / lot_size
+        )  # Sizing validates it
         quantity = max(lots, 1) * lot_size
     else:  # risk_based
         if stop_distance is None or stop_distance <= 0:
             quantity = lot_size
             used_fallback = True
         else:
-            risk_amount = sizing.risk_pct / 100.0 * capital_now
+            risk_amount = (
+                cast("float", sizing.risk_pct) / 100.0 * capital_now
+            )  # Sizing validates it
             units = risk_amount / stop_distance
             lots = math.floor(units / lot_size)
             quantity = max(lots, 1) * lot_size
@@ -1341,7 +1346,7 @@ def _minute_square_off(
     clock = spec.schedule.square_off
     at = ts.normalize() + pd.Timedelta(hours=clock.hour, minutes=clock.minute)
     candle = _CANDLE_LENGTH.get(spec.instrument.timeframe)
-    if not (ts + candle > at or is_last_bar_of_session):
+    if not (ts + candle > at or is_last_bar_of_session):  # ty: ignore[unsupported-operator]
         return None
     upto = None if minutes is None else minutes[minutes.index < at + pd.Timedelta(minutes=1)]
     if upto is None or upto.empty:

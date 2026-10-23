@@ -8,6 +8,7 @@ nearest listed one.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import pytest
 
@@ -71,6 +72,7 @@ def test_paper_trading_passes_the_named_strike_to_the_engine() -> None:
 def test_a_named_strike_is_not_backtested_and_says_why() -> None:
     result = logic.backtest_spec(_spec(21600))
     assert not result.ok
+    assert result.error is not None
     assert "A fixed strike like 21,600 can't be backtested" in result.error
     assert "Paper trade it instead" in result.error
     assert logic.paper_problem(_spec(21600)) is None
@@ -90,7 +92,7 @@ def test_a_leg_with_a_named_strike_is_not_backtested_either() -> None:
         exit=ExitRules(exits_on_legs=True),
         schedule=Schedule(intraday=True),
     )
-    assert "25,000" in logic.backtest_problem(spec)
+    assert "25,000" in cast("str", logic.backtest_problem(spec))
 
 
 @pytest.mark.parametrize(

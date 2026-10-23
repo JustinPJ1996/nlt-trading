@@ -42,7 +42,7 @@ METRIC_KEYS = (
 
 
 def _empty_metrics() -> dict:
-    zeros = {k: 0 for k in METRIC_KEYS}
+    zeros: dict[str, int | None] = {k: 0 for k in METRIC_KEYS}
     zeros["profit_factor"] = None
     zeros["sharpe"] = None
     zeros["sortino"] = None

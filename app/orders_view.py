@@ -265,7 +265,8 @@ def close_now(store: Store, position_id: int) -> int:
     for o in book.orders:
         if (
             isinstance(o.order.trigger, NowTrigger)
-            and position_id in o.order.action.positions
+            # A "now" trigger is always an exit (ConditionalOrder validator), so it has `positions`.
+            and position_id in o.order.action.positions  # ty: ignore[unresolved-attribute]
             and o.id not in book.finished
         ):
             raise OrderError("Closing that position is already under way.")

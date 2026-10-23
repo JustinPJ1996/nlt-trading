@@ -153,7 +153,7 @@ def test_expiry_skip_decision_matches_the_expiry_counter():
     oct_expiry = dt.date(2026, 10, 19)
     idx = pd.bdate_range("2026-10-12", "2026-10-30", tz=IST)
     volume = np.full(len(idx), 100.0)
-    volume[idx.date == oct_expiry] = 2000.0
+    volume[idx.date == oct_expiry] = 2000.0  # ty: ignore[unresolved-attribute]  # pandas stub omits DatetimeIndex.date
     bars = pd.DataFrame(
         {
             "open": 100.0,
@@ -427,6 +427,7 @@ def test_expiry_day_signal_gives_a_skip_decision_and_no_signal_row(tmp_path):
         return bars
 
     now = idx[-1] + pd.Timedelta(days=1)  # safely after MCX's close, whatever the season
+    assert run is not None
     result = runner.step(store, run, fetch=fetch, charge_fn=_zero, now=now)
     assert result.health == "ok"
 
@@ -469,6 +470,7 @@ def test_a_signal_after_no_entry_after_gives_a_skip_decision_and_no_signal_row(t
     )
     run = store.get_run(run_id)
     now = idx[-1] + runner.close_offset("5m") + pd.Timedelta(minutes=1)
+    assert run is not None
     result = runner.step(store, run, fetch=lambda *a: bars, charge_fn=_zero, now=now)
     assert result.health == "ok"
 
@@ -496,6 +498,7 @@ def test_a_real_signal_row_still_comes_from_the_engines_own_decision(tmp_path):
     )
     run = store.get_run(run_id)
     now = bars.index[-1] + runner.close_offset("1d") + pd.Timedelta(minutes=1)
+    assert run is not None
     result = runner.step(store, run, fetch=lambda *a: bars, charge_fn=_zero, now=now)
     assert result.health == "ok"
     signal_rows = [e for e in store.paper_events(run_id) if e["kind"] == "signal"]
@@ -517,6 +520,7 @@ def test_decisions_are_idempotent_across_repeated_passes(tmp_path):
     )
     run = store.get_run(run_id)
     now = bars.index[-1] + runner.close_offset("1d") + pd.Timedelta(minutes=1)
+    assert run is not None
     runner.step(store, run, fetch=lambda *a: bars, charge_fn=_zero, now=now)
     before = store.paper_decisions(run_id)
     result = runner.step(store, run, fetch=lambda *a: bars, charge_fn=_zero, now=now)
@@ -540,6 +544,7 @@ def test_paper_decision_cannot_be_edited_or_deleted(tmp_path):
     )
     run = store.get_run(run_id)
     now = bars.index[-1] + runner.close_offset("1d") + pd.Timedelta(minutes=1)
+    assert run is not None
     runner.step(store, run, fetch=lambda *a: bars, charge_fn=_zero, now=now)
     assert store.paper_decisions(run_id)
 
@@ -588,6 +593,7 @@ def test_a_queued_signal_turned_down_at_the_open_is_never_described_as_a_fill(tm
     # Pass 1: the signal candle is the newest one; the entry is only queued.
     first = bars.iloc[:3]
     now = idx[2] + pd.Timedelta(days=1, hours=-6)
+    assert run is not None
     assert runner.step(store, run, fetch=lambda *a: first, charge_fn=_zero, now=now).health == "ok"
     # Pass 2: the fill candle arrives and its open is unaffordable.
     now = idx[3] + pd.Timedelta(days=1, hours=-6)

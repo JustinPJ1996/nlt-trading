@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -570,6 +571,7 @@ def test_stock_readback_says_quantity_not_lots():
     from nlt.translate.rules import parse
 
     spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
+    assert spec is not None
     rendered = describe(spec)
     assert "lot" not in rendered.lower(), f"a stock readback must not mention lots:\n{rendered}"
 
@@ -579,6 +581,7 @@ def test_stock_has_no_share_count_cap():
     from nlt.translate.rules import parse
 
     spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
+    assert spec is not None
     assert spec.risk.max_lots is None
     assert "quantity above" not in describe(spec).lower(), (
         "the readback states a cap the engine does not enforce"
@@ -591,6 +594,7 @@ def test_stock_sizing_defaults_to_risking_capital_not_one_share():
     from nlt.translate.rules import parse
 
     spec = parse("Buy TCS when RSI drops below 30, target 5%, stop 2%").spec
+    assert spec is not None
     assert spec.sizing.mode == "risk_based"
     assert spec.sizing.risk_pct == 1.0
     assert "Risk 1% of capital per trade" in describe(spec)
@@ -601,6 +605,7 @@ def test_an_explicit_lot_count_is_still_honoured():
     from nlt.translate.rules import parse
 
     spec = parse("Buy 2 lots of NIFTY when RSI cracks 30, stop 1%, target 2%").spec
+    assert spec is not None
     assert spec.sizing.mode == "fixed_lots"
     assert spec.sizing.lots == 2
 
@@ -629,7 +634,10 @@ from nlt.translate.readback import DEFAULT, SAID, WORKED_OUT, describe_lines  # 
 def _labels(text: str, answers: dict | None = None) -> dict[str, str]:
     result = parse(text, answers=answers)
     assert result.spec is not None, result.questions
-    return {line: label for _h, line, label in describe_lines(result.spec, result.sources, answers)}
+    return cast(
+        "dict[str, str]",
+        {line: label for _h, line, label in describe_lines(result.spec, result.sources, answers)},
+    )
 
 
 def _body_lines(spec) -> list[str]:
@@ -650,6 +658,7 @@ def _body_lines(spec) -> list[str]:
 def test_labelled_lines_are_exactly_the_readback(text) -> None:
     """The labels sit beside the readback; they must never change a word of it."""
     result = parse(text)
+    assert result.spec is not None
     labelled = [line for _h, line, _l in describe_lines(result.spec, result.sources)]
     assert labelled == _body_lines(result.spec)
 
@@ -657,6 +666,7 @@ def test_labelled_lines_are_exactly_the_readback(text) -> None:
 def test_no_record_never_reads_as_you_said() -> None:
     """The safety rule: "You said" is a claim; without a record it is never made."""
     spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    assert spec is not None
     labels = {label for _h, _l, label in describe_lines(spec, {})}
     assert SAID not in labels
     assert {label for _h, _l, label in describe_lines(spec, None)} == {None}
@@ -719,6 +729,7 @@ def test_the_readback_never_promises_a_loss_limit_nothing_enforces() -> None:
     """No engine applies the daily or per-trade rupee loss limits, so the readback
     must not state them (Justin's call, 2026-10-12)."""
     spec = parse("buy nifty when rsi cracks 30, target 2%, stop loss 1%").spec
+    assert spec is not None
     text = describe(spec)
     assert "Stop trading for the day" not in text
     assert "Never risk more than" not in text

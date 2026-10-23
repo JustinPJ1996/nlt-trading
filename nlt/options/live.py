@@ -192,9 +192,9 @@ class LiveOptionSource:
     def _live_contracts(self) -> pd.DataFrame:
         """Today's Kite list, read once per pass; saved as today's listing."""
         if self._live is None:
-            live = self.client.instruments(self.now)
+            live = self.client.instruments(self.now)  # ty: ignore[invalid-argument-type]
             for underlying, rows in live.groupby("name"):
-                path = self._listing_path(str(underlying), self.today)
+                path = self._listing_path(str(underlying), self.today)  # ty: ignore[invalid-argument-type]
                 if not path.exists():
                     path.parent.mkdir(parents=True, exist_ok=True)
                     tmp = path.with_suffix(".tmp")
@@ -220,7 +220,7 @@ class LiveOptionSource:
             df["strike"] = df["strike"].astype(float)
             df = df[_LISTING_COLUMNS]
         else:
-            if _weekdays(day, day) and day <= self.today:
+            if _weekdays(day, day) and day <= self.today:  # ty: ignore[unsupported-operator]
                 self.missing_listing_days.add(day)
             df = pd.DataFrame(columns=_LISTING_COLUMNS)
         self._listings[key] = df
@@ -231,12 +231,12 @@ class LiveOptionSource:
         days = sorted(p.stem for p in folder.glob("*.csv")) if folder.exists() else []
         if not days:
             return None
-        return dt.date.fromisoformat(days[0]), self.today
+        return dt.date.fromisoformat(days[0]), self.today  # ty: ignore[invalid-return-type]
 
     def underlying_bars(
         self, underlying: str, timeframe: str, start: dt.date, end: dt.date
     ) -> pd.DataFrame:
-        return self.client.index_bars(underlying, timeframe, start, min(end, self.today))
+        return self.client.index_bars(underlying, timeframe, start, min(end, self.today))  # ty: ignore[invalid-argument-type]
 
     # ---------------------------------------------------------------- bars
 
@@ -250,7 +250,7 @@ class LiveOptionSource:
         return self._bars_path(underlying, tradingsymbol, day).with_suffix(".partial.parquet")
 
     def _day_complete(self, day: dt.date) -> bool:
-        return day < self.today or (day == self.today and self.now.time() >= DAY_COMPLETE_AT)
+        return day < self.today or (day == self.today and self.now.time() >= DAY_COMPLETE_AT)  # ty: ignore[unresolved-attribute, unsupported-operator]
 
     def _token(self, underlying: str, tradingsymbol: str) -> int | None:
         """Kite's token for a contract that is live today, else None.
@@ -268,7 +268,7 @@ class LiveOptionSource:
     ) -> pd.DataFrame:
         if timeframe != "1m":
             raise ValueError("LiveOptionSource reads 1-minute candles only, like the dataset")
-        end = min(end, self.today)
+        end = min(end, self.today)  # ty: ignore[invalid-assignment]
         days = _weekdays(start, end)
         if not days:
             return _empty_bars()
@@ -318,7 +318,7 @@ class LiveOptionSource:
             else:
                 fetched = _shape(self.client.minute_candles(token, wanted[0], wanted[-1]))
                 for day in wanted:
-                    part = fetched[fetched.index.date == day]
+                    part = fetched[fetched.index.date == day]  # ty: ignore[unresolved-attribute]
                     if self._day_complete(day):
                         path = self._bars_path(underlying, tradingsymbol, day)
                         _write(part, path)
@@ -367,7 +367,7 @@ def vix_iv_fn(
     """
     from nlt.options.iv import iv_feature
 
-    now = pd.Timestamp(now).tz_convert(IST)
+    now = pd.Timestamp(now).tz_convert(IST)  # ty: ignore[invalid-assignment]
 
     def iv_fn(underlying: str, bars: pd.DataFrame, lookback_days: int) -> pd.Series:
         first = bars.index.min().date() if len(bars) else now.date()
@@ -375,12 +375,12 @@ def vix_iv_fn(
         vix = client.index_bars("INDIA VIX", "1d", start, now.date())
         closes = pd.Series(
             vix["close"].to_numpy(dtype=float),
-            index=pd.DatetimeIndex(vix.index).tz_convert(IST).normalize(),
+            index=pd.DatetimeIndex(vix.index).tz_convert(IST).normalize(),  # ty: ignore[unresolved-attribute]
         )
         # Today's VIX candle is still forming until the close; it is never used
         # for today anyway (D uses D-1), so it is left out rather than trusted.
-        closes = closes[closes.index.date < now.date()]
-        sessions = sorted(set(closes.index.date) | set(bars.index.date))
+        closes = closes[closes.index.date < now.date()]  # ty: ignore[unresolved-attribute]
+        sessions = sorted(set(closes.index.date) | set(bars.index.date))  # ty: ignore[unresolved-attribute]
         daily = closes.reindex(pd.DatetimeIndex([pd.Timestamp(d, tz=IST) for d in sessions]))
         return iv_feature(underlying, bars, lookback_days, daily_iv=daily)
 

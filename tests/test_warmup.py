@@ -96,6 +96,7 @@ def test_warm_up_lets_a_long_average_trade_from_day_one() -> None:
     spec = _spec(EMA200)
     start, end = dt.date(2024, 1, 1), dt.date(2024, 12, 31)
     warmed = logic.backtest_spec(spec, start=start, end=end)
+    assert warmed.backtest is not None
     first_trade = warmed.backtest.trades[0].entry_time.date()
     assert first_trade < start + dt.timedelta(days=200)
 

@@ -40,10 +40,15 @@ def test_a_cards_numbers_are_the_reports_numbers() -> None:
     entry = logic.LIBRARY[0]
     card = logic.library_card(entry, PINNED)
     t = logic.translate_text(entry["sentence"])
+    assert t.period is not None
     dates = logic.period_dates(t.period, PINNED)
+    assert dates is not None
+    assert t.spec is not None
     run = logic.backtest_spec(
         t.spec, start=dt.date.fromisoformat(dates["start"]), end=PINNED, translation=t
     )
+    assert run.comparison is not None
+    assert run.verdict is not None
     assert card["return"] == logic.format_signed_pct(run.comparison.strategy_return_pct)
     assert card["holding_return"] == logic.format_signed_pct(run.comparison.benchmark_return_pct)
     assert card["serious_warning"] == any(f.severity == "critical" for f in run.verdict.flags)

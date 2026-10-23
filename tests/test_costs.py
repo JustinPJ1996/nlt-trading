@@ -283,7 +283,7 @@ class TestImpact:
 def test_charge_breakdown_is_frozen() -> None:
     b = ChargeBreakdown(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 21.0)
     with pytest.raises(Exception):
-        b.total = 100.0  # type: ignore[misc]
+        b.total = 100.0  # type: ignore[misc]  # ty: ignore[invalid-assignment]  # deliberately invalid: proves the breakdown is frozen
 
 
 # --------------------------------------------------------------------------

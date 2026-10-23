@@ -795,8 +795,8 @@ def _further_out(bought: OptionLeg, sold: OptionLeg) -> bool:
     if bought.strike_points is not None:
         # Points are signed by direction: above spot is +, below is -.
         if sold.option_type == "CE":
-            return bought.strike_points > sold.strike_points
-        return bought.strike_points < sold.strike_points
+            return bought.strike_points > sold.strike_points  # ty: ignore[unsupported-operator]
+        return bought.strike_points < sold.strike_points  # ty: ignore[unsupported-operator]
     # Offsets count strikes out of the money for the leg's own type.
     return bought.strike_offset > sold.strike_offset
 

@@ -187,7 +187,7 @@ def _session(symbol: str, kind: str = "future") -> Session:
 
 
 def _close_of(day: dt.date, session: Session) -> pd.Timestamp:
-    return pd.Timestamp(dt.datetime.combine(day, session.close_time), tz=IST)
+    return pd.Timestamp(dt.datetime.combine(day, session.close_time), tz=IST)  # ty: ignore[invalid-return-type]
 
 
 def _slip(price: float, side: str, slippage: Slippage) -> float:
@@ -238,7 +238,7 @@ def periods(daily: pd.DataFrame, candle: str, session: Session) -> pd.DataFrame:
     days = daily[["open", "close"]].copy()
     dates = [pd.Timestamp(ts).tz_convert(IST).date() for ts in days.index]
     if candle == "day":
-        days["ends"] = [_close_of(d, session) for d in dates]
+        days["ends"] = [_close_of(d, session) for d in dates]  # ty: ignore[invalid-argument-type]
         return days.reset_index(drop=True)
     week_end = [d + dt.timedelta(days=4 - d.weekday()) for d in dates]
     days["week"] = week_end
@@ -270,7 +270,7 @@ def streak_status(daily: pd.DataFrame, trigger: StreakTrigger, now: pd.Timestamp
     rows = rows[rows["ends"] <= now].reset_index(drop=True)
     run = 0
     for i in range(len(rows) - 1, -1, -1):
-        one = StreakTrigger(**{**trigger.model_dump(), "count": 1})
+        one = StreakTrigger(**{**trigger.model_dump(), "count": 1})  # ty: ignore[invalid-argument-type]
         if not _qualifies(rows, i, one):
             break
         run += 1
@@ -489,7 +489,9 @@ def advance(
                 if ts < o.created_at:
                     continue
                 chosen = [
-                    book.positions[p] for p in o.order.action.positions if p in book.positions
+                    book.positions[p]
+                    for p in o.order.action.positions  # ty: ignore[unresolved-attribute]
+                    if p in book.positions
                 ]
                 if not chosen:
                     finish(o, ts, "none of the chosen positions is still open")
@@ -672,7 +674,7 @@ def book_from_record(orders: list[SavedOrder], events: list[dict]) -> Book:
     for e in events:
         oid, kind = e["order_id"], e["kind"]
         if kind == "triggered":
-            book.triggered[oid] = pd.Timestamp(e["bar_time"]).tz_convert(IST)
+            book.triggered[oid] = pd.Timestamp(e["bar_time"]).tz_convert(IST)  # ty: ignore[invalid-assignment]
         elif kind == "filled":
             fills[oid] = e
         elif kind == "exited":
@@ -691,7 +693,7 @@ def book_from_record(orders: list[SavedOrder], events: list[dict]) -> Book:
             direction="long" if e["side"] == "buy" else "short",
             lots=int(d["lots"]),
             quantity=int(e["quantity"]),
-            entry_time=pd.Timestamp(e["bar_time"]).tz_convert(IST),
+            entry_time=pd.Timestamp(e["bar_time"]).tz_convert(IST),  # ty: ignore[invalid-argument-type]
             entry_price=float(e["price"]),
             entry_charges=float(d["charges"]),
             stop_level=d.get("stop_level"),

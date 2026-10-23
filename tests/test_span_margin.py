@@ -450,6 +450,7 @@ def test_a_missing_day_uses_the_previous_days_end_of_day_file_and_says_so(tmp_pa
     got = m.margin("SENSEX", dt.date(2025, 6, 19), [leg], index_prev_close=NIFTY_CLOSE)
     assert got.span == pytest.approx((200 + 80) * 20)
     assert got.source == "BSE's margin file for 18 Jun 2025 (end of day)"
+    assert got.note is not None
     assert "did not publish a start-of-day margin file for 19 Jun 2025" in got.note
     assert "end-of-day file for 18 Jun 2025" in got.note
 
@@ -483,6 +484,7 @@ def test_a_contract_listed_during_the_day_comes_from_the_next_file_and_says_so(t
     # Both legs from the later file -- scenarios from two files cannot be added.
     assert got.span == pytest.approx(130 * 200 + 65 * 90 + 65 * 120)
     assert got.source == "NSE's margin file for 23 Jun 2025 (start of day)"
+    assert got.note is not None
     assert "NIFTY 3 Jul 2025 20000 CE was not yet listed" in got.note
     assert "file for 23 Jun 2025, the first one that has it" in got.note
 

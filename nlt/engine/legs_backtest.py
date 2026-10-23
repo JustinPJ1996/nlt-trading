@@ -95,8 +95,9 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -181,7 +182,7 @@ class MarginQuery:
 # (underlying, day, legs, index_prev_close) -> an object with `.total` (rupees),
 # `.source` (where the figure came from) and `.note` (str | None), as
 # `nlt.options.margin.MarginBreakdown` has.
-MarginFn = Callable[[str, dt.date, list[MarginQuery], float], object]
+MarginFn = Callable[[str, dt.date, list[MarginQuery], float], Any]
 
 
 class MarginNotAvailable(Exception):
@@ -283,7 +284,7 @@ def run_legs_backtest(
     slippage: Slippage = ZERO,
     drop_partial_last_bar: bool = True,
     trade_from: pd.Timestamp | None = None,
-    blocked_windows: list[tuple[dt.datetime, dt.datetime]] = (),
+    blocked_windows: Iterable[tuple[dt.datetime, dt.datetime]] = (),
     final_session_in_progress: bool = False,
     fno_close: dt.time | None = None,
     iv_fn: Callable[[str, pd.DataFrame, int], pd.Series] | None = None,
@@ -379,7 +380,7 @@ def run_legs_backtest(
         _warn_on_cross_session_lookback(spec, session_bar_count, warnings)
 
     if is_intraday_tf and len(bars) > 0:
-        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()
+        last_bar_of_session = is_last_bar_of_session(bars.index, session).to_numpy()  # ty: ignore[invalid-argument-type]
         if final_session_in_progress:
             # Paper trading mid-day: today is not over, so none of today's
             # candles is its last (see `run_backtest`, which has the same rule).
@@ -393,7 +394,7 @@ def run_legs_backtest(
         last_bar_of_session = np.zeros(len(bars), dtype=bool)
 
     # The previous session's closing index level, which a SPAN margin needs.
-    closes = bars["close"].groupby(bars.index.date).last() if len(bars) else pd.Series()
+    closes = bars["close"].groupby(bars.index.date).last() if len(bars) else pd.Series()  # ty: ignore[unresolved-attribute]
     prev_close: dict[dt.date, float] = {}
     for k in range(1, len(closes)):
         prev_close[closes.index[k]] = float(closes.iloc[k - 1])
@@ -518,7 +519,9 @@ def run_legs_backtest(
         bought leg, whose premium is paid in cash on top of the margin.
         """
         bought = sum(
-            price * leg.lots * lot_size * sets for leg, _c, price in legs if leg.side == "buy"
+            price * leg.lots * lot_size * sets  # ty: ignore[unsupported-operator]
+            for leg, _c, price in legs
+            if leg.side == "buy"
         )
         if not any(leg.side == "sell" for leg, _c, _p in legs):
             return bought, 0.0, None
@@ -527,7 +530,7 @@ def run_legs_backtest(
                 c.option_type,
                 float(c.strike),
                 c.expiry,
-                (1 if leg.side == "buy" else -1) * leg.lots * lot_size * sets,
+                (1 if leg.side == "buy" else -1) * leg.lots * lot_size * sets,  # ty: ignore[unsupported-operator]
             )
             for leg, c, _p in legs
         ]
@@ -693,7 +696,7 @@ def run_legs_backtest(
         )
 
     def fill_reentry(pos: _Position, leg: _Leg, i: int, ts: pd.Timestamp) -> None:
-        signal_ts, contract, why, basis = leg.pending
+        signal_ts, contract, why, basis = leg.pending  # ty: ignore[not-iterable]
         leg.pending = None
         kind = leg.spec.reentry
         bar = execution.bar(contract, ts)
@@ -834,7 +837,7 @@ def run_legs_backtest(
                 at
                 for leg in pos.legs
                 if leg.is_open or leg.waiting
-                for at in execution.bar_times(leg.contract, ts, fno_close)
+                for at in execution.bar_times(leg.contract, ts, fno_close)  # ty: ignore[invalid-argument-type]
             }
         )
         stopped_here: dict[int, pd.Timestamp] = {}
@@ -901,7 +904,10 @@ def run_legs_backtest(
             for leg in pos.legs:
                 if leg.is_open:
                     price, untraded = expiry_close_price(
-                        execution, leg.contract, ts.date(), fno_close
+                        execution,
+                        leg.contract,
+                        ts.date(),
+                        fno_close,  # ty: ignore[invalid-argument-type]
                     )
                     at = stamps[-1] if stamps else ts
                     raw = leg.last_price if price is None else price
@@ -968,7 +974,7 @@ def run_legs_backtest(
                         leg.last_price = float(bar["close"])
 
             on_expiry_day = ts.date() == pos.expiry
-            clock_reached = is_intraday_tf and reaches_clock(ts, candle, square_off)
+            clock_reached = is_intraday_tf and reaches_clock(ts, candle, square_off)  # ty: ignore[invalid-argument-type]
             forced = None
             if is_intraday_spec and (clock_reached or bool(last_bar_of_session[i])):
                 forced = "square_off"
@@ -1231,12 +1237,12 @@ def _expiry_day_column(
     """
     kinds = sorted({leg.expiry for leg in legs})
     by_day: dict[dt.date, bool] = {}
-    for day in sorted(set(bars.index.date)):
+    for day in sorted(set(bars.index.date)):  # ty: ignore[unresolved-attribute]
         listing = execution.listing(day)
         expiries = list(listing["expiry"]) if not listing.empty else []
         picked = [pick_expiry(expiries, day, kind, underlying)[0] for kind in kinds]
         by_day[day] = any(e is not None and last_day(e) == day for e in picked)
-    return pd.Series([by_day[d] for d in bars.index.date], index=bars.index)
+    return pd.Series([by_day[d] for d in bars.index.date], index=bars.index)  # ty: ignore[unresolved-attribute]
 
 
 def _choose_legs(

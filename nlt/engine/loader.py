@@ -264,7 +264,7 @@ def load_option_bars(spec: StrategySpec, start: dt.date, end: dt.date, source=No
     raw = source.underlying_bars(symbol, base, start, end)
     if raw.empty:
         return raw
-    grouped = raw.groupby(_bucket_start(raw.index, minutes))
+    grouped = raw.groupby(_bucket_start(raw.index, minutes))  # ty: ignore[invalid-argument-type]
     out = pd.DataFrame(
         {
             "open": grouped["open"].first(),

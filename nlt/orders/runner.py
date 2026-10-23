@@ -94,7 +94,7 @@ def _ts(raw: str) -> pd.Timestamp:
     ts = pd.Timestamp(raw)
     if ts.tzinfo is None:
         ts = ts.tz_localize("UTC")
-    return ts.tz_convert(IST)
+    return ts.tz_convert(IST)  # ty: ignore[invalid-return-type]
 
 
 def _order_slippage(row: dict) -> Slippage:
@@ -180,7 +180,7 @@ def step(
     end = now.date()
 
     try:
-        market = _market(book, feed, start, end, cursor.date())
+        market = _market(book, feed, start, end, cursor.date())  # ty: ignore[invalid-argument-type]
     except kite.KiteTokenExpired:
         return _problem(store, "token_expired", "Kite token has expired. Log in again to resume.")
     except kite.KiteNotConnected:
@@ -192,7 +192,7 @@ def step(
     except kite.KiteError as exc:
         return _problem(store, "feed_down", f"Could not get prices from Kite: {exc}")
 
-    events, new_cursor = advance(book, market, cursor=cursor, now=now, charges=charges)
+    events, new_cursor = advance(book, market, cursor=cursor, now=now, charges=charges)  # ty: ignore[invalid-argument-type]
     orders_by_id = {o.id: o for o in book.orders}
     observed = _iso(now)
     new: list[str] = []

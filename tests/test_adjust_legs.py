@@ -82,6 +82,7 @@ def test_condor_take_profit_changes_and_relabels_only_that_line() -> None:
     assert new.exit.combined_target_pct == 40
     text, label = _line(_lines(new, new_sources, typed), "Take profit when")
     assert "reaches 40% of the credit" in text and label == "said"
+    assert new_sources is not None
     assert new_sources["entry"] == sources["entry"]
 
 
@@ -90,6 +91,7 @@ def test_a_leg_stop_edit_does_not_relabel_the_combined_lines() -> None:
     spec = _with_combined_stop(spec, 60)
     sources = {**sources, "exit.combined_stop": "worked_out"}
     _new, new_sources, _t = logic.adjust_spec(spec, {"leg_stop_pct": "30"}, sources)
+    assert new_sources is not None
     assert new_sources["exit.combined_stop"] == "worked_out"
     assert new_sources["exit.stop"] == "said"
 
@@ -99,6 +101,7 @@ def test_take_profit_can_be_emptied_when_the_strategy_still_validates() -> None:
     withtp, sources, _t = logic.adjust_spec(spec, {"combined_target_pct": "40"}, sources)
     new, new_sources, _t = logic.adjust_spec(withtp, {"combined_target_pct": ""}, sources)
     assert new.exit.combined_target_pct is None
+    assert new_sources is not None
     assert "exit.combined_target" not in new_sources
 
 
@@ -127,6 +130,7 @@ def test_combined_stop_box_only_when_set_and_never_removed() -> None:
     withstop = _with_combined_stop(spec, 60)
     moved, moved_sources, _t = logic.adjust_spec(withstop, {"combined_stop_pct": "70"}, sources)
     assert moved.exit.combined_stop_pct == 70
+    assert moved_sources is not None
     assert moved_sources["exit.combined_stop"] == "said"
     with pytest.raises(logic.AdjustError, match="cannot be empty"):
         logic.adjust_spec(withstop, {"combined_stop_pct": ""}, sources)
@@ -181,6 +185,7 @@ def test_the_stock_path_is_unchanged() -> None:
     assert api._spec_payload(spec, sources)["allowed_timeframes"] is None
     new, new_sources, _t = logic.adjust_spec(spec, {"stop_pct": "1.5", "target_pct": "3"}, sources)
     assert (new.exit.stop_pct, new.exit.target_pct) == (1.5, 3.0)
+    assert new_sources is not None
     assert new_sources["exit.stop"] == "said"
     with pytest.raises(logic.AdjustError, match="at most 50%"):
         logic.adjust_spec(spec, {"stop_pct": "60"}, sources)

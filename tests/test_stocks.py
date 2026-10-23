@@ -245,7 +245,7 @@ def test_real_download_of_three_nse_stocks():
     assert set(result) == {"RELIANCE", "TCS", "HDFCBANK"}
     for symbol, df in result.items():
         assert list(df.columns) == ["open", "high", "low", "close", "volume"]
-        assert str(df.index.tz) == "Asia/Kolkata"
+        assert str(df.index.tz) == "Asia/Kolkata"  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
         assert len(df) > 1000  # years of daily bars
     assert src.failures() == {}
 
@@ -258,7 +258,7 @@ def test_a_one_stock_refresh_reads_yahoos_ticker_nested_columns(source, monkeypa
 
     flat = _frame(dt.date.today(), rows=5).rename(columns=str.title)
     flat["Adj Close"] = flat["Close"]
-    flat.index = flat.index.tz_localize(None)
+    flat.index = flat.index.tz_localize(None)  # ty: ignore[unresolved-attribute]  # pandas stubs: the index is a DatetimeIndex
     nested = flat.copy()
     nested.columns = pd.MultiIndex.from_product([["RELIANCE.NS"], flat.columns])
     monkeypatch.setattr(yf, "download", lambda *a, **k: nested)

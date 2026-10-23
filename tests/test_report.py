@@ -12,6 +12,8 @@ mutation that breaks the arithmetic actually gets caught.
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -421,7 +423,7 @@ def test_charges_dominate_absent_when_costs_are_small():
 def test_severe_drawdown_critical_above_50_percent():
     n = 500
     equity = _equity_with_drawdown(n, 100_000.0, trough_pct=-60.0, end_pct=10.0)
-    idx = equity.index
+    idx = cast(pd.DatetimeIndex, equity.index)
     trades = [_mk_trade(idx, i * 3, net_pnl=100.0, charges=5.0, bars_held=2) for i in range(150)]
     result = _build_result(trades, equity)
     comparison = _comparison(result, beats=True)
@@ -434,7 +436,7 @@ def test_severe_drawdown_critical_above_50_percent():
 def test_severe_drawdown_warning_between_25_and_50_percent():
     n = 500
     equity = _equity_with_drawdown(n, 100_000.0, trough_pct=-35.0, end_pct=10.0)
-    idx = equity.index
+    idx = cast(pd.DatetimeIndex, equity.index)
     trades = [_mk_trade(idx, i * 3, net_pnl=100.0, charges=5.0, bars_held=2) for i in range(150)]
     result = _build_result(trades, equity)
     comparison = _comparison(result, beats=True)
@@ -454,7 +456,7 @@ def test_severe_drawdown_absent_when_shallow():
 def test_short_backtest_fires_under_3_years_or_250_bars():
     n = 100  # well under both the year and bar floors
     equity = _flat_equity(n, 100_000.0, end_capital=110_000.0)
-    idx = equity.index
+    idx = cast(pd.DatetimeIndex, equity.index)
     trades = [_mk_trade(idx, i, net_pnl=200.0, charges=5.0, bars_held=1) for i in range(40)]
     result = _build_result(trades, equity)
     comparison = _comparison(result, beats=True)
@@ -745,7 +747,7 @@ def test_benchmark_name_flows_from_the_benchmark_into_the_comparison():
 
     bars = _mkbars(120)
     result = _build_result(
-        trades=[_mk_trade(bars.index, 0, net_pnl=100.0)],
+        trades=[_mk_trade(cast(pd.DatetimeIndex, bars.index), 0, net_pnl=100.0)],
         equity=_flat_equity(120, end_capital=101_000.0),
     )
     benchmark = buy_and_hold(bars, 100_000.0, name="holding TCS")

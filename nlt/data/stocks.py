@@ -205,9 +205,9 @@ class StockSource:
         # deliberate act, not an accident.
         df = apply_floor(df, floor)
         if start is not None:
-            df = df[df.index.date >= start]
+            df = df[df.index.date >= start]  # ty: ignore[unresolved-attribute]
         if end is not None:
-            df = df[df.index.date <= end]
+            df = df[df.index.date <= end]  # ty: ignore[unresolved-attribute]
         return df
 
     def bars_many(
@@ -297,9 +297,9 @@ class StockSource:
                     self._quality_notes[symbol] = notes
             df = apply_floor(df, floor)
             if start is not None:
-                df = df[df.index.date >= start]
+                df = df[df.index.date >= start]  # ty: ignore[unresolved-attribute]
             if end is not None:
-                df = df[df.index.date <= end]
+                df = df[df.index.date <= end]  # ty: ignore[unresolved-attribute]
             result[symbol] = df
         return result
 
