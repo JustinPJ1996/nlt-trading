@@ -113,12 +113,7 @@ def _entry_rule_text(spec: StrategySpec) -> str:
     from nlt.translate.readback import _describe_condition
 
     indicators = {i.id: i for i in spec.indicators}
-    # readback types `indicators` as dict[str, dict] but is handed IndicatorSpec objects
-    return _describe_condition(
-        spec.entry,
-        indicators,  # ty: ignore[invalid-argument-type]
-        spec.instrument.timeframe,
-    )
+    return _describe_condition(spec.entry, indicators, spec.instrument.timeframe)
 
 
 def _candle_words(ts: pd.Timestamp, timeframe: str) -> str:
